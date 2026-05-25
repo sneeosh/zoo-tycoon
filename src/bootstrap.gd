@@ -32,6 +32,15 @@ func _ready() -> void:
 	# crowded / hungry / lonely animals contribute as much as happy ones.
 	EffectResolver.register_happiness_model(_animal_happiness)
 
+	# v0.5.0 — tell the engine's Accounting module which Ledger source_ids
+	# are revenue vs operating expense. Sources we don't register fall
+	# into Accounting's OTHER_* bucket so the books still balance, but
+	# explicit categorization gives a cleaner Income Statement.
+	Accounting.register_category(&"entry",       Accounting.Category.REVENUE)
+	Accounting.register_category(&"food_stand",  Accounting.Category.REVENUE)
+	Accounting.register_category(&"zoo_utilities", Accounting.Category.OPERATING_EXPENSE)
+	Accounting.register_category(&"zoo_staff",     Accounting.Category.OPERATING_EXPENSE)
+
 	# Grant the starting tier so starter content is immediately available
 	# without the player having to unlock anything on day 1.
 	ProgressionManager.force_unlock(&"start")

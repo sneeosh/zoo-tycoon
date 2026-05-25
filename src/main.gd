@@ -37,6 +37,9 @@ var _build_buttons: Dictionary = {}    # StringName -> Button
 var _speed_buttons: Dictionary = {}    # String -> Button
 var _region_panel: PanelContainer
 var _region_panel_body: VBoxContainer
+var _reports_modal: Control
+var _reports_body: VBoxContainer
+var _reports_period: String = "today"   # today / week / month / all_time
 
 var _hud_accumulator: float = 0.0
 
@@ -52,6 +55,7 @@ func _ready() -> void:
 	if sess != null:
 		sess.register_action("assert_quality_at_least", _harness_assert_quality)
 		sess.register_action("hover_at", _harness_hover_at)
+		sess.register_action("open_reports", _harness_open_reports)
 		await sess.run()
 		return
 
@@ -210,6 +214,246 @@ func _refresh_region_panel() -> void:
 	_region_panel_body.add_child(close)
 
 
+# ============================================================================
+# Reports modal — Income Statement + Balance Sheet from engine Accounting
+# ============================================================================
+
+func _build_reports_modal(parent: Control) -> void:
+	_reports_modal = Control.new()
+	_reports_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_reports_modal.visible = false
+	_reports_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	parent.add_child(_reports_modal)
+
+	# Dimmed backdrop catches clicks and closes the modal.
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0, 0, 0, 0.65)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	backdrop.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed:
+			_close_reports())
+	_reports_modal.add_child(backdrop)
+
+	var card := PanelContainer.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -380
+	card.offset_top = -320
+	card.offset_right = 380
+	card.offset_bottom = 320
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	# Stop clicks on the card itself from bubbling to the backdrop.
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reports_modal.add_child(card)
+
+	var card_margin := MarginContainer.new()
+	card_margin.add_theme_constant_override("margin_left", 20)
+	card_margin.add_theme_constant_override("margin_right", 20)
+	card_margin.add_theme_constant_override("margin_top", 16)
+	card_margin.add_theme_constant_override("margin_bottom", 16)
+	card.add_child(card_margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	card_margin.add_child(col)
+
+	# Header row: title + period selector + close.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	col.add_child(header)
+
+	var title := _stat("Financial Reports", 22, Color("#f4d35e"))
+	header.add_child(title)
+
+	var period_spacer := Control.new()
+	period_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(period_spacer)
+
+	for spec in [
+		{"key": "today", "label": "Today"},
+		{"key": "week",  "label": "Week"},
+		{"key": "month", "label": "Month"},
+		{"key": "all",   "label": "All"},
+	]:
+		var b := Button.new()
+		b.text = spec["label"]
+		b.custom_minimum_size = Vector2(60, 30)
+		b.focus_mode = Control.FOCUS_NONE
+		var key: String = spec["key"]
+		b.pressed.connect(func():
+			_reports_period = key
+			_refresh_reports())
+		header.add_child(b)
+
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.custom_minimum_size = Vector2(36, 30)
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(_close_reports)
+	header.add_child(close_btn)
+
+	# Body — populated lazily on open.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(scroll)
+
+	_reports_body = VBoxContainer.new()
+	_reports_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reports_body.add_theme_constant_override("separation", 14)
+	scroll.add_child(_reports_body)
+
+
+func _on_reports_pressed() -> void:
+	_reports_modal.visible = true
+	_refresh_reports()
+
+
+func _close_reports() -> void:
+	_reports_modal.visible = false
+
+
+func _refresh_reports() -> void:
+	for c in _reports_body.get_children():
+		c.queue_free()
+	# Compute IS and BS for the chosen period.
+	var today := SimClock.current_day
+	var is_data: Dictionary
+	match _reports_period:
+		"today":
+			is_data = Accounting.get_income_statement(today, today)
+		"week":
+			is_data = Accounting.get_income_statement(max(0, today - 7), today)
+		"month":
+			is_data = Accounting.get_income_statement(max(0, today - 30), today)
+		_:
+			is_data = Accounting.get_income_statement(0, today)
+	var bs_data: Dictionary = Accounting.get_balance_sheet(today)
+
+	_reports_body.add_child(_make_section_header("Income Statement"))
+	_reports_body.add_child(_make_is_view(is_data))
+	_reports_body.add_child(HSeparator.new())
+	_reports_body.add_child(_make_section_header("Balance Sheet"))
+	_reports_body.add_child(_make_bs_view(bs_data))
+
+
+func _make_section_header(text: String) -> Label:
+	var l := Label.new()
+	l.text = text.to_upper()
+	l.add_theme_font_size_override("font_size", 14)
+	l.add_theme_color_override("font_color", Color("#7e9286"))
+	return l
+
+
+func _make_is_view(d: Dictionary) -> VBoxContainer:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	col.add_child(_make_money_row("Revenue", int(d.get("revenue", 0))))
+	col.add_child(_make_money_row("  Cost of services", -int(d.get("cogs", 0)), Color("#a8c4b0")))
+	col.add_child(_make_money_row("Gross profit", int(d.get("gross_profit", 0)),
+		Color("#e6e6e6"), true))
+	# Per-sub-category lines, summed for the header total.
+	var sub: Dictionary = d.get("operating_expenses", {})
+	var opex_total: int = 0
+	for label in sub.keys():
+		opex_total += int(sub[label])
+	var depr: int = int(d.get("depreciation", 0))
+	col.add_child(_make_money_row("Operating expenses", -(opex_total + depr)))
+	for label in sub.keys():
+		col.add_child(_make_money_row("  " + String(label),
+			-int(sub[label]), Color("#a8c4b0")))
+	col.add_child(_make_money_row("  Depreciation", -depr, Color("#a8c4b0")))
+	col.add_child(_make_money_row("Operating income", int(d.get("operating_income", 0)),
+		Color("#e6e6e6"), true))
+	col.add_child(_make_money_row("Other income/(expense)", int(d.get("other", 0))))
+	var net: int = int(d.get("net_income", 0))
+	col.add_child(HSeparator.new())
+	col.add_child(_make_money_row("Net income", net,
+		Color("#83c779") if net >= 0 else Color("#e76f51"), true))
+	return col
+
+
+func _make_bs_view(d: Dictionary) -> VBoxContainer:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	var assets: Dictionary = d.get("assets", {})
+	var liab: Dictionary = d.get("liabilities", {})
+	var equity: Dictionary = d.get("equity", {})
+
+	col.add_child(_make_section_subheader("Assets"))
+	col.add_child(_make_money_row("  Cash", int(assets.get("cash", 0))))
+	col.add_child(_make_money_row("  PP&E (gross)", int(assets.get("ppe_gross", 0))))
+	col.add_child(_make_money_row("  Accumulated depreciation",
+		-int(assets.get("accumulated_depreciation", 0)), Color("#a8c4b0")))
+	col.add_child(_make_money_row("  PP&E (net)", int(assets.get("ppe_net", 0))))
+	col.add_child(_make_money_row("Total assets", int(assets.get("total_assets", 0)),
+		Color("#e6e6e6"), true))
+
+	col.add_child(_make_section_subheader("Liabilities"))
+	col.add_child(_make_money_row("  Debt", int(liab.get("total_liabilities", 0))))
+
+	col.add_child(_make_section_subheader("Equity"))
+	col.add_child(_make_money_row("  Starting capital", int(equity.get("starting_capital", 0))))
+	col.add_child(_make_money_row("  Retained earnings", int(equity.get("retained_earnings", 0))))
+	col.add_child(_make_money_row("Total equity", int(equity.get("total_equity", 0)),
+		Color("#e6e6e6"), true))
+
+	col.add_child(HSeparator.new())
+	var balances: bool = d.get("balances", true)
+	var balance_label := _make_money_row(
+		"Assets − (Liabilities + Equity)",
+		int(d.get("balance_check_delta", 0)),
+		Color("#83c779") if balances else Color("#e76f51"), true)
+	col.add_child(balance_label)
+	return col
+
+
+func _make_section_subheader(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_color_override("font_color", Color("#f4d35e"))
+	return l
+
+
+func _make_money_row(label: String, amount: int,
+	color: Color = Color("#e6e6e6"), bold: bool = false) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	var name_l := Label.new()
+	name_l.text = label
+	name_l.add_theme_font_size_override("font_size", 13)
+	name_l.add_theme_color_override("font_color", color)
+	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_l)
+
+	var amount_l := Label.new()
+	amount_l.text = _fmt_money(amount)
+	amount_l.add_theme_font_size_override("font_size", 13)
+	amount_l.add_theme_color_override("font_color", color)
+	amount_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(amount_l)
+
+	if bold:
+		name_l.add_theme_color_override("font_color", color.lightened(0.1))
+		amount_l.add_theme_color_override("font_color", color.lightened(0.1))
+	return row
+
+
+func _fmt_money(n: int) -> String:
+	var sign := "-" if n < 0 else ""
+	var abs_n := absi(n)
+	var s := str(abs_n)
+	# Insert thousands separators.
+	var out := ""
+	var count := 0
+	for i in range(s.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0:
+			out = "," + out
+		out = s[i] + out
+		count += 1
+	return "%s$%s" % [sign, out]
+
+
 func _happiness_color(h: float) -> Color:
 	if h < 0.4:
 		return Color("#e76f51")
@@ -268,6 +512,11 @@ func _build_tooltip_for(def: EntityDef) -> String:
 			lines.append("• %s %+.2f (global)" %
 				[target_label, eff.magnitude])
 	return "\n".join(lines)
+
+
+func _harness_open_reports(_action: Dictionary) -> bool:
+	_on_reports_pressed()
+	return true
 
 
 func _harness_hover_at(action: Dictionary) -> bool:
@@ -348,6 +597,13 @@ func _build_top_bar(parent: Control) -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
+
+	var reports_btn := Button.new()
+	reports_btn.text = "Reports"
+	reports_btn.custom_minimum_size = Vector2(72, 36)
+	reports_btn.focus_mode = Control.FOCUS_NONE
+	reports_btn.pressed.connect(_on_reports_pressed)
+	row.add_child(reports_btn)
 
 	var save_btn := Button.new()
 	save_btn.text = "Save"
@@ -459,6 +715,7 @@ func _build_right_column(parent: Control) -> void:
 	center.add_child(_map_view)
 
 	_build_region_panel(parent)
+	_build_reports_modal(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
