@@ -139,6 +139,23 @@ func _build_top_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
 
+	var save_btn := Button.new()
+	save_btn.text = "Save"
+	save_btn.custom_minimum_size = Vector2(56, 36)
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.pressed.connect(_on_save_pressed)
+	row.add_child(save_btn)
+
+	var load_btn := Button.new()
+	load_btn.text = "Load"
+	load_btn.custom_minimum_size = Vector2(56, 36)
+	load_btn.focus_mode = Control.FOCUS_NONE
+	load_btn.pressed.connect(_on_load_pressed)
+	row.add_child(load_btn)
+
+	# Small separator before speed controls keeps the two groups distinct.
+	row.add_child(_v_sep())
+
 	for spec in [
 		{"key": "pause", "label": "Pause"},
 		{"key": "1x",    "label": "1x"},
@@ -373,6 +390,31 @@ func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
 			(_build_buttons[other_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = def_id
 	_map_view.preview_def_id = def_id
+
+
+const SAVE_SLOT := "main"
+
+
+func _on_save_pressed() -> void:
+	var ok := SaveService.save_to_slot(SAVE_SLOT)
+	if ok:
+		_push_log("[color=#f4d35e]Saved.[/color]  Slot: %s" % SAVE_SLOT)
+	else:
+		_push_log("[color=#e76f51]Save failed.[/color]")
+
+
+func _on_load_pressed() -> void:
+	if not SaveService.slot_exists(SAVE_SLOT):
+		_push_log("[color=#e76f51]No save found in slot %s.[/color]" % SAVE_SLOT)
+		return
+	var ok := SaveService.load_from_slot(SAVE_SLOT)
+	if ok:
+		_push_log("[color=#83c779]Loaded.[/color]  Day %d, Balance $%d" %
+			[SimClock.current_day + 1, Ledger.get_balance()])
+		_refresh_hud()
+		_refresh_speed_buttons()
+	else:
+		_push_log("[color=#e76f51]Load failed — see error log.[/color]")
 
 
 func _on_speed_pressed(key: String) -> void:
