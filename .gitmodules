@@ -1,3 +1,3 @@
 [submodule "engine"]
 	path = engine
-	url = /Users/laurendeschner/tycoon-engine
+	url = https://github.com/sneeosh/tycoon-engine.git
