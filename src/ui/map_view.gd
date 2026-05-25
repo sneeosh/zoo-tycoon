@@ -70,6 +70,16 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_visitor_sprite = _load_sprite_optional("visitor")
 	ZooBootstrap.money_floated.connect(_on_money_floated)
+	# Static layers (ground, lawn texture, parkland foliage, grid, vignette)
+	# live in a child Control that only redraws on world changes. Drops the
+	# heavy 576-cell loops out of the 60-fps redraw path.
+	var bg := MapBackground.new()
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# CanvasItem children draw on top of the parent by default — we want the
+	# background to sit *behind* MapView's foreground (entities, visitors,
+	# floats), so flip show_behind_parent.
+	bg.show_behind_parent = true
+	add_child(bg)
 	_shadow_box = StyleBoxFlat.new()
 	_shadow_box.bg_color = Color(0, 0, 0, 0.35)
 	_shadow_box.corner_radius_top_left = 6
@@ -164,11 +174,9 @@ func _notification(what: int) -> void:
 
 
 func _draw() -> void:
-	_draw_ground()
-	_draw_grass_texture()
-	_draw_decorative_foliage()
+	# Static layers (ground, grass, foliage, grid, vignette) are drawn by
+	# the MapBackground child Control; they re-render only on world events.
 	_draw_region_auras()
-	_draw_grid()
 	_draw_entities()
 	_draw_placements()
 	_draw_entrance_gate()
@@ -176,7 +184,6 @@ func _draw() -> void:
 	_draw_money_floats()
 	_draw_preview()
 	_draw_inspector_card()
-	_draw_vignette()
 
 
 # v0.4.0 — render PlaceableDefs inside their regions. Each placement is
@@ -223,72 +230,8 @@ func _draw_placements() -> void:
 
 
 # ---------------------------------------------------------------------------
-# Background layers
+# Region auras
 # ---------------------------------------------------------------------------
-
-func _draw_ground() -> void:
-	# Outer canvas: deep mossy backdrop so the playable area pops.
-	var s := size
-	draw_rect(Rect2(Vector2.ZERO, s), Color("#0c1410"), true)
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
-	# Layered fills create depth at the park boundary: a darker "soil" band
-	# wraps a warmer interior grass color. The interior color is what every
-	# tile starts from before the per-tile variation in _draw_grass_texture.
-	draw_rect(build_rect, Color("#1f3324"), true)
-	draw_rect(build_rect.grow(-2), Color("#33502e"), true)
-
-
-# Subtle painted texture on top of the base grass color. No per-tile fills
-# (those created a checkerboard); instead we sprinkle small soft blobs of
-# slightly different grass tones, plus dense small dots for tuft texture.
-# Result: looks like brushed grass, not graph paper.
-func _draw_grass_texture() -> void:
-	# A handful of soft patches per cell, off-tile-grid so they don't trace
-	# the tile edges. These add gentle color variation rather than a tint
-	# per square.
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
-			var h := _hash2(cx, cy)
-			if (h % 6) != 0:
-				continue
-			var origin := _cell_to_screen(Vector2i(cx, cy))
-			var ox := float(h % 23) / 23.0
-			var oy := float((h / 23) % 19) / 19.0
-			var center := origin + Vector2(ox * TILE_SIZE, oy * TILE_SIZE)
-			var variant := (h / 100) % 3
-			var radius := 5.0 + float(h % 5)
-			match variant:
-				0:
-					draw_circle(center, radius,
-						Color(0.18, 0.31, 0.16, 0.30))   # darker grass
-				1:
-					draw_circle(center, radius,
-						Color(0.30, 0.45, 0.22, 0.22))   # lighter grass
-				_:
-					draw_circle(center, radius * 0.85,
-						Color(0.38, 0.40, 0.22, 0.16))   # sun-bleached
-	# Dense tiny tufts. These are what gives the lawn its "painted" feel
-	# up close. Two passes — dark blade flecks then a few brighter ones.
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
-			var h2 := _hash2(cx * 7 + 13, cy * 11 + 5)
-			# Try up to three tufts per cell, each by an independent gate.
-			for sub in 3:
-				var hs := h2 ^ (sub * 137)
-				if (hs % 4) != 0:
-					continue
-				var origin := _cell_to_screen(Vector2i(cx, cy))
-				var dx := float(hs % 19) / 19.0
-				var dy := float((hs / 19) % 17) / 17.0
-				var p := origin + Vector2(dx * TILE_SIZE, dy * TILE_SIZE)
-				var bright: bool = (hs % 13) == 0
-				if bright:
-					draw_circle(p, 1.0,
-						Color(0.55, 0.65, 0.30, 0.45))
-				else:
-					draw_circle(p, 1.0,
-						Color(0.10, 0.18, 0.08, 0.55))
-
 
 # Soft tint + perimeter outline for each Region. Picks a color from the
 # region's primary zone tag so a savanna reads warm-brown, a pool reads
@@ -343,174 +286,6 @@ func _region_tint(region: Region) -> Color:
 	if &"grass" in region.provided_zone_tags:
 		return Color("#9bc26a")
 	return Color("#a0a0a0")
-
-
-# Soft vignette across the map_view corners. Draws four small dark triangles
-# of decreasing opacity so the eye is pulled toward the center without
-# obscuring content. Drawn last so it sits over everything.
-func _draw_vignette() -> void:
-	var w := size.x
-	var h := size.y
-	var corner: float = minf(w, h) * 0.40
-	# A handful of low-alpha quads stacked from outside in. Crude but works.
-	for i in 5:
-		var t: float = float(i) / 5.0
-		var alpha: float = (1.0 - t) * 0.05
-		var inset: float = t * corner
-		# Top-left wedge.
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(0, 0),
-				Vector2(corner - inset, 0),
-				Vector2(0, corner - inset),
-			]),
-			PackedColorArray([Color(0, 0, 0, alpha), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
-		# Top-right wedge.
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(w, 0),
-				Vector2(w - (corner - inset), 0),
-				Vector2(w, corner - inset),
-			]),
-			PackedColorArray([Color(0, 0, 0, alpha), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
-		# Bottom-left wedge.
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(0, h),
-				Vector2(corner - inset, h),
-				Vector2(0, h - (corner - inset)),
-			]),
-			PackedColorArray([Color(0, 0, 0, alpha), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
-		# Bottom-right wedge.
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(w, h),
-				Vector2(w - (corner - inset), h),
-				Vector2(w, h - (corner - inset)),
-			]),
-			PackedColorArray([Color(0, 0, 0, alpha), Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
-
-
-# Procedural trees and bushes that fill empty space inside and outside the
-# buildable grid. Stable per-cell (no per-frame jitter) and never sit on
-# a placed entity — the player can still build through them. Visually they
-# read as the park's surrounding parkland.
-func _draw_decorative_foliage() -> void:
-	# Build a quick lookup of cells under existing entity footprints so we
-	# don't draw a tree over a building.
-	var occupied := {}
-	for inst_id in EntityRegistry.instances.keys():
-		var inst: EntityInstance = EntityRegistry.instances[inst_id]
-		var def := inst.get_def()
-		if def == null:
-			continue
-		for dx in def.footprint.x:
-			for dy in def.footprint.y:
-				occupied[inst.position + Vector2i(dx, dy)] = true
-
-	# Inside-the-park decorative tufts/bushes on unoccupied cells — sparse,
-	# heavier on the outer two-cell border so the interior stays clean for
-	# building, but with a few scattered farther in to break up the space.
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
-			if occupied.has(Vector2i(cx, cy)):
-				continue
-			var h := _hash2(cx + 31, cy + 17)
-			var on_border := cx < 2 or cy < 2 \
-				or cx >= BUILDABLE_TILES.x - 2 or cy >= BUILDABLE_TILES.y - 2
-			# Dense on the border (looks like the zoo is enclosed by foliage);
-			# very sparse inside so the interior reads as the play area.
-			var threshold: int = 2 if on_border else 90
-			if (h % threshold) != 0:
-				continue
-			# Skip the entrance gate cell so the gate visual reads cleanly.
-			if Vector2i(cx, cy) == GATE_TILE:
-				continue
-			# Skip cells that are part of any Region — those are exhibits.
-			if RegionRegistry.region_at_cell(Vector2i(cx, cy)) != null:
-				continue
-			var origin := _cell_to_screen(Vector2i(cx, cy))
-			var dx := float((h / 7) % 19) / 19.0
-			var dy := float((h / 13) % 17) / 17.0
-			var center := origin + Vector2(
-				(0.15 + 0.7 * dx) * TILE_SIZE,
-				(0.15 + 0.7 * dy) * TILE_SIZE)
-			_draw_foliage(center, h)
-
-	# Outside-the-park parkland: trees in the margins above, below, and
-	# beside the buildable grid. Same RNG approach, denser. Establishes
-	# that the zoo sits inside a larger park.
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
-	var canvas := Rect2(Vector2.ZERO, size)
-	# Sample on a slightly coarser cell grid (24 px) so margin trees don't
-	# crowd. We skip any sample that lands inside the build_rect.
-	var step: int = 24
-	for px in range(0, int(canvas.size.x), step):
-		for py in range(0, int(canvas.size.y), step):
-			var anchor := Vector2(px, py)
-			if build_rect.grow(8).has_point(anchor):
-				continue
-			var h := _hash2(px, py)
-			if (h % 3) != 0:
-				continue
-			var jitter := Vector2(
-				float(h % 13) - 6.0,
-				float((h / 17) % 13) - 6.0)
-			_draw_foliage(anchor + Vector2(step * 0.5, step * 0.5) + jitter, h)
-
-
-# Draw a single tree-or-bush at `center` using `h` to pick the variant.
-func _draw_foliage(center: Vector2, h: int) -> void:
-	var variant: int = h % 5
-	match variant:
-		0, 1, 2:
-			# Round bush: dark shadow + two-tone green sphere.
-			var r: float = 4.0 + float((h / 5) % 4)
-			draw_circle(center + Vector2(0, r * 0.4),
-				r * 1.05, Color(0, 0, 0, 0.30))
-			draw_circle(center, r, Color("#3c5a2a"))
-			draw_circle(center + Vector2(-r * 0.3, -r * 0.3),
-				r * 0.55, Color("#5a7b3a"))
-		3:
-			# Tall tree: trunk + two stacked canopy circles.
-			var r2: float = 4.5 + float((h / 11) % 3)
-			draw_rect(Rect2(center + Vector2(-1, 0), Vector2(2, r2 * 1.8)),
-				Color("#3a2a1a"), true)
-			draw_circle(center + Vector2(0, r2 * 0.4),
-				r2 * 1.1, Color(0, 0, 0, 0.30))
-			draw_circle(center, r2 * 1.1, Color("#2f4c22"))
-			draw_circle(center + Vector2(-r2 * 0.3, -r2 * 0.5),
-				r2 * 0.6, Color("#4d6a30"))
-		_:
-			# Tuft cluster: three little dots.
-			var c: Color = Color("#4a6a30")
-			draw_circle(center, 2.5, c)
-			draw_circle(center + Vector2(3.5, 1.5), 2.0, c.darkened(0.15))
-			draw_circle(center + Vector2(-3.0, 1.0), 1.8, c.darkened(0.20))
-
-
-func _hash2(a: int, b: int) -> int:
-	# Cheap deterministic hash for cell-seeded scatter (stable per cell,
-	# survives reloads). The constants are arbitrary large primes.
-	return abs((a * 374761393 + b * 668265263) ^ 0x55555555) & 0x7FFFFFFF
-
-
-func _draw_grid() -> void:
-	# Quieter grid: a thread of light only on major lines, nothing on minors
-	# (which made the painted lawn feel like a spreadsheet).
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
-	var major := Color(1, 1, 1, 0.045)
-	for c in range(0, BUILDABLE_TILES.x + 1, 5):
-		var x := GRID_ORIGIN.x + c * TILE_SIZE
-		draw_line(Vector2(x, GRID_ORIGIN.y),
-			Vector2(x, GRID_ORIGIN.y + BUILDABLE_TILES.y * TILE_SIZE), major, 1.0)
-	for r in range(0, BUILDABLE_TILES.y + 1, 5):
-		var y := GRID_ORIGIN.y + r * TILE_SIZE
-		draw_line(Vector2(GRID_ORIGIN.x, y),
-			Vector2(GRID_ORIGIN.x + BUILDABLE_TILES.x * TILE_SIZE, y), major, 1.0)
-	# Soft warm border around the buildable area — reads like a wood fence
-	# line rather than a debug rectangle.
-	draw_rect(build_rect, Color("#6a5132").darkened(0.1), false, 2.0)
 
 
 # ---------------------------------------------------------------------------

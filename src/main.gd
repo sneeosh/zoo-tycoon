@@ -32,6 +32,7 @@ var _quality_label: Label
 var _reputation_label: Label
 var _agents_label: Label
 var _yesterday_label: Label
+var _fps_label: Label
 var _log_text: RichTextLabel
 var _build_buttons: Dictionary = {}    # StringName -> Button
 var _speed_buttons: Dictionary = {}    # String -> Button
@@ -1258,6 +1259,7 @@ func _build_top_bar(parent: Control) -> void:
 	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
 	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
 	_yesterday_label = _stat("", 12, Color("#7e9286"))
+	_fps_label = _stat("", 11, Color("#5b6f63"))
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
@@ -1266,6 +1268,8 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_child(_agents_label)
 	row.add_child(_v_sep())
 	row.add_child(_yesterday_label)
+	row.add_child(_v_sep())
+	row.add_child(_fps_label)
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1573,6 +1577,7 @@ func _refresh_hud() -> void:
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
 		breakdown["income"], breakdown["expense"], breakdown["net"]]
+	_fps_label.text = "%d fps" % Engine.get_frames_per_second()
 	if _goals_box != null:
 		_evaluate_goals()
 	_refresh_mission()
@@ -1635,6 +1640,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				SimClock.pause()
 			_refresh_speed_buttons()
+		KEY_S:
+			# Stress test: spawn 20 visitors at once so we can profile the
+			# crowd. Doesn't change spawn rate — these are just one-off pops.
+			for i in range(20):
+				AgentPool.spawn(&"visitor", Vector2(
+					SimClock.rng.randf_range(0.0, 4.0),
+					SimClock.rng.randf_range(0.0, 6.0)))
+			_push_log("[color=#7e9286]+20 visitors (stress)[/color]")
 
 
 func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
