@@ -50,6 +50,15 @@ var _goals_state: Dictionary = {       # one-way: true once completed
 	"happy_lion": false,
 	"day_3":      false,
 }
+# Mission HUD elements (filled in by _build_mission_section).
+var _mission_cash_label: Label
+var _mission_rep_label: Label
+var _mission_days_label: Label
+# End-game modal — pops up on win or lose, blocks the sim until dismissed.
+var _endgame_modal: Control
+var _endgame_title: Label
+var _endgame_body: VBoxContainer
+var _endgame_resolved: bool = false    # idempotent: only fire end-game once
 
 var _hud_accumulator: float = 0.0
 
@@ -406,6 +415,140 @@ func _build_welcome_modal(parent: Control) -> void:
 	btn_row.add_child(got_it)
 
 
+# ============================================================================
+# End-game modal — pops up on win or lose
+# ============================================================================
+
+func _build_endgame_modal(parent: Control) -> void:
+	_endgame_modal = Control.new()
+	_endgame_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_endgame_modal.visible = false
+	_endgame_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	parent.add_child(_endgame_modal)
+
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0, 0, 0, 0.78)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_endgame_modal.add_child(backdrop)
+
+	var card := PanelContainer.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -280
+	card.offset_top = -180
+	card.offset_right = 280
+	card.offset_bottom = 180
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_endgame_modal.add_child(card)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 28)
+	margin.add_theme_constant_override("margin_right", 28)
+	margin.add_theme_constant_override("margin_top", 24)
+	margin.add_theme_constant_override("margin_bottom", 24)
+	card.add_child(margin)
+
+	_endgame_body = VBoxContainer.new()
+	_endgame_body.add_theme_constant_override("separation", 12)
+	margin.add_child(_endgame_body)
+
+	_endgame_title = Label.new()
+	_endgame_title.text = ""
+	_endgame_title.add_theme_font_size_override("font_size", 24)
+	_endgame_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_endgame_body.add_child(_endgame_title)
+
+
+func _endgame_show(won: bool, headline: String, body: String) -> void:
+	# Clear any prior body content beyond the title.
+	for child in _endgame_body.get_children():
+		if child != _endgame_title:
+			child.queue_free()
+
+	_endgame_title.text = headline
+	_endgame_title.add_theme_color_override("font_color",
+		Color("#f4d35e") if won else Color("#e76f51"))
+
+	var body_label := Label.new()
+	body_label.text = body
+	body_label.add_theme_font_size_override("font_size", 13)
+	body_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_endgame_body.add_child(body_label)
+
+	# Summary stats so the player can read the run at a glance.
+	var summary := Label.new()
+	summary.text = "Final score · $%s · Rep %+d · %.1f★" % [
+		_format_thousands(Ledger.get_balance()),
+		ProgressionManager.reputation,
+		ZooBootstrap.get_quality_rating()]
+	summary.add_theme_font_size_override("font_size", 13)
+	summary.add_theme_color_override("font_color", Color("#a8c4b0"))
+	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_endgame_body.add_child(summary)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_endgame_body.add_child(spacer)
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	_endgame_body.add_child(row)
+
+	var replay := Button.new()
+	replay.text = "  Play again  "
+	replay.custom_minimum_size = Vector2(160, 40)
+	replay.focus_mode = Control.FOCUS_NONE
+	replay.pressed.connect(_on_replay_pressed)
+	row.add_child(replay)
+
+	var sandbox := Button.new()
+	sandbox.text = "  Keep playing  "
+	sandbox.custom_minimum_size = Vector2(160, 40)
+	sandbox.focus_mode = Control.FOCUS_NONE
+	sandbox.pressed.connect(_on_endgame_continue)
+	row.add_child(sandbox)
+
+	_endgame_modal.visible = true
+
+
+func _on_replay_pressed() -> void:
+	# Engine autoloads persist across scene reloads, so we explicitly reset
+	# every stateful one before reloading the main scene. The starting cash
+	# is the canonical value the engine compiled from economy.md.
+	#
+	# SEAM NOTE: SimClock has no reset() method — we poke its public fields
+	# directly. Worth filing against the engine for the v0.6 bump (alongside
+	# the audio + save-migration seams already on the roadmap).
+	Ledger.reset(ContentDB.balance_config.starting_cash)
+	Accounting.reset()
+	ProgressionManager.reset()
+	EntityRegistry.reset()
+	RegionRegistry.reset()
+	AgentPool.reset()
+	SimClock.current_tick = 0
+	SimClock.current_day = 0
+	SimClock.current_period = 0
+	SimClock.rng.seed = SimClock.DEFAULT_SEED
+	# Re-grant the starter tier; bootstrap normally does this but it won't
+	# re-run unless the autoload is reloaded too.
+	ProgressionManager.force_unlock(&"start")
+	get_tree().reload_current_scene()
+
+
+func _on_endgame_continue() -> void:
+	# Sandbox-mode continuation. The end-game flag stays true so we won't
+	# pop the modal again, even if the player later goes broke or hits the
+	# target again. Lets them keep building after a win or limp through
+	# a bankruptcy run for screenshots / fun.
+	_endgame_modal.visible = false
+	SimClock.play()
+	_refresh_speed_buttons()
+
+
 func _open_welcome() -> void:
 	if _welcome_modal == null:
 		return
@@ -433,10 +576,54 @@ const GOAL_SPECS: Array = [
 ]
 
 
+func _build_mission_section(col: VBoxContainer) -> void:
+	col.add_child(HSeparator.new())
+	var title := Label.new()
+	title.text = "MISSION"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(title)
+
+	var s: Scenario = ZooBootstrap.scenario
+	var subtitle := Label.new()
+	subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
+		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
+	subtitle.add_theme_font_size_override("font_size", 11)
+	subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
+	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(subtitle)
+
+	# Three live progress rows. Bound in _refresh_mission.
+	_mission_cash_label = _make_mission_row(col)
+	_mission_rep_label = _make_mission_row(col)
+	_mission_days_label = _make_mission_row(col)
+
+
+func _make_mission_row(col: VBoxContainer) -> Label:
+	var lbl := Label.new()
+	lbl.text = "—"
+	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+	col.add_child(lbl)
+	return lbl
+
+
+func _format_thousands(n: int) -> String:
+	var s := str(absi(n))
+	var out := ""
+	var count := 0
+	for i in range(s.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0:
+			out = "," + out
+		out = s[i] + out
+		count += 1
+	return ("-" + out) if n < 0 else out
+
+
 func _build_goals_section(col: VBoxContainer) -> void:
 	col.add_child(HSeparator.new())
 	var title := Label.new()
-	title.text = "GOALS"
+	title.text = "MILESTONES"
 	title.add_theme_font_size_override("font_size", 12)
 	title.add_theme_color_override("font_color", Color("#7e9286"))
 	col.add_child(title)
@@ -498,6 +685,74 @@ func _evaluate_goals() -> void:
 					_push_log("[color=#f4d35e]★ Goal achieved:[/color] %s" % spec["label"])
 					break
 		_refresh_goal_label(goal_id)
+
+
+func _refresh_mission() -> void:
+	if _mission_cash_label == null:
+		return
+	var s: Scenario = ZooBootstrap.scenario
+	var cash := Ledger.get_balance()
+	var rep := ProgressionManager.reputation
+	# current_day is 0-indexed; day_in_progress = current_day + 1 in player
+	# terms. days_left counts days *yet to fully close*.
+	var day_in_progress: int = SimClock.current_day + 1
+	var days_left: int = max(0, s.days_limit - SimClock.current_day)
+	_mission_cash_label.text = "  Cash:  $%s / $%s" % [
+		_format_thousands(cash), _format_thousands(s.target_cash)]
+	_mission_cash_label.add_theme_color_override("font_color",
+		Color("#83c779") if cash >= s.target_cash else Color("#cdd6cf"))
+	_mission_rep_label.text = "  Reputation:  %d / %d" % [rep, s.target_reputation]
+	_mission_rep_label.add_theme_color_override("font_color",
+		Color("#83c779") if rep >= s.target_reputation else Color("#cdd6cf"))
+	if days_left <= 5:
+		_mission_days_label.add_theme_color_override("font_color", Color("#e76f51"))
+	elif days_left <= 10:
+		_mission_days_label.add_theme_color_override("font_color", Color("#f4a261"))
+	else:
+		_mission_days_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	_mission_days_label.text = "  Day %d of %d  ·  %d left" % [
+		day_in_progress, s.days_limit, days_left]
+
+
+# Day-settled hook. Engine fires this after the day's books close and
+# `current_day` has incremented. So when day_settled emits with day == N,
+# SimClock.current_day is now N+1 and N days have fully elapsed.
+func _check_endgame(settled_day: int) -> void:
+	if _endgame_resolved:
+		return
+	var s: Scenario = ZooBootstrap.scenario
+	var cash := Ledger.get_balance()
+	var rep := ProgressionManager.reputation
+	# Bankruptcy: balance dipped below the threshold after settlement.
+	if cash < s.bankruptcy_threshold:
+		_resolve_endgame(false, "Bankruptcy",
+			"Your zoo ran out of money on day %d. Expenses outpaced income — try fewer high-upkeep animals or more amenities to drive food revenue." %
+			(settled_day + 1))
+		return
+	# Victory check at end of any day within the window.
+	if cash >= s.target_cash and rep >= s.target_reputation:
+		_resolve_endgame(true, "Zoo of the Year!",
+			"You hit $%s and %d reputation by the end of day %d. The zoo is a success!" % [
+				_format_thousands(cash), rep, settled_day + 1])
+		return
+	# Timeout: 30 days elapsed without meeting the target.
+	if settled_day + 1 >= s.days_limit:
+		_resolve_endgame(false, "Time's up",
+			"Day %d closed at $%s cash and %d reputation — short of the $%s / %d goal. Closer next run!" % [
+				settled_day + 1, _format_thousands(cash), rep,
+				_format_thousands(s.target_cash), s.target_reputation])
+		return
+
+
+func _resolve_endgame(won: bool, headline: String, body: String) -> void:
+	_endgame_resolved = true
+	SimClock.pause()
+	_refresh_speed_buttons()
+	if _endgame_modal != null:
+		_endgame_show(won, headline, body)
+	# Log line so the event log carries the outcome too.
+	var color := "#83c779" if won else "#e76f51"
+	_push_log("[color=%s][b]%s[/b][/color] %s" % [color, headline, body])
 
 
 func _refresh_goal_label(goal_id: String) -> void:
@@ -941,6 +1196,7 @@ func _build_left_panel(parent: Control) -> void:
 	for def_id in amenity_ids:
 		_add_build_button(col, def_id)
 
+	_build_mission_section(col)
 	_build_goals_section(col)
 
 	col.add_child(HSeparator.new())
@@ -975,6 +1231,7 @@ func _build_right_column(parent: Control) -> void:
 	_build_region_panel(parent)
 	_build_reports_modal(parent)
 	_build_welcome_modal(parent)
+	_build_endgame_modal(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -1103,6 +1360,7 @@ func _refresh_hud() -> void:
 		breakdown["income"], breakdown["expense"], breakdown["net"]]
 	if _goals_box != null:
 		_evaluate_goals()
+	_refresh_mission()
 
 
 func _refresh_affordability() -> void:
@@ -1262,9 +1520,9 @@ func _on_day_settled(day: int, income: int, expense: int) -> void:
 	var net := income - expense
 	var color := "#83c779" if net >= 0 else "#e76f51"
 	# Engine day is 0-indexed; show 1-indexed in the log.
-	day = day + 1
 	_push_log("[b]Day %d closed.[/b] [color=%s]Net $%d[/color]  (+$%d / −$%d)" %
-		[day, color, net, income, expense])
+		[day + 1, color, net, income, expense])
+	_check_endgame(day)
 
 
 func _on_entity_placed(inst_id: int) -> void:

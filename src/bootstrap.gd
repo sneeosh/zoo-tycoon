@@ -19,6 +19,10 @@ var _visitor_satisfaction: VisitorSatisfactionModel
 var _zoo_quality: ZooQualityRating         # callable from game UI
 var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 
+# Scenario (win/lose params) loaded from design/tuning/scenario.md at startup.
+# Exposed so the UI can show targets, evaluate end-game, etc.
+var scenario: Scenario
+
 
 func _ready() -> void:
 	if not ContentDB.is_loaded:
@@ -50,6 +54,8 @@ func _ready() -> void:
 	# Grant the starting tier so starter content is immediately available
 	# without the player having to unlock anything on day 1.
 	ProgressionManager.force_unlock(&"start")
+
+	scenario = Scenario.load_from_tuning()
 
 	print("[Zoo] Bootstrap complete. Starting balance: %d" % Ledger.get_balance())
 
