@@ -8,7 +8,7 @@ extends Node
 # This script is GAME CODE — not engine. The engine drives ticks, spawning,
 # satisfaction, etc.; this just stages content and observes/dispatches input.
 
-const STARTER_VISITOR_COUNT: int = 4
+const STARTER_VISITOR_COUNT: int = 6
 const HUD_REFRESH_SECONDS: float = 0.2
 const LOG_MAX_LINES: int = 60
 const MAP_VIEW_SCRIPT := preload("res://src/ui/map_view.gd")
@@ -40,6 +40,16 @@ var _region_panel_body: VBoxContainer
 var _reports_modal: Control
 var _reports_body: VBoxContainer
 var _reports_period: String = "today"   # today / week / month / all_time
+var _welcome_modal: Control
+var _goals_box: VBoxContainer
+var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
+var _goals_state: Dictionary = {       # one-way: true once completed
+	"earn_1k":    false,
+	"crowd_10":   false,
+	"second":     false,
+	"happy_lion": false,
+	"day_3":      false,
+}
 
 var _hud_accumulator: float = 0.0
 
@@ -62,6 +72,10 @@ func _ready() -> void:
 	_stage_starter_park()
 	_refresh_hud()
 	_push_log("Zoo opened. Click a building, then click the map to place. Right-click to sell.")
+	# Skip the welcome modal when a screenshot is being captured — otherwise
+	# every dev screenshot is just the welcome card.
+	if Screenshotter.get_spec().is_empty():
+		_open_welcome()
 
 	# One-shot screenshot mode runs against the staged starter park.
 	if await Screenshotter.maybe_capture(self):
@@ -307,6 +321,202 @@ func _build_reports_modal(parent: Control) -> void:
 func _on_reports_pressed() -> void:
 	_reports_modal.visible = true
 	_refresh_reports()
+
+
+# ============================================================================
+# Welcome modal — shown once at start, reopenable via the Help button
+# ============================================================================
+
+const WELCOME_LINES: Array = [
+	"Welcome to your Zoo!",
+	"",
+	"You're starting with $10,000, a Lion savanna, a Penguin pool, and a",
+	"hungry food stand. Guests are arriving — speed up time to watch them!",
+	"",
+	"How to play:",
+	"   1.  Click any zone tile to manage that exhibit's animals",
+	"   2.  Buy a building from the BUILD panel, then click the map to place",
+	"   3.  Press 2x / 4x at the top right to speed up the day",
+	"   4.  Right-click a building to sell it (half refund)",
+	"",
+	"Goal: turn a profit and keep guests happy — check the Goals panel",
+	"on the left for milestones, and Reports for the books.",
+]
+
+
+func _build_welcome_modal(parent: Control) -> void:
+	_welcome_modal = Control.new()
+	_welcome_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_welcome_modal.visible = false
+	_welcome_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	parent.add_child(_welcome_modal)
+
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0, 0, 0, 0.70)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_welcome_modal.add_child(backdrop)
+
+	var card := PanelContainer.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -310
+	card.offset_top = -200
+	card.offset_right = 310
+	card.offset_bottom = 200
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_welcome_modal.add_child(card)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 28)
+	margin.add_theme_constant_override("margin_right", 28)
+	margin.add_theme_constant_override("margin_top", 22)
+	margin.add_theme_constant_override("margin_bottom", 22)
+	card.add_child(margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	margin.add_child(col)
+
+	for i in WELCOME_LINES.size():
+		var line: String = WELCOME_LINES[i]
+		var lbl := Label.new()
+		lbl.text = line
+		if i == 0:
+			lbl.add_theme_font_size_override("font_size", 22)
+			lbl.add_theme_color_override("font_color", Color("#f4d35e"))
+		else:
+			lbl.add_theme_font_size_override("font_size", 13)
+			lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+		col.add_child(lbl)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(spacer)
+
+	var btn_row := HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(btn_row)
+
+	var got_it := Button.new()
+	got_it.text = "  Got it — let's go!  "
+	got_it.custom_minimum_size = Vector2(220, 40)
+	got_it.focus_mode = Control.FOCUS_NONE
+	got_it.pressed.connect(_close_welcome)
+	btn_row.add_child(got_it)
+
+
+func _open_welcome() -> void:
+	if _welcome_modal == null:
+		return
+	_welcome_modal.visible = true
+	SimClock.pause()
+	_refresh_speed_buttons()
+
+
+func _close_welcome() -> void:
+	_welcome_modal.visible = false
+	SimClock.play()
+	_refresh_speed_buttons()
+
+
+# ============================================================================
+# Goals panel — small persistent checklist in the bottom of the left column
+# ============================================================================
+
+const GOAL_SPECS: Array = [
+	{"id": "earn_1k",    "label": "Earn $1,000 in revenue"},
+	{"id": "crowd_10",   "label": "Host 10 guests at once"},
+	{"id": "second",     "label": "Build a third exhibit region"},
+	{"id": "happy_lion", "label": "Lion happiness ≥ 80%"},
+	{"id": "day_3",      "label": "Reach Day 3"},
+]
+
+
+func _build_goals_section(col: VBoxContainer) -> void:
+	col.add_child(HSeparator.new())
+	var title := Label.new()
+	title.text = "GOALS"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#7e9286"))
+	col.add_child(title)
+
+	_goals_box = VBoxContainer.new()
+	_goals_box.add_theme_constant_override("separation", 2)
+	col.add_child(_goals_box)
+
+	for spec in GOAL_SPECS:
+		var goal_id: String = spec["id"]
+		var lbl := Label.new()
+		lbl.text = "○  %s" % spec["label"]
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.add_theme_color_override("font_color", Color("#a8c4b0"))
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_goals_box.add_child(lbl)
+		_goals_labels[goal_id] = lbl
+
+
+func _evaluate_goals() -> void:
+	# Each goal is one-way: once flipped to true it stays done. Compute the
+	# current value from engine state and OR with the cached completion.
+	var today := SimClock.current_day
+	var is_data: Dictionary = Accounting.get_income_statement(0, today)
+	var revenue := int(is_data.get("revenue", 0))
+	var guests := AgentPool.alive_count()
+
+	# Region count = regions whose placements are non-empty.
+	var populated_regions: int = 0
+	for r in RegionRegistry.all_regions():
+		if not r.placements.is_empty():
+			populated_regions += 1
+
+	# Lion happiness: scan placements for a lion; report max happiness found.
+	var max_lion_happiness: float = 0.0
+	for r in RegionRegistry.all_regions():
+		for i in r.placements.size():
+			var p: Placement = r.placements[i]
+			if p.placeable_def_id == &"lion":
+				var h := EffectResolver._happiness_model.compute_happiness(r, i)
+				if h > max_lion_happiness:
+					max_lion_happiness = h
+
+	var new_state := {
+		"earn_1k":    revenue >= 1000,
+		"crowd_10":   guests >= 10,
+		"second":     populated_regions >= 3,
+		"happy_lion": max_lion_happiness >= 0.80,
+		"day_3":      today >= 2,  # 0-indexed; day_3 in player terms
+	}
+	for goal_id in _goals_state.keys():
+		var was_done: bool = _goals_state[goal_id]
+		var now_done: bool = new_state[goal_id]
+		if now_done and not was_done:
+			_goals_state[goal_id] = true
+			# Find the spec for the toast.
+			for spec in GOAL_SPECS:
+				if spec["id"] == goal_id:
+					_push_log("[color=#f4d35e]★ Goal achieved:[/color] %s" % spec["label"])
+					break
+		_refresh_goal_label(goal_id)
+
+
+func _refresh_goal_label(goal_id: String) -> void:
+	var lbl: Label = _goals_labels.get(goal_id)
+	if lbl == null:
+		return
+	# Look up the static label text.
+	var text := ""
+	for spec in GOAL_SPECS:
+		if spec["id"] == goal_id:
+			text = spec["label"]
+			break
+	var done: bool = _goals_state[goal_id]
+	if done:
+		lbl.text = "✓  %s" % text
+		lbl.add_theme_color_override("font_color", Color("#83c779"))
+	else:
+		lbl.text = "○  %s" % text
+		lbl.add_theme_color_override("font_color", Color("#a8c4b0"))
 
 
 func _close_reports() -> void:
@@ -598,6 +808,14 @@ func _build_top_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
 
+	var help_btn := Button.new()
+	help_btn.text = "?"
+	help_btn.tooltip_text = "Show the welcome guide again"
+	help_btn.custom_minimum_size = Vector2(36, 36)
+	help_btn.focus_mode = Control.FOCUS_NONE
+	help_btn.pressed.connect(_open_welcome)
+	row.add_child(help_btn)
+
 	var reports_btn := Button.new()
 	reports_btn.text = "Reports"
 	reports_btn.custom_minimum_size = Vector2(72, 36)
@@ -637,6 +855,33 @@ func _build_top_bar(parent: Control) -> void:
 		row.add_child(b)
 
 
+func _add_build_subhead(col: VBoxContainer, text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_color_override("font_color", Color("#5b6f63"))
+	col.add_child(lbl)
+
+
+func _add_build_button(col: VBoxContainer, def_id: StringName) -> void:
+	var def: EntityDef = ContentDB.entity_defs[def_id]
+	var btn := Button.new()
+	btn.text = "%s\n$%d  ·  %d×%d" % [
+		def.display_name,
+		def.build_cost,
+		def.footprint.x,
+		def.footprint.y,
+	]
+	btn.tooltip_text = _build_tooltip_for(def)
+	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	btn.custom_minimum_size = Vector2(0, 52)
+	btn.toggle_mode = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.toggled.connect(_on_build_toggled.bind(def_id))
+	_build_buttons[def_id] = btn
+	col.add_child(btn)
+
+
 func _build_left_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
@@ -664,31 +909,32 @@ func _build_left_panel(parent: Control) -> void:
 	title.add_theme_color_override("font_color", Color("#7e9286"))
 	col.add_child(title)
 
-	# Stable ordering: walk in tuning-file declaration order if we can.
-	var def_ids: Array = ContentDB.entity_defs.keys()
-	def_ids.sort_custom(func(a, b): return String(a) < String(b))
-	for def_id in def_ids:
-		var def: EntityDef = ContentDB.entity_defs[def_id]
-		var btn := Button.new()
-		btn.text = "%s\n$%d  ·  %d×%d" % [
-			def.display_name,
-			def.build_cost,
-			def.footprint.x,
-			def.footprint.y,
-		]
-		btn.tooltip_text = _build_tooltip_for(def)
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		btn.custom_minimum_size = Vector2(0, 52)
-		btn.toggle_mode = true
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.toggled.connect(_on_build_toggled.bind(def_id))
-		_build_buttons[def_id] = btn
-		col.add_child(btn)
+	# Group by zone_kind (zone tiles) vs none (amenities). Stable inside each
+	# group: alphabetical by def_id.
+	var zone_ids: Array[StringName] = []
+	var amenity_ids: Array[StringName] = []
+	for def_id in ContentDB.entity_defs.keys():
+		var d: EntityDef = ContentDB.entity_defs[def_id]
+		if d.zone_kind != &"":
+			zone_ids.append(def_id)
+		else:
+			amenity_ids.append(def_id)
+	zone_ids.sort_custom(func(a, b): return String(a) < String(b))
+	amenity_ids.sort_custom(func(a, b): return String(a) < String(b))
+
+	_add_build_subhead(col, "Zone tiles")
+	for def_id in zone_ids:
+		_add_build_button(col, def_id)
+	_add_build_subhead(col, "Amenities")
+	for def_id in amenity_ids:
+		_add_build_button(col, def_id)
+
+	_build_goals_section(col)
 
 	col.add_child(HSeparator.new())
 
 	var hint := Label.new()
-	hint.text = "L-click map: place\nR-click map: sell (½ refund)\nSpace: add a visitor\nP: toggle pause"
+	hint.text = "L-click map: place / select region\nR-click map: sell (½ refund)\nSpace: add a visitor\nP: toggle pause"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color("#7e9286"))
 	col.add_child(hint)
@@ -716,6 +962,7 @@ func _build_right_column(parent: Control) -> void:
 
 	_build_region_panel(parent)
 	_build_reports_modal(parent)
+	_build_welcome_modal(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -771,33 +1018,49 @@ func _wire_engine_signals() -> void:
 
 
 func _stage_starter_park() -> void:
-	# v0.4.0: paint a small mixed region (grass + rocks) so a Lion (which
-	# needs both habitats) can move in on day 1. Engine's RegionRegistry
-	# auto-detects the connected component as one Region.
-	for x in range(3, 6):
+	# A welcoming starter park spread across the map: a Lion savanna and a
+	# Penguin pool, with a food stand + restroom on the visitor path between
+	# the entrance and the exhibits. Tuned so a non-technical first-time
+	# player can run the sim and immediately see activity.
+
+	# --- Lion savanna: grass with rocks at one end. ---
+	for x in range(5, 9):
 		for y in range(3, 5):
 			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
-	# A couple of rock tiles to give the region the `rocks` zone tag.
-	EntityRegistry.place(&"rock_patch", Vector2i(6, 3))
-	EntityRegistry.place(&"rock_patch", Vector2i(6, 4))
+	EntityRegistry.place(&"rock_patch", Vector2i(9, 3))
+	EntityRegistry.place(&"rock_patch", Vector2i(9, 4))
 
-	EntityRegistry.place(&"food_stand", Vector2i(11, 3))
-	EntityRegistry.place(&"restroom",   Vector2i(15, 3))
+	# --- Penguin pool: pure water tiles, separated from the lion region
+	# by a one-tile gap so they don't merge into one big Region. ---
+	for x in range(5, 9):
+		for y in range(8, 10):
+			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# Drop a starter Lion + the infrastructure that keeps it happy.
-	var region := RegionRegistry.region_at_cell(Vector2i(3, 3))
-	if region != null:
-		RegionRegistry.add_placement(region.region_id, &"lion")
-		RegionRegistry.add_placement(region.region_id, &"feeding_trough")
-		RegionRegistry.add_placement(region.region_id, &"water_trough")
-		# Auto-open the Manage Region panel so first-time players see
-		# exactly what it does. They can close it once they've poked at it.
-		_selected_region_id = region.region_id
-		_refresh_region_panel()
+	# --- Amenities along the path from entrance to exhibits. ---
+	EntityRegistry.place(&"food_stand", Vector2i(14, 4))
+	EntityRegistry.place(&"restroom",   Vector2i(14, 9))
+
+	# --- Lion + its infrastructure. ---
+	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))
+	if lion_region != null:
+		RegionRegistry.add_placement(lion_region.region_id, &"lion")
+		RegionRegistry.add_placement(lion_region.region_id, &"feeding_trough")
+		RegionRegistry.add_placement(lion_region.region_id, &"water_trough")
+
+	# --- Penguin colony — they're social, start with 4 so the herd
+	# requirement is met (social_min=4). ---
+	var penguin_region := RegionRegistry.region_at_cell(Vector2i(5, 8))
+	if penguin_region != null:
+		for _i in 4:
+			RegionRegistry.add_placement(penguin_region.region_id, &"penguin")
+		RegionRegistry.add_placement(penguin_region.region_id, &"feeding_trough")
+
+	# Visitors spawn near the entrance gate at (0,0). Spread them along
+	# the path so they don't pile up in one spot at t=0.
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
-			SimClock.rng.randf_range(0, 6),
-			SimClock.rng.randf_range(0, 6)))
+			SimClock.rng.randf_range(0.0, 3.0),
+			SimClock.rng.randf_range(0.0, 6.0)))
 
 
 # ============================================================================
@@ -826,6 +1089,8 @@ func _refresh_hud() -> void:
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
 		breakdown["income"], breakdown["expense"], breakdown["net"]]
+	if _goals_box != null:
+		_evaluate_goals()
 
 
 func _refresh_affordability() -> void:

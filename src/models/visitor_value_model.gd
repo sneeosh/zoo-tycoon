@@ -8,8 +8,8 @@ class_name VisitorValueModel
 # 10 explicitly keeps this trivial; if these ever grew real depth, they'd
 # move to design/tuning/economy.md.
 
-const TICKET_PRICE: int = 5
-const FOOD_PRICE: int = 3
+const TICKET_PRICE: int = 10
+const FOOD_PRICE: int = 5
 
 
 func compute_entry_fee(_agent: Agent) -> int:

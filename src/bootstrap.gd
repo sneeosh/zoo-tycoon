@@ -1,5 +1,11 @@
 extends Node
 # Zoo Tycoon — startup wiring. Autoloaded after all engine autoloads.
+
+# Game-side event hub. Used for things the engine's generic EventBus doesn't
+# emit because they'd require the engine to know what "money at a position"
+# means. Currently: floating money toasts whenever a visitor pays for
+# something at a location the UI wants to highlight.
+signal money_floated(amount: int, world_pos: Vector2)
 #
 # By the time this _ready() runs, ContentDB has already loaded
 # design/tuning/*.md. We just need to register the zoo's

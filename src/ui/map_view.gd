@@ -39,6 +39,14 @@ var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
 var _hovering: bool = false
 
+# Floating "+$N" toasts spawned by ZooBootstrap.money_floated. Each entry is
+# {amount: int, world_pos: Vector2, born_at: float}. We tick them in _process
+# and drop them after their lifetime expires.
+var _money_floats: Array = []
+const FLOAT_LIFETIME: float = 1.4
+const FLOAT_RISE_PX: float = 28.0
+const FLOAT_LIMIT: int = 40           # cap so a fast 4× day doesn't pile up
+
 
 # Force the hover state from outside — used by the harness so scripted
 # scenarios can capture screenshots that include the inspector card.
@@ -55,12 +63,13 @@ func force_hover_at_world(world_pos: Vector2) -> void:
 var _style_cache: Dictionary = {}        # entity_def_id -> StyleBoxFlat
 var _shadow_box: StyleBoxFlat
 var _card_box: StyleBoxFlat
-const VISITOR_HIT_RADIUS_PX: float = 9.0
+const VISITOR_HIT_RADIUS_PX: float = 14.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_visitor_sprite = _load_sprite_optional("visitor")
+	ZooBootstrap.money_floated.connect(_on_money_floated)
 	_shadow_box = StyleBoxFlat.new()
 	_shadow_box.bg_color = Color(0, 0, 0, 0.35)
 	_shadow_box.corner_radius_top_left = 6
@@ -85,7 +94,55 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_tick_money_floats()
 	queue_redraw()
+
+
+func _on_money_floated(amount: int, world_pos: Vector2) -> void:
+	if _money_floats.size() >= FLOAT_LIMIT:
+		_money_floats.pop_front()
+	_money_floats.append({
+		"amount": amount,
+		"world_pos": world_pos,
+		"born_at": Time.get_ticks_msec() / 1000.0,
+	})
+
+
+func _tick_money_floats() -> void:
+	if _money_floats.is_empty():
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	var i := 0
+	while i < _money_floats.size():
+		var entry: Dictionary = _money_floats[i]
+		if now - entry["born_at"] >= FLOAT_LIFETIME:
+			_money_floats.remove_at(i)
+		else:
+			i += 1
+
+
+func _draw_money_floats() -> void:
+	if _money_floats.is_empty():
+		return
+	var font := get_theme_default_font()
+	var now := Time.get_ticks_msec() / 1000.0
+	var fs := 14
+	for entry in _money_floats:
+		var t: float = clampf((now - entry["born_at"]) / FLOAT_LIFETIME, 0.0, 1.0)
+		var alpha: float = 1.0 - t
+		var rise: float = lerpf(0.0, FLOAT_RISE_PX, t)
+		var base := _world_to_screen(entry["world_pos"])
+		var screen_pos := Vector2(base.x, base.y - 12.0 - rise)
+		var text := "+$%d" % int(entry["amount"])
+		var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		var origin := screen_pos - Vector2(sz.x * 0.5, 0)
+		# Black shadow then bright gold text for legibility on any background.
+		draw_string(font, origin + Vector2(1, 1), text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+			Color(0, 0, 0, 0.55 * alpha))
+		draw_string(font, origin, text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+			Color(0.96, 0.83, 0.37, alpha))
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -113,6 +170,7 @@ func _draw() -> void:
 	_draw_placements()
 	_draw_entrance_gate()
 	_draw_visitors()
+	_draw_money_floats()
 	_draw_preview()
 	_draw_inspector_card()
 
@@ -333,23 +391,34 @@ func _draw_visitors() -> void:
 
 
 func _draw_one_visitor(ag: Agent) -> void:
-	var pos := _world_to_screen(ag.position)
+	# Subtle vertical bob keyed off the agent id so each visitor bobs out of
+	# phase. Gives the impression of life without burning ticks on real
+	# animation curves.
+	var bob_phase: float = (Time.get_ticks_msec() / 1000.0) * 4.2 \
+		+ float(ag.agent_id) * 0.83
+	var bob_offset := Vector2(0.0, sin(bob_phase) * 1.2)
+	var pos := _world_to_screen(ag.position) + bob_offset
 	var sat_color := _satisfaction_color(ag.satisfaction)
-	# Subtle satisfaction halo underneath the sprite — gives at-a-glance
-	# crowd-mood readability without overriding the sprite's own colors.
-	draw_circle(pos + Vector2(0.0, 2.0), 8.0, Color(0, 0, 0, 0.30))
-	draw_circle(pos, 7.5, Color(sat_color.r, sat_color.g, sat_color.b, 0.55))
+
+	# Drop shadow on the ground (no bob — shadow stays put while sprite hops).
+	var ground_pos := _world_to_screen(ag.position)
+	draw_circle(ground_pos + Vector2(0.0, 11.0), 9.0, Color(0, 0, 0, 0.32))
+	# Larger satisfaction halo so the mood read is obvious at a glance.
+	draw_circle(pos, 11.0, Color(sat_color.r, sat_color.g, sat_color.b, 0.45))
+	draw_arc(pos, 11.0, 0.0, TAU, 24,
+		Color(sat_color.r, sat_color.g, sat_color.b, 0.85), 1.5)
 
 	if _visitor_sprite != null:
-		var sprite_size := Vector2(20, 20)
+		# Bigger sprite so visitors read clearly from across the map.
+		var sprite_size := Vector2(28, 28)
 		var sprite_rect := Rect2(pos - sprite_size * 0.5, sprite_size)
 		draw_texture_rect(_visitor_sprite, sprite_rect, false)
 		return
 
 	# Fallback: colored circle visitor (matches the pre-sprite look).
-	draw_circle(pos, 6.0, sat_color)
-	draw_arc(pos, 6.0, 0, TAU, 22, sat_color.darkened(0.55), 1.2)
-	draw_circle(pos + Vector2(-1.8, -1.8), 1.8, Color(1, 1, 1, 0.45))
+	draw_circle(pos, 8.0, sat_color)
+	draw_arc(pos, 8.0, 0, TAU, 22, sat_color.darkened(0.55), 1.4)
+	draw_circle(pos + Vector2(-2.0, -2.0), 2.0, Color(1, 1, 1, 0.55))
 
 
 # ---------------------------------------------------------------------------

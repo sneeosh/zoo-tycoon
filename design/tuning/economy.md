@@ -4,7 +4,7 @@
 
 ## Globals
 
-starting_cash             = 5000
+starting_cash             = 10000
 daily_settlement_enabled  = true
 
 ## Recurring expenses

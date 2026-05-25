@@ -66,7 +66,9 @@ var _value_model := VisitorValueModel.new()
 
 
 func on_spawn(agent: Agent) -> void:
-	Ledger.post_income(_value_model.compute_entry_fee(agent), "Ticket", &"entry")
+	var fee := _value_model.compute_entry_fee(agent)
+	Ledger.post_income(fee, "Ticket", &"entry")
+	ZooBootstrap.money_floated.emit(fee, agent.position)
 	agent.behavior_state[SPAWN_TICK] = SimClock.current_tick
 	agent.behavior_state[STATE] = ST_BROWSING
 	agent.behavior_state[BROWSE_TARGET] = 0
@@ -150,9 +152,9 @@ func _step_toward_target(agent: Agent) -> void:
 	var dist := to_target.length()
 	if dist <= REACH_DISTANCE:
 		if agent.seeking_need == &"hunger":
-			Ledger.post_income(
-				_value_model.compute_food_purchase(agent),
-				"Food", inst.entity_def_id)
+			var price := _value_model.compute_food_purchase(agent)
+			Ledger.post_income(price, "Food", inst.entity_def_id)
+			ZooBootstrap.money_floated.emit(price, agent.position)
 			agent.need_levels[agent.seeking_need] = 1.0
 		agent.target_entity_id = 0
 		agent.seeking_need = &""
