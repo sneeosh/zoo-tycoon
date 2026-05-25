@@ -24,6 +24,7 @@ const ENTITY_COLORS := {
 }
 
 var _selected_def_id: StringName = &""
+var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
 var _map_view: MapView
 var _money_label: Label
 var _day_label: Label
@@ -34,6 +35,8 @@ var _yesterday_label: Label
 var _log_text: RichTextLabel
 var _build_buttons: Dictionary = {}    # StringName -> Button
 var _speed_buttons: Dictionary = {}    # String -> Button
+var _region_panel: PanelContainer
+var _region_panel_body: VBoxContainer
 
 var _hud_accumulator: float = 0.0
 
@@ -59,6 +62,180 @@ func _ready() -> void:
 	# One-shot screenshot mode runs against the staged starter park.
 	if await Screenshotter.maybe_capture(self):
 		return
+
+
+# ============================================================================
+# Manage Region panel (right side, shown when a region is selected)
+# ============================================================================
+
+func _build_region_panel(parent: Control) -> void:
+	_region_panel = PanelContainer.new()
+	_region_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	_region_panel.offset_top = 56
+	_region_panel.offset_left = -300   # extend 300px left of right edge
+	_region_panel.offset_right = 0
+	_region_panel.offset_bottom = 0
+	_region_panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	_region_panel.visible = false
+	parent.add_child(_region_panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 14)
+	margin.add_theme_constant_override("margin_right", 14)
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_bottom", 14)
+	_region_panel.add_child(margin)
+
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	margin.add_child(scroll)
+
+	_region_panel_body = VBoxContainer.new()
+	_region_panel_body.add_theme_constant_override("separation", 8)
+	_region_panel_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_region_panel_body)
+
+
+func _refresh_region_panel() -> void:
+	# Clear current body.
+	for child in _region_panel_body.get_children():
+		child.queue_free()
+
+	if _selected_region_id < 0:
+		_region_panel.visible = false
+		return
+	var region := RegionRegistry.get_region(_selected_region_id)
+	if region == null:
+		_region_panel.visible = false
+		_selected_region_id = -1
+		return
+	_region_panel.visible = true
+
+	# Header
+	var title := _stat("Region #%d" % region.region_id, 18, Color("#e6e6e6"))
+	_region_panel_body.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "%s  ·  %d cells\nProvides: %s" % [
+		String(region.kind),
+		region.area,
+		", ".join(region.provided_zone_tags.map(func(t): return String(t))),
+	]
+	subtitle.add_theme_font_size_override("font_size", 11)
+	subtitle.add_theme_color_override("font_color", Color("#7e9286"))
+	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_region_panel_body.add_child(subtitle)
+
+	# Appeal summary (from EffectResolver) so the player sees the consequence
+	# of their placement choices in real time.
+	var appeal: Dictionary = EffectResolver.compute_region_appeal(region)
+	if not appeal.is_empty():
+		var appeal_lines: Array[String] = []
+		for axis in appeal.keys():
+			appeal_lines.append("%s %.2f" % [String(axis), appeal[axis]])
+		var appeal_label := Label.new()
+		appeal_label.text = "Appeal: %s" % ", ".join(appeal_lines)
+		appeal_label.add_theme_font_size_override("font_size", 11)
+		appeal_label.add_theme_color_override("font_color", Color("#f4d35e"))
+		appeal_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_region_panel_body.add_child(appeal_label)
+
+	_region_panel_body.add_child(HSeparator.new())
+
+	# Placements list with remove buttons + happiness bars.
+	var placements_header := Label.new()
+	placements_header.text = "INSIDE  (%d)" % region.placements.size()
+	placements_header.add_theme_font_size_override("font_size", 12)
+	placements_header.add_theme_color_override("font_color", Color("#7e9286"))
+	_region_panel_body.add_child(placements_header)
+
+	for i in region.placements.size():
+		var placement: Placement = region.placements[i]
+		var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+		if def == null:
+			continue
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		_region_panel_body.add_child(row)
+
+		var name_label := Label.new()
+		var happiness := EffectResolver._happiness_model.compute_happiness(region, i)
+		name_label.text = "%s  (%.0f%%)" % [def.display_name, happiness * 100.0]
+		name_label.add_theme_font_size_override("font_size", 13)
+		name_label.add_theme_color_override("font_color", _happiness_color(happiness))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_label)
+
+		var rm := Button.new()
+		rm.text = "×"
+		rm.custom_minimum_size = Vector2(28, 28)
+		rm.focus_mode = Control.FOCUS_NONE
+		rm.pressed.connect(_on_remove_placement.bind(_selected_region_id, i))
+		row.add_child(rm)
+
+	_region_panel_body.add_child(HSeparator.new())
+
+	# Add Placeable section — list every PlaceableDef, grey out the ones
+	# that fail can_add_placement (and surface the reason in the tooltip).
+	var add_header := Label.new()
+	add_header.text = "ADD"
+	add_header.add_theme_font_size_override("font_size", 12)
+	add_header.add_theme_color_override("font_color", Color("#7e9286"))
+	_region_panel_body.add_child(add_header)
+
+	for def_id in ContentDB.placeable_defs.keys():
+		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+		var check := RegionRegistry.can_add_placement(_selected_region_id, def_id)
+		var btn := Button.new()
+		btn.text = "+  %s  $%d" % [def.display_name, def.build_cost]
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.custom_minimum_size = Vector2(0, 32)
+		btn.focus_mode = Control.FOCUS_NONE
+		if not check["ok"]:
+			btn.disabled = true
+			btn.tooltip_text = check["reason"]
+		else:
+			btn.tooltip_text = "%s  ·  upkeep $%d/day" % [
+				def.display_name, def.maintenance_cost]
+			btn.pressed.connect(_on_add_placement.bind(_selected_region_id, def_id))
+		_region_panel_body.add_child(btn)
+
+	# Close button at the bottom.
+	_region_panel_body.add_child(HSeparator.new())
+	var close := Button.new()
+	close.text = "Close"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func():
+		_selected_region_id = -1
+		_refresh_region_panel())
+	_region_panel_body.add_child(close)
+
+
+func _happiness_color(h: float) -> Color:
+	if h < 0.4:
+		return Color("#e76f51")
+	if h < 0.7:
+		return Color("#f4a261")
+	return Color("#83c779")
+
+
+func _on_add_placement(region_id: int, def_id: StringName) -> void:
+	var p := RegionRegistry.add_placement(region_id, def_id)
+	if p != null:
+		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+		_push_log("Added [b]%s[/b] to Region #%d" % [def.display_name, region_id])
+		_refresh_region_panel()
+
+
+func _on_remove_placement(region_id: int, index: int) -> void:
+	var region := RegionRegistry.get_region(region_id)
+	if region == null or index >= region.placements.size():
+		return
+	var def: PlaceableDef = ContentDB.placeable_defs.get(
+		region.placements[index].placeable_def_id)
+	if RegionRegistry.remove_placement(region_id, index):
+		var name := def.display_name if def != null else "placement"
+		_push_log("Removed %s from Region #%d" % [name, region_id])
+		_refresh_region_panel()
 
 
 # Build the tooltip body shown when hovering a build-menu button.
@@ -262,24 +439,31 @@ func _build_left_panel(parent: Control) -> void:
 
 
 func _build_right_column(parent: Control) -> void:
-	var col := VBoxContainer.new()
-	col.set_anchors_preset(Control.PRESET_FULL_RECT)
-	col.offset_left = 220
-	col.offset_top = 56
-	col.add_theme_constant_override("separation", 0)
-	parent.add_child(col)
+	# Three-column layout for the area below the top bar:
+	#   left build panel (220 wide, already in _build_left_panel)
+	#   center: map + log
+	#   right region-manage panel (300 wide, hidden until a region is selected)
+	var center := VBoxContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.offset_left = 220
+	center.offset_top = 56
+	center.offset_right = -300   # leave room for the region panel
+	center.add_theme_constant_override("separation", 0)
+	parent.add_child(center)
 
 	_map_view = MAP_VIEW_SCRIPT.new()
 	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_map_view.entity_colors = ENTITY_COLORS
 	_map_view.placement_requested.connect(_on_placement_requested)
 	_map_view.remove_requested.connect(_on_remove_requested)
-	col.add_child(_map_view)
+	center.add_child(_map_view)
+
+	_build_region_panel(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
 	log_panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
-	col.add_child(log_panel)
+	center.add_child(log_panel)
 
 	var log_margin := MarginContainer.new()
 	log_margin.add_theme_constant_override("margin_left", 14)
@@ -313,6 +497,21 @@ func _wire_engine_signals() -> void:
 	EventBus.unlock_acquired.connect(func(node_id):
 		_push_log("[color=#f4d35e]Unlocked: %s[/color]" % node_id))
 
+	# Keep the region panel synced with engine state.
+	EventBus.region_changed.connect(func(rid):
+		if rid == _selected_region_id:
+			_refresh_region_panel())
+	EventBus.region_destroyed.connect(func(rid):
+		if rid == _selected_region_id:
+			_selected_region_id = -1
+			_refresh_region_panel())
+	EventBus.placement_added.connect(func(rid, _idx):
+		if rid == _selected_region_id:
+			_refresh_region_panel())
+	EventBus.placement_removed.connect(func(rid, _idx):
+		if rid == _selected_region_id:
+			_refresh_region_panel())
+
 
 func _stage_starter_park() -> void:
 	# v0.4.0: paint a small mixed region (grass + rocks) so a Lion (which
@@ -334,6 +533,10 @@ func _stage_starter_park() -> void:
 		RegionRegistry.add_placement(region.region_id, &"lion")
 		RegionRegistry.add_placement(region.region_id, &"feeding_trough")
 		RegionRegistry.add_placement(region.region_id, &"water_trough")
+		# Auto-open the Manage Region panel so first-time players see
+		# exactly what it does. They can close it once they've poked at it.
+		_selected_region_id = region.region_id
+		_refresh_region_panel()
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
 			SimClock.rng.randf_range(0, 6),
@@ -483,17 +686,25 @@ func _on_speed_pressed(key: String) -> void:
 
 
 func _on_placement_requested(cell: Vector2i) -> void:
-	if _selected_def_id == &"":
+	# Build mode: place the selected entity at the cell.
+	if _selected_def_id != &"":
+		var id := EntityRegistry.place(_selected_def_id, cell)
+		if id == 0:
+			var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
+			var reason := "blocked"
+			if Ledger.get_balance() < def.build_cost:
+				reason = "not enough money"
+			_push_log("[color=#e76f51]Can't place %s at (%d, %d): %s[/color]" %
+				[def.display_name, cell.x, cell.y, reason])
 		return
-	var id := EntityRegistry.place(_selected_def_id, cell)
-	if id == 0:
-		# place() already pushed a warning; surface it for the player.
-		var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
-		var reason := "blocked"
-		if Ledger.get_balance() < def.build_cost:
-			reason = "not enough money"
-		_push_log("[color=#e76f51]Can't place %s at (%d, %d): %s[/color]" %
-			[def.display_name, cell.x, cell.y, reason])
+	# No build selection: if the cell is in a Region, open the manage panel.
+	var region := RegionRegistry.region_at_cell(cell)
+	if region != null:
+		_selected_region_id = region.region_id
+		_refresh_region_panel()
+	else:
+		_selected_region_id = -1
+		_refresh_region_panel()
 
 
 func _on_remove_requested(cell: Vector2i) -> void:
