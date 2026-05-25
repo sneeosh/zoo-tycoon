@@ -15,11 +15,12 @@ const MAP_VIEW_SCRIPT := preload("res://src/ui/map_view.gd")
 
 # Distinct colour per entity type. Keys must match design/tuning/entities.md ids.
 const ENTITY_COLORS := {
-	&"lion_exhibit":     Color("#c89465"),
-	&"elephant_exhibit": Color("#8895a0"),
-	&"aviary":           Color("#7fb3d5"),
-	&"food_stand":       Color("#e27d60"),
-	&"restroom":         Color("#41b3a3"),
+	&"grass_patch": Color("#3f6b35"),
+	&"rock_patch":  Color("#65726f"),
+	&"water_patch": Color("#3a7eb2"),
+	&"cage_panel":  Color("#7e8a92"),
+	&"food_stand":  Color("#e27d60"),
+	&"restroom":    Color("#41b3a3"),
 }
 
 var _selected_def_id: StringName = &""
@@ -314,10 +315,25 @@ func _wire_engine_signals() -> void:
 
 
 func _stage_starter_park() -> void:
-	EntityRegistry.place(&"lion_exhibit", Vector2i(2, 2))
-	EntityRegistry.place(&"food_stand",   Vector2i(8, 2))
-	EntityRegistry.place(&"restroom",     Vector2i(11, 2))
-	EntityRegistry.place(&"aviary",       Vector2i(2, 7))
+	# v0.4.0: paint a small mixed region (grass + rocks) so a Lion (which
+	# needs both habitats) can move in on day 1. Engine's RegionRegistry
+	# auto-detects the connected component as one Region.
+	for x in range(3, 6):
+		for y in range(3, 5):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	# A couple of rock tiles to give the region the `rocks` zone tag.
+	EntityRegistry.place(&"rock_patch", Vector2i(6, 3))
+	EntityRegistry.place(&"rock_patch", Vector2i(6, 4))
+
+	EntityRegistry.place(&"food_stand", Vector2i(11, 3))
+	EntityRegistry.place(&"restroom",   Vector2i(15, 3))
+
+	# Drop a starter Lion + the infrastructure that keeps it happy.
+	var region := RegionRegistry.region_at_cell(Vector2i(3, 3))
+	if region != null:
+		RegionRegistry.add_placement(region.region_id, &"lion")
+		RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+		RegionRegistry.add_placement(region.region_id, &"water_trough")
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
 			SimClock.rng.randf_range(0, 6),

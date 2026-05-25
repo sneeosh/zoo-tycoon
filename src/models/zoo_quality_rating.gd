@@ -1,25 +1,32 @@
 extends IQualityRating
 class_name ZooQualityRating
-# Zoo's IQualityRating — Prompt 10.
+# Zoo's IQualityRating.
 #
-# Star rating (0–5) derived from placed exhibits' thrill appeal, scaled
-# and bumped by any active EffectResolver quality modifiers. Real games
-# would blend in aggregate visitor satisfaction, condition modifiers, etc.
+# v0.4.0: rating is the mean of compute_region_appeal scores across all
+# regions that have at least one placement. Empty pens / no placements →
+# 0 stars. A region's appeal contribution is the max of its
+# appeal_profile axis values (the strongest signal — a region with one
+# stand-out exhibit shouldn't get penalised for not also having every
+# other axis). EffectResolver.compute_quality_modifier() still adds on
+# top for any active quality Effects.
 
 
 func compute_rating() -> float:
-	var thrill_sum: float = 0.0
-	var exhibit_count: int = 0
-	for inst: EntityInstance in EntityRegistry.instances.values():
-		var def := inst.get_def()
-		if def == null:
+	var scored: float = 0.0
+	var count: int = 0
+	for region: Region in RegionRegistry.all_regions():
+		if region.placements.is_empty():
 			continue
-		if not def.appeal_profile.has(&"thrill"):
+		var appeal: Dictionary = EffectResolver.compute_region_appeal(region)
+		if appeal.is_empty():
 			continue
-		thrill_sum += def.appeal_profile[&"thrill"]
-		exhibit_count += 1
-	if exhibit_count == 0:
+		var max_axis: float = 0.0
+		for v in appeal.values():
+			if v > max_axis:
+				max_axis = v
+		scored += max_axis
+		count += 1
+	if count == 0:
 		return 0.0
-	var avg_thrill: float = thrill_sum / exhibit_count
-	var rating := avg_thrill * 5.0 + EffectResolver.compute_quality_modifier()
+	var rating := (scored / float(count)) * 5.0 + EffectResolver.compute_quality_modifier()
 	return clampf(rating, 0.0, 5.0)

@@ -10,7 +10,8 @@ extends Node
 # storing here too means we can swap them at runtime if needed.
 var _visitor_behavior: VisitorBehavior
 var _visitor_satisfaction: VisitorSatisfactionModel
-var _zoo_quality: ZooQualityRating  # callable from game UI
+var _zoo_quality: ZooQualityRating         # callable from game UI
+var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 
 
 func _ready() -> void:
@@ -21,13 +22,18 @@ func _ready() -> void:
 	_visitor_behavior = VisitorBehavior.new()
 	_visitor_satisfaction = VisitorSatisfactionModel.new()
 	_zoo_quality = ZooQualityRating.new()
+	_animal_happiness = ZooAnimalHappiness.new()
 
 	AgentPool.register_behavior(&"visitor", _visitor_behavior)
 	AgentPool.register_satisfaction_model(&"visitor", _visitor_satisfaction)
+	# v0.4.0 — engine multiplies placement appeal_contribution by the
+	# happiness this returns when computing region appeal. Without this
+	# registration, the engine's default returns 1.0 (no opinion) and
+	# crowded / hungry / lonely animals contribute as much as happy ones.
+	EffectResolver.register_happiness_model(_animal_happiness)
 
-	# Grant the starting tier so lion_exhibit / food_stand / restroom /
-	# visitor are immediately available without the player having to
-	# unlock anything on day 1.
+	# Grant the starting tier so starter content is immediately available
+	# without the player having to unlock anything on day 1.
 	ProgressionManager.force_unlock(&"start")
 
 	print("[Zoo] Bootstrap complete. Starting balance: %d" % Ledger.get_balance())

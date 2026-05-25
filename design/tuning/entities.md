@@ -1,32 +1,39 @@
 # Entities — Zoo
 
 <!--
-Spec: engine/docs/build-plan.md §3 (EntityDef, Effect)
+v0.4.0: switched from "one exhibit EntityDef = whole enclosure" to the
+engine's zone-tile / placeable model. Now there are:
 
-Build-plan §7 (Prompt 10) target: 2–3 animal exhibits + 1 food stand + 1
-restroom. Restroom has no need attached for now — it's a placeholder for
-the next expansion.
+  - Zone tiles: 1-cell entities the player places to define exhibit shape.
+    Adjacent same-kind tiles auto-merge into a Region (engine handles).
+  - Amenities: traditional entities (food stand, restroom) that aren't
+    inside an exhibit. Same model as before.
 
-Exhibits contribute satisfaction to nearby visitors via SATISFACTION
-effects (proximity = a few tiles). The food stand is the only entity
-that satisfies a need (hunger) AND produces revenue.
+Animals + infrastructure (feeding troughs, water troughs) are PlaceableDefs
+in placeables.md — they go inside regions, not on the grid directly.
 -->
 
 ## Entities
 
-| id               | display_name      | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key       | satisfies | appeal_profile |
-| ---------------- | ----------------- | ---------- | ---------------- | ----------- | ----------- | ---------------- | --------- | -------------- |
-| lion_exhibit     | Lion Exhibit      | 500        | 10               | 3           | 3           | lion             |           | thrill:0.7     |
-| elephant_exhibit | Elephant Exhibit  | 600        | 12               | 4           | 4           | elephant         |           | thrill:0.5     |
-| aviary           | Bird Aviary       | 300        | 5                | 3           | 3           | aviary           |           | thrill:0.3     |
-| food_stand       | Food Stand        | 200        | 3                | 2           | 2           | food_stand       | hunger    |                |
-| restroom         | Restroom          | 150        | 2                | 1           | 1           | restroom         |           |                |
+| id          | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key   | satisfies | appeal_profile | zone_kind | zone_tags    |
+| ----------- | --------------- | ---------- | ---------------- | ----------- | ----------- | ------------ | --------- | -------------- | --------- | ------------ |
+| grass_patch | Grass Enclosure | 60         | 1                | 1           | 1           | grass_patch  |           |                | pen       | grass        |
+| rock_patch  | Rocky Enclosure | 90         | 1                | 1           | 1           | rock_patch   |           |                | pen       | grass,rocks  |
+| water_patch | Water Enclosure | 140        | 2                | 1           | 1           | water_patch  |           |                | pen       | water,grass  |
+| cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |
+| food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |
+| restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     |           |                |           |              |
 
 ## Effects
 
-| id              | entity_id        | target       | operation | magnitude | proximity | conditions |
-| --------------- | ---------------- | ------------ | --------- | --------- | --------- | ---------- |
-| lion_thrill     | lion_exhibit     | satisfaction | add       | 0.02      | 4.0       |            |
-| elephant_thrill | elephant_exhibit | satisfaction | add       | 0.015     | 4.0       |            |
-| aviary_thrill   | aviary           | satisfaction | add       | 0.01      | 4.0       |            |
-| food_revenue    | food_stand       | revenue      | add       | 2.0       | 3.0       |            |
+<!--
+Visitor revenue from the food stand stays at the entity level — it's a
+direct service interaction (visitor walks up, buys food). Exhibit appeal
+is no longer at the entity level — it's computed from a region's
+placements via the engine's compute_region_appeal (see
+engine/design/algorithms/region_appeal.md).
+-->
+
+| id           | entity_id  | target  | operation | magnitude | proximity | conditions |
+| ------------ | ---------- | ------- | --------- | --------- | --------- | ---------- |
+| food_revenue | food_stand | revenue | add       | 2.0       | 3.0       |            |

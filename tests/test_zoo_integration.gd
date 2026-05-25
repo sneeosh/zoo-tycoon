@@ -28,12 +28,18 @@ func test_zoo_tuning_loaded_clean() -> void:
 
 
 func test_zoo_entities_loaded() -> void:
-	# Build-plan §7 (Prompt 10): 2-3 exhibits + 1 food stand + 1 restroom.
-	assert_not_null(ContentDB.get_entity_def(&"lion_exhibit"))
-	assert_not_null(ContentDB.get_entity_def(&"elephant_exhibit"))
-	assert_not_null(ContentDB.get_entity_def(&"aviary"))
+	# v0.4.0: exhibits are no longer EntityDefs — they're emergent Regions
+	# built from zone-tile entities. Tuning ships four zone tile types
+	# (grass / rock / water patches + cage panel) plus the food stand and
+	# restroom amenities.
+	assert_not_null(ContentDB.get_entity_def(&"grass_patch"))
+	assert_not_null(ContentDB.get_entity_def(&"rock_patch"))
+	assert_not_null(ContentDB.get_entity_def(&"cage_panel"))
 	assert_not_null(ContentDB.get_entity_def(&"food_stand"))
 	assert_not_null(ContentDB.get_entity_def(&"restroom"))
+	# Animal placeables loaded too.
+	assert_not_null(ContentDB.placeable_defs.get(&"lion"))
+	assert_not_null(ContentDB.placeable_defs.get(&"feeding_trough"))
 
 
 func test_visitor_agent_type_loaded() -> void:
@@ -118,12 +124,24 @@ func test_full_day_runs_end_to_end() -> void:
 	assert_eq(SimClock.current_day, 1, "exactly one day elapsed")
 
 
-func test_quality_rating_reflects_placed_exhibits() -> void:
+func test_quality_rating_reflects_region_appeal() -> void:
+	# v0.4.0: rating is mean of regions' max-axis appeal × 5.
 	var initial := ZooBootstrap.get_quality_rating()
-	assert_eq(initial, 0.0, "no exhibits → 0")
-	EntityRegistry.place(&"lion_exhibit", Vector2i(0, 0))   # thrill 0.7
-	EntityRegistry.place(&"aviary", Vector2i(5, 5))         # thrill 0.3
-	# Mean thrill = 0.5; * 5.0 = 2.5. No active quality modifiers.
-	assert_almost_eq(ZooBootstrap.get_quality_rating(), 2.5, 0.01)
+	assert_eq(initial, 0.0, "no populated regions → 0")
+	# Build a small grass region and drop a lion in it.
+	for x in range(0, 3):
+		for y in range(0, 3):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 3))   # adds rocks tag
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(region)
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	# Lion contributes thrill 0.8 and danger 0.6; happiness will be near 1.0
+	# (companions 0 < social_min 1 → small penalty). Max axis ≈ 0.8 × 0.x
+	# → rating ≈ 3-4 stars, definitely > 1.
+	var rating := ZooBootstrap.get_quality_rating()
+	assert_gt(rating, 1.0, "populated region with a lion should rate > 1 star")
 
 

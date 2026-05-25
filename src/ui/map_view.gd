@@ -32,6 +32,7 @@ var preview_def_id: StringName = &""
 const SPRITE_DIR := "res://assets/sprites/"
 var _sprite_cache: Dictionary = {}       # entity_def_id (StringName) -> Texture2D
 var _sprites_checked: Dictionary = {}    # entity_def_id (StringName) -> bool (true once looked up)
+var _placeable_sprite_cache: Dictionary = {}  # placeable_def_id (StringName) -> Texture2D
 var _visitor_sprite: Texture2D
 
 var _hover_cell: Vector2i = Vector2i.ZERO
@@ -109,10 +110,54 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_grid()
 	_draw_entities()
+	_draw_placements()
 	_draw_entrance_gate()
 	_draw_visitors()
 	_draw_preview()
 	_draw_inspector_card()
+
+
+# v0.4.0 — render PlaceableDefs inside their regions. Each placement is
+# anchored at its primary_cell (engine stamps the first cell of the
+# region at add-time; can be overridden via state["primary_cell"]).
+# Drawn smaller than a full tile so multiple placements in the same
+# region don't visually collide.
+func _draw_placements() -> void:
+	for region: Region in RegionRegistry.all_regions():
+		for i in region.placements.size():
+			var placement: Placement = region.placements[i]
+			# Distribute placements across the region's cells so they don't
+			# all stack at primary_cell. Game-set state["primary_cell"]
+			# (an explicit override) still wins.
+			var anchor: Vector2i
+			if placement.state.has("primary_cell"):
+				anchor = placement.state["primary_cell"]
+			elif not region.cells.is_empty():
+				anchor = region.cells[i % region.cells.size()]
+			else:
+				anchor = placement.primary_cell
+			var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+			if def == null:
+				continue
+			var sprite := _load_sprite_optional(String(def.sprite_key))
+			var anchor_screen := _cell_to_screen(anchor)
+			var sprite_size: float = float(TILE_SIZE) * 1.1  # slight overflow ok
+			var rect := Rect2(
+				anchor_screen + Vector2(
+					(TILE_SIZE - sprite_size) * 0.5,
+					(TILE_SIZE - sprite_size) * 0.5),
+				Vector2(sprite_size, sprite_size))
+			# Soft shadow under each placement.
+			draw_circle(
+				rect.position + rect.size * 0.5 + Vector2(0, 3),
+				sprite_size * 0.45, Color(0, 0, 0, 0.30))
+			if sprite != null:
+				draw_texture_rect(sprite, rect, false)
+			else:
+				# Fallback: coloured dot.
+				draw_circle(
+					rect.position + rect.size * 0.5,
+					sprite_size * 0.45, Color("#c89465"))
 
 
 # ---------------------------------------------------------------------------
@@ -509,13 +554,26 @@ func _sprite_for(def_id: StringName) -> Texture2D:
 	return tex
 
 
+var _sprite_by_name: Dictionary = {}  # name -> Texture2D (or null for cached misses)
+
+
+# Centralized sprite loader. Caches misses too so a missing PNG doesn't
+# hit the disk every frame. The cache also avoids a baffling Godot
+# behaviour where re-`load()`-ing the same Resource path each frame can
+# return a placeholder white texture (observed on v4.5.1) — caching the
+# Texture2D reference on first load sidesteps that entirely.
 func _load_sprite_optional(name: String) -> Texture2D:
+	if _sprite_by_name.has(name):
+		return _sprite_by_name[name]
 	var path := SPRITE_DIR + name + ".png"
 	if not ResourceLoader.exists(path):
+		_sprite_by_name[name] = null
 		return null
 	var res := load(path)
 	if res is Texture2D:
+		_sprite_by_name[name] = res
 		return res
+	_sprite_by_name[name] = null
 	return null
 
 
