@@ -872,11 +872,23 @@ func _add_build_button(col: VBoxContainer, def_id: StringName) -> void:
 		def.footprint.x,
 		def.footprint.y,
 	]
+	# Small sprite thumbnail so the visual identity of each option lands
+	# faster than reading the name. Falls back gracefully if the sprite
+	# doesn't exist — the text label still works.
+	var sprite_path := "res://assets/sprites/%s.png" % String(def.sprite_key)
+	if ResourceLoader.exists(sprite_path):
+		var tex: Texture2D = load(sprite_path)
+		if tex != null:
+			btn.icon = tex
+			btn.expand_icon = true
 	btn.tooltip_text = _build_tooltip_for(def)
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	btn.custom_minimum_size = Vector2(0, 52)
+	btn.custom_minimum_size = Vector2(0, 56)
 	btn.toggle_mode = true
 	btn.focus_mode = Control.FOCUS_NONE
+	# Constrain the icon so it doesn't dominate; expand_icon scales to fit.
+	btn.add_theme_constant_override("icon_max_width", 38)
+	btn.add_theme_constant_override("h_separation", 10)
 	btn.toggled.connect(_on_build_toggled.bind(def_id))
 	_build_buttons[def_id] = btn
 	col.add_child(btn)
