@@ -1,0 +1,84 @@
+name: Deploy web build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Prevent overlapping deploys; the latest commit wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.5.1-stable
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Godot ${{ env.GODOT_VERSION }}
+        run: |
+          set -eux
+          wget -qO godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q godot.zip
+          chmod +x "Godot_v${GODOT_VERSION}_linux.x86_64"
+          sudo mv "Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          godot --version
+
+      - name: Install export templates
+        run: |
+          set -eux
+          wget -qO templates.tpz \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          # Strip the "-stable" suffix for the template directory name —
+          # Godot looks for "<major>.<minor>.<patch>.<status>".
+          # e.g. "4.5.1-stable" -> "4.5.1.stable"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION/-/.}"
+          mkdir -p "$TEMPLATE_DIR"
+          unzip -q templates.tpz -d /tmp/templates
+          mv /tmp/templates/templates/* "$TEMPLATE_DIR/"
+
+      - name: Re-import project resources
+        run: |
+          # Godot needs two import passes on a cold project for the .godot
+          # cache to fully populate; the first run sometimes errors out on
+          # cross-resource references before the second pass completes them.
+          godot --headless --import || true
+          godot --headless --import
+
+      - name: Export web build
+        run: |
+          set -eux
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+          # Pages needs a .nojekyll to avoid stripping files starting with _
+          touch build/web/.nojekyll
+          ls -la build/web
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
