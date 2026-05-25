@@ -47,6 +47,7 @@ const TRAIT_FUDGE := &"distance_fudge"
 const STATE := &"state"
 const SPAWN_TICK := &"spawn_tick"
 const BROWSE_TARGET := &"browse_target"
+const BROWSE_VIEW_POS := &"browse_view_pos"  # Vector2 view-cell center
 const LINGER_UNTIL := &"linger_until"     # 0 = not currently lingering
 # Satisfaction at the moment the visitor decided to leave. Reading
 # agent.satisfaction in on_despawn isn't right — hunger keeps decaying
@@ -164,8 +165,9 @@ func _step_toward_target(agent: Agent) -> void:
 
 
 func _step_browsing(agent: Agent) -> void:
-	# v0.4.0: browse_target is now a region_id (was an entity_id).
-	# Visitors walk to a region's centroid, linger, then pick another.
+	# Visitors walk to a *viewing cell* adjacent to the region (outside it),
+	# not the region's centroid. Standing inside the exhibit on top of the
+	# animals reads as a bug; gathering at the fence line reads as a crowd.
 	var target_region_id: int = agent.behavior_state.get(BROWSE_TARGET, 0)
 	var region: Region = null
 	if target_region_id > 0:
@@ -176,8 +178,12 @@ func _step_browsing(agent: Agent) -> void:
 			SimClock.rng.randf_range(-0.05, 0.05),
 			SimClock.rng.randf_range(-0.05, 0.05))
 		return
-	var center := _region_centroid(region)
-	var to_target := center - agent.position
+	var view_pos: Vector2 = agent.behavior_state.get(BROWSE_VIEW_POS, Vector2.INF)
+	if view_pos == Vector2.INF:
+		# Region was picked but no view point yet (loaded save, edge case).
+		view_pos = _pick_viewing_point(region, agent)
+		agent.behavior_state[BROWSE_VIEW_POS] = view_pos
+	var to_target := view_pos - agent.position
 	if to_target.length() <= BROWSE_ARRIVAL_DISTANCE:
 		var linger_until: int = agent.behavior_state.get(LINGER_UNTIL, 0)
 		if linger_until == 0:
@@ -188,12 +194,46 @@ func _step_browsing(agent: Agent) -> void:
 			agent.behavior_state[LINGER_UNTIL] = 0
 			return
 		# Drift while lingering — gives the impression of looking around
-		# without overlapping with other visitors at the same region.
+		# without overlapping with other visitors at the same fence spot.
 		agent.position += Vector2(
 			SimClock.rng.randf_range(-0.04, 0.04),
 			SimClock.rng.randf_range(-0.04, 0.04))
 		return
 	agent.position += to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
+
+
+# A viewing cell is a tile adjacent (4-neighbor) to the region but NOT in it.
+# Picking randomly among the candidates spreads visitors around the perimeter
+# instead of stacking them on one spot. Returns the world-space center of the
+# chosen cell. Falls back to the region centroid if the region has no
+# exterior neighbors (fully surrounded — shouldn't happen in practice).
+func _pick_viewing_point(region: Region, _agent: Agent) -> Vector2:
+	var cell_set := {}
+	for c in region.cells:
+		cell_set[c] = true
+	var candidates: Array[Vector2i] = []
+	var neighbors: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0),
+		Vector2i(0, 1), Vector2i(0, -1)]
+	for c in region.cells:
+		for n in neighbors:
+			var ext := c + n
+			if cell_set.has(ext):
+				continue
+			# Skip cells inside another region — those are someone else's
+			# exhibit, not a viewing platform.
+			if RegionRegistry.region_at_cell(ext) != null:
+				continue
+			candidates.append(ext)
+	if candidates.is_empty():
+		return _region_centroid(region)
+	# A bit of noise inside the chosen cell so two visitors landing on the
+	# same viewing slot don't pixel-stack.
+	var picked: Vector2i = candidates[SimClock.rng.randi_range(0, candidates.size() - 1)]
+	var jitter := Vector2(
+		SimClock.rng.randf_range(0.2, 0.8),
+		SimClock.rng.randf_range(0.2, 0.8))
+	return Vector2(picked) + jitter
 
 
 func _region_centroid(region: Region) -> Vector2:
@@ -286,13 +326,19 @@ func _pick_browse_target(agent: Agent) -> void:
 		total_weight += score
 	if candidates.is_empty():
 		agent.behavior_state[BROWSE_TARGET] = 0
+		agent.behavior_state[BROWSE_VIEW_POS] = Vector2.INF
 		return
+	var picked_region_id: int = candidates[candidates.size() - 1]
 	var pick := SimClock.rng.randf() * total_weight
 	var accum: float = 0.0
 	for i in candidates.size():
 		accum += weights[i]
 		if pick <= accum:
-			agent.behavior_state[BROWSE_TARGET] = candidates[i]
-			return
-	# Fallback (FP edge case): pick last candidate.
-	agent.behavior_state[BROWSE_TARGET] = candidates[candidates.size() - 1]
+			picked_region_id = candidates[i]
+			break
+	agent.behavior_state[BROWSE_TARGET] = picked_region_id
+	var region := RegionRegistry.get_region(picked_region_id)
+	if region != null:
+		agent.behavior_state[BROWSE_VIEW_POS] = _pick_viewing_point(region, agent)
+	else:
+		agent.behavior_state[BROWSE_VIEW_POS] = Vector2.INF
