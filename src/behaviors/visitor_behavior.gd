@@ -162,39 +162,43 @@ func _step_toward_target(agent: Agent) -> void:
 
 
 func _step_browsing(agent: Agent) -> void:
-	var target_id: int = agent.behavior_state.get(BROWSE_TARGET, 0)
-	var inst: EntityInstance = null
-	if target_id != 0:
-		inst = EntityRegistry.get_instance(target_id)
-	if inst == null:
+	# v0.4.0: browse_target is now a region_id (was an entity_id).
+	# Visitors walk to a region's centroid, linger, then pick another.
+	var target_region_id: int = agent.behavior_state.get(BROWSE_TARGET, 0)
+	var region: Region = null
+	if target_region_id > 0:
+		region = RegionRegistry.get_region(target_region_id)
+	if region == null or region.cells.is_empty():
 		_pick_browse_target(agent)
 		agent.position += Vector2(
 			SimClock.rng.randf_range(-0.05, 0.05),
 			SimClock.rng.randf_range(-0.05, 0.05))
 		return
-	var def := inst.get_def()
-	var center := Vector2(inst.position) + Vector2(def.footprint) * 0.5
+	var center := _region_centroid(region)
 	var to_target := center - agent.position
 	if to_target.length() <= BROWSE_ARRIVAL_DISTANCE:
-		# Arrived. Linger so satisfaction can accrue from proximity effects
-		# and the player sees visitors clustered AT the exhibit, not
-		# bouncing through it. Linger duration sampled per-arrival.
 		var linger_until: int = agent.behavior_state.get(LINGER_UNTIL, 0)
 		if linger_until == 0:
 			agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
-				_linger_duration_for(agent, def)
+				_linger_duration_for_region(agent, region)
 		elif SimClock.current_tick >= linger_until:
-			# Done lingering — move on.
 			_pick_browse_target(agent)
 			agent.behavior_state[LINGER_UNTIL] = 0
 			return
-		# Small drift while lingering so visitors at the same exhibit
-		# don't perfectly overlap.
+		# Drift while lingering — gives the impression of looking around
+		# without overlapping with other visitors at the same region.
 		agent.position += Vector2(
-			SimClock.rng.randf_range(-0.03, 0.03),
-			SimClock.rng.randf_range(-0.03, 0.03))
+			SimClock.rng.randf_range(-0.04, 0.04),
+			SimClock.rng.randf_range(-0.04, 0.04))
 		return
 	agent.position += to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
+
+
+func _region_centroid(region: Region) -> Vector2:
+	var sum := Vector2.ZERO
+	for c in region.cells:
+		sum += Vector2(c)
+	return sum / float(region.cells.size()) + Vector2(0.5, 0.5)
 
 
 func _step_toward_exit(agent: Agent) -> void:
@@ -236,16 +240,16 @@ func _pick_satisfier_with_noise(agent: Agent, need_id: StringName) -> int:
 	return best_id
 
 
-# Linger duration at a browse target, in ticks. Scales with appeal_match:
+# Linger duration at a region, in ticks. Scales with appeal_match_region:
 #   appeal ≤ FLOOR → BASE (visitor glances and moves on)
-#   appeal = 1     → MAX (a perfect-match exhibit holds them)
+#   appeal = 1     → MAX (a region full of perfect-match exhibits holds them)
 # A small random jitter (±15%) prevents identical-trait visitors arriving
 # together from departing in unison.
-func _linger_duration_for(_agent: Agent, def: EntityDef) -> int:
+func _linger_duration_for_region(_agent: Agent, region: Region) -> int:
 	var agent_type: AgentType = ContentDB.get_agent_type(_agent.agent_type_id)
 	if agent_type == null:
 		return LINGER_TICKS_MIN
-	var appeal := EffectResolver.appeal_match(agent_type, def)
+	var appeal := EffectResolver.appeal_match_region(agent_type, region)
 	var base: float
 	if appeal <= LINGER_APPEAL_FLOOR:
 		base = LINGER_TICKS_BASE
@@ -256,9 +260,10 @@ func _linger_duration_for(_agent: Agent, def: EntityDef) -> int:
 	return int(base * jitter)
 
 
-# Browse target picked from entities with appeal_match > 0, weighted by
-# match score. Plain-roulette pick — higher-match exhibits are more likely
-# but not certain, so the same agent visits varied exhibits over its stay.
+# Browse target picked from populated Regions, weighted by
+# appeal_match_region against the agent type's preferences. Plain-
+# roulette pick — higher-match regions are more likely but not
+# certain, so the same agent visits varied regions over its stay.
 func _pick_browse_target(agent: Agent) -> void:
 	var agent_type: AgentType = ContentDB.get_agent_type(agent.agent_type_id)
 	if agent_type == null:
@@ -267,18 +272,14 @@ func _pick_browse_target(agent: Agent) -> void:
 	var candidates: Array[int] = []
 	var weights: Array[float] = []
 	var total_weight: float = 0.0
-	for entity_id in EntityRegistry.instances.keys():
-		var inst: EntityInstance = EntityRegistry.instances[entity_id]
-		var def := inst.get_def()
-		if def == null:
+	for region in RegionRegistry.all_regions():
+		# Empty regions don't have appeal — skip.
+		if region.placements.is_empty():
 			continue
-		# Skip pure utilities (no appeal) — visitors don't stroll to the toilet.
-		if def.appeal_profile.is_empty():
-			continue
-		var score := EffectResolver.appeal_match(agent_type, def)
+		var score := EffectResolver.appeal_match_region(agent_type, region)
 		if score <= 0.0:
 			continue
-		candidates.append(entity_id)
+		candidates.append(region.region_id)
 		weights.append(score)
 		total_weight += score
 	if candidates.is_empty():
