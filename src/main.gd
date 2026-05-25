@@ -39,58 +39,32 @@ var _hud_accumulator: float = 0.0
 func _ready() -> void:
 	_build_ui()
 	_wire_engine_signals()
+	_refresh_speed_buttons()
+
+	# Headless harness modes take over before anything game-specific runs,
+	# so scripted scenarios start from a known-empty world.
+	var sess := ScriptedSession.create_from_env(self)
+	if sess != null:
+		sess.register_action("assert_quality_at_least", _harness_assert_quality)
+		await sess.run()
+		return
+
 	_stage_starter_park()
 	_refresh_hud()
-	_refresh_speed_buttons()
 	_push_log("Zoo opened. Click a building, then click the map to place. Right-click to sell.")
-	_maybe_schedule_screenshot()
 
-
-# --- Screenshot mode -------------------------------------------------------
-#
-# Pass `--zoo-shot=/abs/path.png[:warmup_ticks]` (or set $ZOO_SHOT) to run the
-# scene, fast-forward N ticks (default 30), save a PNG of the viewport, and
-# quit. Used for iteration without needing a live editor / MCP bridge.
-
-func _maybe_schedule_screenshot() -> void:
-	var spec := _get_shot_spec()
-	if spec.is_empty():
+	# One-shot screenshot mode runs against the staged starter park.
+	if await Screenshotter.maybe_capture(self):
 		return
-	var path: String = spec["path"]
-	var warmup: int = spec["warmup"]
-	var prev_speed := SimClock.speed
-	SimClock.set_speed(8.0)
-	SimClock.play()
-	for _i in warmup:
-		await EventBus.tick
-	SimClock.set_speed(prev_speed)
-	await get_tree().process_frame
-	await get_tree().process_frame
-	var img := get_viewport().get_texture().get_image()
-	var err := img.save_png(path)
-	if err != OK:
-		push_error("[Zoo] save_png failed: %s -> %s" % [error_string(err), path])
-	else:
-		print("[Zoo] screenshot saved: %s" % path)
-	get_tree().quit()
 
 
-func _get_shot_spec() -> Dictionary:
-	var raw := ""
-	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--zoo-shot="):
-			raw = arg.substr("--zoo-shot=".length())
-			break
-	if raw.is_empty():
-		raw = OS.get_environment("ZOO_SHOT")
-	if raw.is_empty():
-		return {}
-	var parts := raw.split(":")
-	var path := parts[0]
-	var warmup := 30
-	if parts.size() > 1 and parts[1].is_valid_int():
-		warmup = parts[1].to_int()
-	return {"path": path, "warmup": warmup}
+func _harness_assert_quality(action: Dictionary) -> bool:
+	var min_v := float(action.get("value", 0.0))
+	var actual: float = ZooBootstrap.get_quality_rating()
+	var ok := actual >= min_v
+	var status := "OK " if ok else "FAIL"
+	print("[assert %s] quality >= %.2f  (actual=%.2f)" % [status, min_v, actual])
+	return ok
 
 
 # ============================================================================
