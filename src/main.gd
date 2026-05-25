@@ -41,6 +41,7 @@ var _reports_modal: Control
 var _reports_body: VBoxContainer
 var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
+var _welcome_btn_row: HBoxContainer
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
 var _goals_state: Dictionary = {       # one-way: true once completed
@@ -60,6 +61,17 @@ var _endgame_title: Label
 var _endgame_body: VBoxContainer
 var _endgame_resolved: bool = false    # idempotent: only fire end-game once
 
+# Tutorial state — set by _start_tutorial. The overlay's only visible while
+# active. Each step has its own advance condition checked via engine signals.
+var _tutorial_active: bool = false
+var _tutorial_step: int = 0
+var _tutorial_overlay: PanelContainer
+var _tutorial_prompt: RichTextLabel
+var _tutorial_progress: Label
+# Captured at the start of step 3 so we can detect "visitor paid us" by
+# watching the balance climb above the floor by some margin.
+var _tutorial_step3_floor: int = 0
+
 var _hud_accumulator: float = 0.0
 
 
@@ -78,13 +90,16 @@ func _ready() -> void:
 		await sess.run()
 		return
 
-	_stage_starter_park()
 	_refresh_hud()
-	_push_log("Zoo opened. Click a building, then click the map to place. Right-click to sell.")
-	# Skip the welcome modal when a screenshot is being captured — otherwise
-	# every dev screenshot is just the welcome card.
+	_push_log("Welcome to your Zoo. Pick Tutorial or Skip to begin.")
+	# In screenshot / scripted modes the welcome modal would just block the
+	# capture, so we stage the starter park directly and skip the welcome.
+	# Interactive launches go through the welcome which then either runs the
+	# tutorial or stages the starter park itself.
 	if Screenshotter.get_spec().is_empty():
 		_open_welcome()
+	else:
+		_stage_starter_park()
 
 	# One-shot screenshot mode runs against the staged starter park.
 	if await Screenshotter.maybe_capture(self):
@@ -339,17 +354,12 @@ func _on_reports_pressed() -> void:
 const WELCOME_LINES: Array = [
 	"Welcome to your Zoo!",
 	"",
-	"You're starting with $10,000, a Lion savanna, a Penguin pool, and a",
-	"hungry food stand. Guests are arriving — speed up time to watch them!",
+	"You're the new director. Build exhibits, attract guests, and turn",
+	"a profit — see the MISSION panel on the left for your 30-day goal.",
 	"",
-	"How to play:",
-	"   1.  Click any zone tile to manage that exhibit's animals",
-	"   2.  Buy a building from the BUILD panel, then click the map to place",
-	"   3.  Press 2x / 4x at the top right to speed up the day",
-	"   4.  Right-click a building to sell it (half refund)",
-	"",
-	"Goal: turn a profit and keep guests happy — check the Goals panel",
-	"on the left for milestones, and Reports for the books.",
+	"First time here? Take the 60-second tutorial — it walks you through",
+	"building your first exhibit, placing an animal, and watching a",
+	"guest pay. Otherwise, jump straight in with a pre-built starter zoo.",
 ]
 
 
@@ -403,16 +413,26 @@ func _build_welcome_modal(parent: Control) -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
 
-	var btn_row := HBoxContainer.new()
-	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_child(btn_row)
+	_welcome_btn_row = HBoxContainer.new()
+	_welcome_btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_welcome_btn_row.add_theme_constant_override("separation", 12)
+	col.add_child(_welcome_btn_row)
+	# Buttons are added on open so we can render either choice-mode (first
+	# launch — tutorial vs skip) or info-mode (the "?" help button — close).
 
-	var got_it := Button.new()
-	got_it.text = "  Got it — let's go!  "
-	got_it.custom_minimum_size = Vector2(220, 40)
-	got_it.focus_mode = Control.FOCUS_NONE
-	got_it.pressed.connect(_close_welcome)
-	btn_row.add_child(got_it)
+
+func _on_welcome_start_tutorial() -> void:
+	_welcome_modal.visible = false
+	_start_tutorial()
+	SimClock.play()
+	_refresh_speed_buttons()
+
+
+func _on_welcome_skip_tutorial() -> void:
+	_welcome_modal.visible = false
+	_stage_starter_park()
+	SimClock.play()
+	_refresh_speed_buttons()
 
 
 # ============================================================================
@@ -549,9 +569,171 @@ func _on_endgame_continue() -> void:
 	_refresh_speed_buttons()
 
 
+# ============================================================================
+# Tutorial overlay — 3-step guided onboarding per ROADMAP §1.2
+# ============================================================================
+
+const TUTORIAL_STEPS: Array = [
+	{
+		"title": "Step 1 of 3 — Build an exhibit",
+		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit Region automatically.",
+	},
+	{
+		"title": "Step 2 of 3 — Add an animal",
+		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Region panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
+	},
+	{
+		"title": "Step 3 of 3 — Speed time, watch them pay",
+		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in and pay — watch for the [color=#f4d35e]+$10[/color] floats above their heads.",
+	},
+]
+
+
+func _build_tutorial_overlay(parent: Control) -> void:
+	# Banner across the top of the map area (under the top bar, above the
+	# play surface). Doesn't block input — visitors and the map work fine
+	# behind it. Hidden until _start_tutorial.
+	_tutorial_overlay = PanelContainer.new()
+	_tutorial_overlay.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_tutorial_overlay.offset_top = 64
+	_tutorial_overlay.offset_left = 240
+	_tutorial_overlay.offset_right = -320
+	_tutorial_overlay.custom_minimum_size = Vector2(0, 88)
+	_tutorial_overlay.add_theme_stylebox_override("panel",
+		_panel_box(Color("#2a3324")))
+	_tutorial_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_overlay.visible = false
+	parent.add_child(_tutorial_overlay)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	_tutorial_overlay.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	margin.add_child(row)
+
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 2)
+	row.add_child(col)
+
+	_tutorial_progress = Label.new()
+	_tutorial_progress.text = ""
+	_tutorial_progress.add_theme_font_size_override("font_size", 12)
+	_tutorial_progress.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(_tutorial_progress)
+
+	_tutorial_prompt = RichTextLabel.new()
+	_tutorial_prompt.bbcode_enabled = true
+	_tutorial_prompt.fit_content = true
+	_tutorial_prompt.scroll_active = false
+	_tutorial_prompt.add_theme_font_size_override("normal_font_size", 13)
+	_tutorial_prompt.add_theme_color_override("default_color", Color("#e6e6e6"))
+	_tutorial_prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tutorial_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(_tutorial_prompt)
+
+	# A small skip link — never trap a player who already knows the game.
+	var skip := Button.new()
+	skip.text = "Skip tutorial"
+	skip.flat = true
+	skip.focus_mode = Control.FOCUS_NONE
+	skip.add_theme_color_override("font_color", Color("#7e9286"))
+	skip.add_theme_font_size_override("font_size", 11)
+	skip.mouse_filter = Control.MOUSE_FILTER_STOP
+	skip.pressed.connect(_end_tutorial.bind(false))
+	row.add_child(skip)
+
+
+func _start_tutorial() -> void:
+	_tutorial_active = true
+	_tutorial_step = 0
+	if _tutorial_overlay != null:
+		_tutorial_overlay.visible = true
+	_show_tutorial_step()
+	# Don't auto-stage the starter park — the tutorial IS the starter.
+	# A handful of starter guests so step 3 has someone to pay quickly.
+	for i in range(3):
+		AgentPool.spawn(&"visitor", Vector2(
+			SimClock.rng.randf_range(0.0, 3.0),
+			SimClock.rng.randf_range(0.0, 4.0)))
+
+
+func _show_tutorial_step() -> void:
+	if _tutorial_step >= TUTORIAL_STEPS.size():
+		_end_tutorial(true)
+		return
+	var spec: Dictionary = TUTORIAL_STEPS[_tutorial_step]
+	_tutorial_progress.text = spec["title"]
+	_tutorial_prompt.text = spec["body"]
+	if _tutorial_step == 2:
+		_tutorial_step3_floor = Ledger.get_balance()
+
+
+func _check_tutorial_advance() -> void:
+	if not _tutorial_active:
+		return
+	match _tutorial_step:
+		0:
+			# Done when the player has built a region with at least 2 cells
+			# (any zone kind — they may have picked rocks or water).
+			for r in RegionRegistry.all_regions():
+				if r.cells.size() >= 2:
+					_advance_tutorial()
+					return
+		1:
+			# Done when any region has any placement.
+			for r in RegionRegistry.all_regions():
+				if not r.placements.is_empty():
+					_advance_tutorial()
+					return
+		2:
+			# Done when balance has gone up by at least $10 (one ticket)
+			# since the step began.
+			if Ledger.get_balance() >= _tutorial_step3_floor + 10:
+				_advance_tutorial()
+				return
+
+
+func _advance_tutorial() -> void:
+	_tutorial_step += 1
+	if _tutorial_step >= TUTORIAL_STEPS.size():
+		_end_tutorial(true)
+	else:
+		_push_log("[color=#83c779]✓ Tutorial step done.[/color]")
+		_show_tutorial_step()
+
+
+func _end_tutorial(completed: bool) -> void:
+	_tutorial_active = false
+	if _tutorial_overlay != null:
+		_tutorial_overlay.visible = false
+	if completed:
+		_push_log("[color=#f4d35e]★ Tutorial complete. Keep building — you're aiming for $20k and 50 rep in 30 days.[/color]")
+	else:
+		_push_log("[color=#7e9286]Tutorial skipped.[/color]")
+
+
 func _open_welcome() -> void:
+	# Initial launch — offer the tutorial vs the pre-built starter zoo.
 	if _welcome_modal == null:
 		return
+	_render_welcome_buttons(true)
+	_welcome_modal.visible = true
+	SimClock.pause()
+	_refresh_speed_buttons()
+
+
+func _open_help() -> void:
+	# Mid-game "?" button — same modal, info-only. Doesn't touch sim state
+	# beyond pausing while the player reads.
+	if _welcome_modal == null:
+		return
+	_render_welcome_buttons(false)
 	_welcome_modal.visible = true
 	SimClock.pause()
 	_refresh_speed_buttons()
@@ -561,6 +743,32 @@ func _close_welcome() -> void:
 	_welcome_modal.visible = false
 	SimClock.play()
 	_refresh_speed_buttons()
+
+
+func _render_welcome_buttons(initial_launch: bool) -> void:
+	for child in _welcome_btn_row.get_children():
+		child.queue_free()
+	if initial_launch:
+		var tutorial_btn := Button.new()
+		tutorial_btn.text = "  Start tutorial  "
+		tutorial_btn.custom_minimum_size = Vector2(190, 42)
+		tutorial_btn.focus_mode = Control.FOCUS_NONE
+		tutorial_btn.pressed.connect(_on_welcome_start_tutorial)
+		_welcome_btn_row.add_child(tutorial_btn)
+
+		var skip_btn := Button.new()
+		skip_btn.text = "  Skip — pre-built zoo  "
+		skip_btn.custom_minimum_size = Vector2(220, 42)
+		skip_btn.focus_mode = Control.FOCUS_NONE
+		skip_btn.pressed.connect(_on_welcome_skip_tutorial)
+		_welcome_btn_row.add_child(skip_btn)
+	else:
+		var close_btn := Button.new()
+		close_btn.text = "  Got it  "
+		close_btn.custom_minimum_size = Vector2(160, 42)
+		close_btn.focus_mode = Control.FOCUS_NONE
+		close_btn.pressed.connect(_close_welcome)
+		_welcome_btn_row.add_child(close_btn)
 
 
 # ============================================================================
@@ -1068,7 +1276,7 @@ func _build_top_bar(parent: Control) -> void:
 	help_btn.tooltip_text = "Show the welcome guide again"
 	help_btn.custom_minimum_size = Vector2(36, 36)
 	help_btn.focus_mode = Control.FOCUS_NONE
-	help_btn.pressed.connect(_open_welcome)
+	help_btn.pressed.connect(_open_help)
 	row.add_child(help_btn)
 
 	var reports_btn := Button.new()
@@ -1230,6 +1438,7 @@ func _build_right_column(parent: Control) -> void:
 
 	_build_region_panel(parent)
 	_build_reports_modal(parent)
+	_build_tutorial_overlay(parent)
 	_build_welcome_modal(parent)
 	_build_endgame_modal(parent)
 
@@ -1269,6 +1478,12 @@ func _wire_engine_signals() -> void:
 			_push_log("[color=#a8c4b0]A guest entered.[/color]"))
 	EventBus.unlock_acquired.connect(func(node_id):
 		_push_log("[color=#f4d35e]Unlocked: %s[/color]" % node_id))
+
+	# Tutorial step advance: any signal that could indicate progress.
+	EventBus.region_created.connect(func(_rid): _check_tutorial_advance())
+	EventBus.region_changed.connect(func(_rid): _check_tutorial_advance())
+	EventBus.placement_added.connect(func(_rid, _idx): _check_tutorial_advance())
+	EventBus.balance_changed.connect(func(_b): _check_tutorial_advance())
 
 	# Keep the region panel synced with engine state.
 	EventBus.region_changed.connect(func(rid):
