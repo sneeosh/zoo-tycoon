@@ -1,12 +1,13 @@
-# CLAUDE.md — Zoo Tycoon (Engine Validation)
+# CLAUDE.md — Zoo Tycoon
 
 Operating rules for working in this repo. Read fully before making changes.
 
-This repo is the **validation game** for the Tycoon Engine — Prompt 10 in
-`engine/docs/build-plan.md`. The engine itself lives in the submodule at
-`engine/` (pinned to a tagged release). The actual addon is at
-`engine/addons/tycoon_core/` and is symlinked into `addons/tycoon_core/` so
-the engine's autoload paths (`res://addons/tycoon_core/...`) work unchanged.
+This is the **Zoo Tycoon product repo**. It began life as the engine's
+validation game (per `engine/docs/build-plan.md` Prompt 10) and has since
+graduated to being the real product — see `ROADMAP.md`. The engine itself
+lives in the submodule at `engine/` (pinned to a tagged release); the actual
+addon is at `engine/addons/tycoon_core/`, symlinked into `addons/tycoon_core/`
+so the engine's autoload paths (`res://addons/tycoon_core/...`) work unchanged.
 
 The engine's contract is in `engine/CLAUDE.md` — read it. **Everything that
 file says about the engine continues to apply when working here.** Zoo work
@@ -14,22 +15,26 @@ must not pretend the engine is malleable.
 
 ---
 
-## 0. What this repo is — and what it is NOT
+## 0. What this repo is
 
-This is a **deliberately minimal Zoo Tycoon**. Its only purpose is to prove
-that the engine works end-to-end with ZERO modifications to the submodule:
+This is the home of the **Zoo Tycoon game**, built on top of the Tycoon
+Engine via the read-only submodule contract in §1. `ROADMAP.md` is the
+scope contract for *what we build next* — phases, exit criteria, and
+backlog. This file is the contract for *how* we build it.
 
-  - 2–3 animal exhibits + 1 food stand + 1 restroom
-  - One visitor `AgentType` with a single "hunger" need
-  - Adapter scripts implementing `IAgentBehavior`, `IValueModel`,
-    `ISatisfactionModel`, and `IQualityRating`
-  - Just enough tuning data in `design/tuning/*.md` to run an economic
-    loop: visitors arrive → pay ticket → buy food → satisfaction drives
-    spawn → daily settlement
+Today the game already ships an honest economic loop: build regions from
+zone tiles → drop animals/infrastructure inside → engine computes appeal
+from placements → visitors arrive, browse, buy food, leave with a
+satisfaction score → daily settlement closes books. Adapter scripts in
+`src/` implement `IAgentBehavior`, `IValueModel`, `ISatisfactionModel`,
+`IQualityRating`, and `IPlaceableHappiness`; tuning lives in
+`design/tuning/*.md`; the HUD covers save/load, financial reports,
+region management, hover inspector, reputation, goals, welcome,
+mood bubbles.
 
-A **full** Zoo Tycoon (welfare, breeding, suitability, two agent
-populations, …) is a different repo down the road. Do not bolt features
-onto this validation repo.
+Future work — welfare, breeding, staff agents, day/night, weather,
+research tree, scenarios — is sequenced in `ROADMAP.md`. Promote ideas
+into a phase via the roadmap's decision log; don't slip them in silently.
 
 ---
 
