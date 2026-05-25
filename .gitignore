@@ -15,3 +15,7 @@
 .env
 .env.*
 !.env.example
+
+# Optional Godot editor dev tooling — installed locally via
+# `npx @satelliteoflove/godot-mcp --install-addon .` when wanted.
+addons/godot_mcp/

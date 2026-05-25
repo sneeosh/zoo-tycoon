@@ -1,0 +1,483 @@
+extends Node
+# Zoo Tycoon — main scene script.
+#
+# Game UI for the engine validation game. Builds a top stat bar, a build
+# menu, a tile-grid map view, and an event log — all programmatically — and
+# wires them to the engine's autoloads.
+#
+# This script is GAME CODE — not engine. The engine drives ticks, spawning,
+# satisfaction, etc.; this just stages content and observes/dispatches input.
+
+const STARTER_VISITOR_COUNT: int = 4
+const HUD_REFRESH_SECONDS: float = 0.2
+const LOG_MAX_LINES: int = 60
+const MAP_VIEW_SCRIPT := preload("res://src/ui/map_view.gd")
+
+# Distinct colour per entity type. Keys must match design/tuning/entities.md ids.
+const ENTITY_COLORS := {
+	&"lion_exhibit":     Color("#c89465"),
+	&"elephant_exhibit": Color("#8895a0"),
+	&"aviary":           Color("#7fb3d5"),
+	&"food_stand":       Color("#e27d60"),
+	&"restroom":         Color("#41b3a3"),
+}
+
+var _selected_def_id: StringName = &""
+var _map_view: MapView
+var _money_label: Label
+var _day_label: Label
+var _quality_label: Label
+var _agents_label: Label
+var _yesterday_label: Label
+var _log_text: RichTextLabel
+var _build_buttons: Dictionary = {}    # StringName -> Button
+var _speed_buttons: Dictionary = {}    # String -> Button
+
+var _hud_accumulator: float = 0.0
+
+
+func _ready() -> void:
+	_build_ui()
+	_wire_engine_signals()
+	_stage_starter_park()
+	_refresh_hud()
+	_refresh_speed_buttons()
+	_push_log("Zoo opened. Click a building, then click the map to place. Right-click to sell.")
+	_maybe_schedule_screenshot()
+
+
+# --- Screenshot mode -------------------------------------------------------
+#
+# Pass `--zoo-shot=/abs/path.png[:warmup_ticks]` (or set $ZOO_SHOT) to run the
+# scene, fast-forward N ticks (default 30), save a PNG of the viewport, and
+# quit. Used for iteration without needing a live editor / MCP bridge.
+
+func _maybe_schedule_screenshot() -> void:
+	var spec := _get_shot_spec()
+	if spec.is_empty():
+		return
+	var path: String = spec["path"]
+	var warmup: int = spec["warmup"]
+	var prev_speed := SimClock.speed
+	SimClock.set_speed(8.0)
+	SimClock.play()
+	for _i in warmup:
+		await EventBus.tick
+	SimClock.set_speed(prev_speed)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var img := get_viewport().get_texture().get_image()
+	var err := img.save_png(path)
+	if err != OK:
+		push_error("[Zoo] save_png failed: %s -> %s" % [error_string(err), path])
+	else:
+		print("[Zoo] screenshot saved: %s" % path)
+	get_tree().quit()
+
+
+func _get_shot_spec() -> Dictionary:
+	var raw := ""
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--zoo-shot="):
+			raw = arg.substr("--zoo-shot=".length())
+			break
+	if raw.is_empty():
+		raw = OS.get_environment("ZOO_SHOT")
+	if raw.is_empty():
+		return {}
+	var parts := raw.split(":")
+	var path := parts[0]
+	var warmup := 30
+	if parts.size() > 1 and parts[1].is_valid_int():
+		warmup = parts[1].to_int()
+	return {"path": path, "warmup": warmup}
+
+
+# ============================================================================
+# UI construction
+# ============================================================================
+
+func _build_ui() -> void:
+	var hud := CanvasLayer.new()
+	add_child(hud)
+
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud.add_child(root)
+
+	var bg := ColorRect.new()
+	bg.color = Color("#141d18")
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(bg)
+
+	_build_top_bar(root)
+	_build_left_panel(root)
+	_build_right_column(root)
+
+
+func _build_top_bar(parent: Control) -> void:
+	var top := PanelContainer.new()
+	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	top.custom_minimum_size = Vector2(0, 56)
+	top.add_theme_stylebox_override("panel", _panel_box(Color("#23302a")))
+	parent.add_child(top)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	top.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 20)
+	margin.add_child(row)
+
+	_money_label = _stat("$0", 22, Color("#f4d35e"))
+	_day_label = _stat("Day 1", 16, Color("#e6e6e6"))
+	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
+	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
+	_yesterday_label = _stat("", 12, Color("#7e9286"))
+	row.add_child(_money_label)
+	row.add_child(_v_sep())
+	row.add_child(_day_label)
+	row.add_child(_quality_label)
+	row.add_child(_agents_label)
+	row.add_child(_v_sep())
+	row.add_child(_yesterday_label)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
+
+	for spec in [
+		{"key": "pause", "label": "Pause"},
+		{"key": "1x",    "label": "1x"},
+		{"key": "2x",    "label": "2x"},
+		{"key": "4x",    "label": "4x"},
+	]:
+		var b := Button.new()
+		b.text = spec["label"]
+		b.custom_minimum_size = Vector2(56, 36)
+		b.focus_mode = Control.FOCUS_NONE
+		b.pressed.connect(_on_speed_pressed.bind(spec["key"]))
+		_speed_buttons[spec["key"]] = b
+		row.add_child(b)
+
+
+func _build_left_panel(parent: Control) -> void:
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	panel.offset_top = 56
+	panel.offset_left = 0
+	panel.offset_bottom = 0
+	panel.custom_minimum_size = Vector2(220, 0)
+	panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	parent.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_bottom", 14)
+	panel.add_child(margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 8)
+	margin.add_child(col)
+
+	var title := Label.new()
+	title.text = "BUILD"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#7e9286"))
+	col.add_child(title)
+
+	# Stable ordering: walk in tuning-file declaration order if we can.
+	var def_ids: Array = ContentDB.entity_defs.keys()
+	def_ids.sort_custom(func(a, b): return String(a) < String(b))
+	for def_id in def_ids:
+		var def: EntityDef = ContentDB.entity_defs[def_id]
+		var btn := Button.new()
+		btn.text = "%s\n$%d  ·  %d×%d" % [
+			def.display_name,
+			def.build_cost,
+			def.footprint.x,
+			def.footprint.y,
+		]
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.custom_minimum_size = Vector2(0, 52)
+		btn.toggle_mode = true
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.toggled.connect(_on_build_toggled.bind(def_id))
+		_build_buttons[def_id] = btn
+		col.add_child(btn)
+
+	col.add_child(HSeparator.new())
+
+	var hint := Label.new()
+	hint.text = "L-click map: place\nR-click map: sell (½ refund)\nSpace: add a visitor\nP: toggle pause"
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Color("#7e9286"))
+	col.add_child(hint)
+
+
+func _build_right_column(parent: Control) -> void:
+	var col := VBoxContainer.new()
+	col.set_anchors_preset(Control.PRESET_FULL_RECT)
+	col.offset_left = 220
+	col.offset_top = 56
+	col.add_theme_constant_override("separation", 0)
+	parent.add_child(col)
+
+	_map_view = MAP_VIEW_SCRIPT.new()
+	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_map_view.entity_colors = ENTITY_COLORS
+	_map_view.placement_requested.connect(_on_placement_requested)
+	_map_view.remove_requested.connect(_on_remove_requested)
+	col.add_child(_map_view)
+
+	var log_panel := PanelContainer.new()
+	log_panel.custom_minimum_size = Vector2(0, 140)
+	log_panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	col.add_child(log_panel)
+
+	var log_margin := MarginContainer.new()
+	log_margin.add_theme_constant_override("margin_left", 14)
+	log_margin.add_theme_constant_override("margin_right", 14)
+	log_margin.add_theme_constant_override("margin_top", 10)
+	log_margin.add_theme_constant_override("margin_bottom", 10)
+	log_panel.add_child(log_margin)
+
+	_log_text = RichTextLabel.new()
+	_log_text.bbcode_enabled = true
+	_log_text.scroll_active = true
+	_log_text.scroll_following = true
+	_log_text.add_theme_font_size_override("normal_font_size", 12)
+	_log_text.add_theme_color_override("default_color", Color("#a8c4b0"))
+	log_margin.add_child(_log_text)
+
+
+# ============================================================================
+# Engine wiring
+# ============================================================================
+
+func _wire_engine_signals() -> void:
+	EventBus.balance_changed.connect(func(_b): _refresh_affordability())
+	EventBus.day_settled.connect(_on_day_settled)
+	EventBus.entity_placed.connect(_on_entity_placed)
+	EventBus.entity_removed.connect(_on_entity_removed)
+	EventBus.agent_spawned.connect(func(id):
+		var ag := AgentPool.get_agent(id)
+		if ag != null:
+			_push_log("[color=#a8c4b0]A guest entered.[/color]"))
+	EventBus.unlock_acquired.connect(func(node_id):
+		_push_log("[color=#f4d35e]Unlocked: %s[/color]" % node_id))
+
+
+func _stage_starter_park() -> void:
+	EntityRegistry.place(&"lion_exhibit", Vector2i(2, 2))
+	EntityRegistry.place(&"food_stand",   Vector2i(8, 2))
+	EntityRegistry.place(&"restroom",     Vector2i(11, 2))
+	EntityRegistry.place(&"aviary",       Vector2i(2, 7))
+	for i in range(STARTER_VISITOR_COUNT):
+		AgentPool.spawn(&"visitor", Vector2(
+			SimClock.rng.randf_range(0, 6),
+			SimClock.rng.randf_range(0, 6)))
+
+
+# ============================================================================
+# Per-frame HUD refresh
+# ============================================================================
+
+func _process(delta: float) -> void:
+	_hud_accumulator += delta
+	if _hud_accumulator >= HUD_REFRESH_SECONDS:
+		_hud_accumulator = 0.0
+		_refresh_hud()
+
+
+func _refresh_hud() -> void:
+	var breakdown: Dictionary = Ledger.get_yesterday_breakdown()
+	var quality: float = ZooBootstrap.get_quality_rating()
+	_money_label.text = "$%d" % Ledger.get_balance()
+	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day, SimClock.current_tick]
+	_quality_label.text = "%.1f★" % quality
+	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
+		breakdown["income"], breakdown["expense"], breakdown["net"]]
+
+
+func _refresh_affordability() -> void:
+	var balance := Ledger.get_balance()
+	for def_id in _build_buttons.keys():
+		var def: EntityDef = ContentDB.entity_defs[def_id]
+		var btn: Button = _build_buttons[def_id]
+		btn.disabled = balance < def.build_cost
+		if btn.disabled and btn.button_pressed:
+			btn.button_pressed = false
+			_selected_def_id = &""
+			_map_view.preview_def_id = &""
+
+
+func _refresh_speed_buttons() -> void:
+	var current := "pause"
+	if not SimClock.is_paused():
+		var sp := SimClock.speed
+		if is_equal_approx(sp, 2.0):
+			current = "2x"
+		elif is_equal_approx(sp, 4.0):
+			current = "4x"
+		else:
+			current = "1x"
+	for key in _speed_buttons.keys():
+		var b: Button = _speed_buttons[key]
+		var active: bool = key == current
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_left = 4
+		style.corner_radius_bottom_right = 4
+		b.add_theme_stylebox_override("normal", style)
+		b.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#e6e6e6"))
+
+
+# ============================================================================
+# Input
+# ============================================================================
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed:
+		return
+	match event.keycode:
+		KEY_ESCAPE:
+			get_tree().quit()
+		KEY_SPACE:
+			AgentPool.spawn(&"visitor", Vector2(
+				SimClock.rng.randf_range(0, 6),
+				SimClock.rng.randf_range(0, 6)))
+			_push_log("[color=#7e9286]+1 visitor (manual)[/color]")
+		KEY_P:
+			if SimClock.is_paused():
+				SimClock.play()
+			else:
+				SimClock.pause()
+			_refresh_speed_buttons()
+
+
+func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
+	if not pressed:
+		if _selected_def_id == def_id:
+			_selected_def_id = &""
+			_map_view.preview_def_id = &""
+		return
+	# Single-select: untoggle every other build button.
+	for other_id in _build_buttons.keys():
+		if other_id != def_id:
+			(_build_buttons[other_id] as Button).set_pressed_no_signal(false)
+	_selected_def_id = def_id
+	_map_view.preview_def_id = def_id
+
+
+func _on_speed_pressed(key: String) -> void:
+	match key:
+		"pause":
+			SimClock.pause()
+		"1x":
+			SimClock.set_speed(1.0)
+			SimClock.play()
+		"2x":
+			SimClock.set_speed(2.0)
+			SimClock.play()
+		"4x":
+			SimClock.set_speed(4.0)
+			SimClock.play()
+	_refresh_speed_buttons()
+
+
+func _on_placement_requested(cell: Vector2i) -> void:
+	if _selected_def_id == &"":
+		return
+	var id := EntityRegistry.place(_selected_def_id, cell)
+	if id == 0:
+		# place() already pushed a warning; surface it for the player.
+		var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
+		var reason := "blocked"
+		if Ledger.get_balance() < def.build_cost:
+			reason = "not enough money"
+		_push_log("[color=#e76f51]Can't place %s at (%d, %d): %s[/color]" %
+			[def.display_name, cell.x, cell.y, reason])
+
+
+func _on_remove_requested(cell: Vector2i) -> void:
+	# Find the instance whose footprint covers `cell`.
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null:
+			continue
+		if cell.x >= inst.position.x and cell.x < inst.position.x + def.footprint.x \
+		and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
+			EntityRegistry.remove(inst_id)
+			return
+
+
+# ============================================================================
+# Event-log helpers
+# ============================================================================
+
+func _on_day_settled(day: int, income: int, expense: int) -> void:
+	var net := income - expense
+	var color := "#83c779" if net >= 0 else "#e76f51"
+	_push_log("[b]Day %d closed.[/b] [color=%s]Net $%d[/color]  (+$%d / −$%d)" %
+		[day, color, net, income, expense])
+
+
+func _on_entity_placed(inst_id: int) -> void:
+	var inst := EntityRegistry.get_instance(inst_id)
+	if inst == null:
+		return
+	var def := inst.get_def()
+	_push_log("Built [b]%s[/b] for $%d" % [def.display_name, def.build_cost])
+
+
+func _on_entity_removed(_inst_id: int) -> void:
+	_push_log("Sold a building.")
+
+
+func _push_log(line: String) -> void:
+	_log_text.append_text(line + "\n")
+	# Trim if it grows; RichTextLabel doesn't auto-cap.
+	if _log_text.get_paragraph_count() > LOG_MAX_LINES:
+		_log_text.remove_paragraph(0)
+
+
+# ============================================================================
+# Style helpers
+# ============================================================================
+
+func _panel_box(color: Color) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = color
+	box.border_color = Color(1, 1, 1, 0.05)
+	box.border_width_top = 1
+	box.border_width_bottom = 1
+	box.border_width_left = 1
+	box.border_width_right = 1
+	return box
+
+
+func _stat(text: String, font_size: int, color: Color) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", font_size)
+	l.add_theme_color_override("font_color", color)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return l
+
+
+func _v_sep() -> VSeparator:
+	var s := VSeparator.new()
+	s.custom_minimum_size = Vector2(1, 0)
+	return s
