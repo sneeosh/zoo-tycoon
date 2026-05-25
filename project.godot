@@ -29,6 +29,15 @@ ProgressionManager="*res://addons/tycoon_core/autoload/progression_manager.gd"
 SaveService="*res://addons/tycoon_core/autoload/save_service.gd"
 ZooBootstrap="*res://src/bootstrap.gd"
 
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=1000
+window/size/window_width_override=1600
+window/size/window_height_override=1000
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
 [editor_plugins]
 
 enabled=PackedStringArray()

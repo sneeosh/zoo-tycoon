@@ -60,6 +60,38 @@ func _ready() -> void:
 		return
 
 
+# Build the tooltip body shown when hovering a build-menu button.
+# Pulls everything from EntityDef so adding a new entity to tuning
+# requires no UI changes — its tooltip auto-populates.
+func _build_tooltip_for(def: EntityDef) -> String:
+	var lines: Array[String] = []
+	lines.append(def.display_name)
+	lines.append("Build:  $%d" % def.build_cost)
+	if def.maintenance_cost > 0:
+		lines.append("Upkeep: $%d/day" % def.maintenance_cost)
+	lines.append("Size:   %d × %d tiles" % [def.footprint.x, def.footprint.y])
+	if not def.satisfies.is_empty():
+		var sats: Array[String] = []
+		for s in def.satisfies:
+			sats.append(String(s))
+		lines.append("Satisfies: %s" % ", ".join(sats))
+	if not def.appeal_profile.is_empty():
+		var bits: Array[String] = []
+		for axis in def.appeal_profile.keys():
+			bits.append("%s %.1f" % [String(axis), def.appeal_profile[axis]])
+		lines.append("Appeal: %s" % ", ".join(bits))
+	# Effects worth knowing about (revenue / satisfaction proximity bonuses).
+	for eff: Effect in def.effects:
+		var target_label := String(eff.target).capitalize()
+		if eff.proximity > 0.0:
+			lines.append("• %s %+.2f within %d tiles" %
+				[target_label, eff.magnitude, int(eff.proximity)])
+		else:
+			lines.append("• %s %+.2f (global)" %
+				[target_label, eff.magnitude])
+	return "\n".join(lines)
+
+
 func _harness_hover_at(action: Dictionary) -> bool:
 	# Drives the MapView's hover state from a scripted scenario so we can
 	# screenshot the inspector card without a real cursor. action.pos is
@@ -210,6 +242,7 @@ func _build_left_panel(parent: Control) -> void:
 			def.footprint.x,
 			def.footprint.y,
 		]
+		btn.tooltip_text = _build_tooltip_for(def)
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.custom_minimum_size = Vector2(0, 52)
 		btn.toggle_mode = true

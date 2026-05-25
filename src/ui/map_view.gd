@@ -9,9 +9,9 @@ class_name MapView
 signal placement_requested(grid_cell: Vector2i)
 signal remove_requested(grid_cell: Vector2i)
 
-const TILE_SIZE: int = 28
-const GRID_ORIGIN: Vector2 = Vector2(24, 24)
-const BUILDABLE_TILES: Vector2i = Vector2i(28, 18)
+const TILE_SIZE: int = 36
+const GRID_ORIGIN: Vector2 = Vector2(28, 28)
+const BUILDABLE_TILES: Vector2i = Vector2i(32, 18)
 # Footprints with width below this skip the inline name and show a centred
 # letter instead — full text doesn't fit and clipping looks broken.
 const MIN_TILES_FOR_LABEL: int = 3
@@ -25,6 +25,14 @@ const GATE_POST_COLOR: Color = Color("#e6b32f")
 var entity_colors: Dictionary = {}
 # Set by main when a build button is toggled on; empty string = none.
 var preview_def_id: StringName = &""
+
+# Pixel-art sprites generated via Pixel Lab. Loaded lazily so the game
+# doesn't crash if a sprite is missing — we fall back to the colored
+# rounded rect.
+const SPRITE_DIR := "res://assets/sprites/"
+var _sprite_cache: Dictionary = {}       # entity_def_id (StringName) -> Texture2D
+var _sprites_checked: Dictionary = {}    # entity_def_id (StringName) -> bool (true once looked up)
+var _visitor_sprite: Texture2D
 
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
@@ -51,6 +59,7 @@ const VISITOR_HIT_RADIUS_PX: float = 9.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_visitor_sprite = _load_sprite_optional("visitor")
 	_shadow_box = StyleBoxFlat.new()
 	_shadow_box.bg_color = Color(0, 0, 0, 0.35)
 	_shadow_box.corner_radius_top_left = 6
@@ -162,28 +171,34 @@ func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:
 	var rect := Rect2(
 		_cell_to_screen(inst.position),
 		Vector2(def.footprint) * TILE_SIZE)
-	var inner := rect.grow(-3)
-	# Soft drop shadow underneath, offset down-right.
-	var shadow_rect := inner.grow(2)
+	# Drop shadow underneath every entity, sprite or fallback.
+	var shadow_rect := rect.grow(-3).grow(2)
 	shadow_rect.position += Vector2(2, 3)
 	draw_style_box(_shadow_box, shadow_rect)
-	# Body via cached StyleBox.
+
+	var sprite := _sprite_for(inst.entity_def_id)
+	if sprite != null:
+		# Pixel-art sprite fills the footprint with a small inset so it
+		# doesn't visually butt up against neighbouring grid cells.
+		var sprite_rect := rect.grow(-2)
+		draw_texture_rect(sprite, sprite_rect, false)
+		return
+
+	# Fallback: rounded coloured rect with display name. Used when a
+	# sprite hasn't been generated for an entity def yet.
+	var inner := rect.grow(-3)
 	var style := _style_for(inst.entity_def_id)
 	draw_style_box(style, inner)
-	# Inner highlight strip near the top-left for fake lighting.
 	draw_rect(
 		Rect2(inner.position + Vector2(3, 3), Vector2(inner.size.x - 6, 3)),
 		Color(1, 1, 1, 0.18), true)
-	# Label. Padding kept tight on small-ish footprints — rounded
-	# corners + a 12pt font leave little usable width on 3-tile entities.
 	if def.footprint.x >= MIN_TILES_FOR_LABEL:
-		var label_fs: int = 11
 		draw_string(font,
 			inner.position + Vector2(5, 14),
 			def.display_name,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			inner.size.x - 8,
-			label_fs,
+			11,
 			Color("#10171a"))
 	else:
 		var initial := def.display_name.substr(0, 1).to_upper()
@@ -224,23 +239,33 @@ func _style_for(def_id: StringName) -> StyleBoxFlat:
 # ---------------------------------------------------------------------------
 
 func _draw_entrance_gate() -> void:
-	# Two short posts framing the entry tile + a small "ENTRANCE" tag.
-	# Sits at the world origin (0,0) where VisitorBehavior spawns and exits.
+	# Sits at world (0,0) where VisitorBehavior spawns and exits.
 	var p := _cell_to_screen(GATE_TILE)
+	var sprite := _load_sprite_optional("entrance_gate")
+	if sprite != null:
+		# Render slightly larger than a single tile so the gate has visual
+		# weight and the "ZOO" sign is readable.
+		var gate_size := Vector2(TILE_SIZE * 1.6, TILE_SIZE * 1.6)
+		var gate_origin := p + Vector2(
+			(TILE_SIZE - gate_size.x) * 0.5,
+			(TILE_SIZE - gate_size.y) * 0.5)
+		# Soft shadow underneath.
+		var shadow_rect := Rect2(gate_origin, gate_size).grow(-3)
+		shadow_rect.position += Vector2(2, 4)
+		draw_style_box(_shadow_box, shadow_rect)
+		draw_texture_rect(sprite, Rect2(gate_origin, gate_size), false)
+		return
+	# Fallback: primitive gate (the pre-sprite version).
 	var post_w := 5.0
 	var post_h := TILE_SIZE * 1.4
-	# Posts
 	draw_rect(Rect2(p + Vector2(-post_w * 0.5, -2), Vector2(post_w, post_h)),
 		GATE_POST_COLOR, true)
 	draw_rect(Rect2(p + Vector2(TILE_SIZE - post_w * 0.5, -2), Vector2(post_w, post_h)),
 		GATE_POST_COLOR, true)
-	# Lintel across the top
 	draw_rect(Rect2(p + Vector2(-post_w * 0.5, -2), Vector2(TILE_SIZE + post_w, 5)),
 		GATE_COLOR, true)
-	# Subtle ground footprint under the gate
 	draw_rect(Rect2(p, Vector2(TILE_SIZE, TILE_SIZE)),
 		Color(1, 1, 1, 0.08), true)
-	# Label
 	var font := get_theme_default_font()
 	var label := "ENTRANCE"
 	var fs := 10
@@ -265,13 +290,20 @@ func _draw_visitors() -> void:
 func _draw_one_visitor(ag: Agent) -> void:
 	var pos := _world_to_screen(ag.position)
 	var sat_color := _satisfaction_color(ag.satisfaction)
-	# Soft shadow.
-	draw_circle(pos + Vector2(0.5, 2.0), 6.5, Color(0, 0, 0, 0.35))
-	# Body — slightly taller than wide, drawn as a circle for speed.
+	# Subtle satisfaction halo underneath the sprite — gives at-a-glance
+	# crowd-mood readability without overriding the sprite's own colors.
+	draw_circle(pos + Vector2(0.0, 2.0), 8.0, Color(0, 0, 0, 0.30))
+	draw_circle(pos, 7.5, Color(sat_color.r, sat_color.g, sat_color.b, 0.55))
+
+	if _visitor_sprite != null:
+		var sprite_size := Vector2(20, 20)
+		var sprite_rect := Rect2(pos - sprite_size * 0.5, sprite_size)
+		draw_texture_rect(_visitor_sprite, sprite_rect, false)
+		return
+
+	# Fallback: colored circle visitor (matches the pre-sprite look).
 	draw_circle(pos, 6.0, sat_color)
-	# Crisp outline ring to lift it off the dark park ground.
 	draw_arc(pos, 6.0, 0, TAU, 22, sat_color.darkened(0.55), 1.2)
-	# Specular highlight (fake top-left light source).
 	draw_circle(pos + Vector2(-1.8, -1.8), 1.8, Color(1, 1, 1, 0.45))
 
 
@@ -455,6 +487,36 @@ func _render_card(lines: Array[String], anchor: Vector2) -> void:
 			-1,
 			fs + size_modifier,
 			color)
+
+
+# ---------------------------------------------------------------------------
+# Sprite loading
+# ---------------------------------------------------------------------------
+
+# Returns the Texture2D for `def_id` or null if no sprite exists. Caches
+# both hits and misses so missing files don't trigger a disk check every
+# frame. The fallback rounded-rect renderer takes over when this returns
+# null, so missing sprites degrade gracefully.
+func _sprite_for(def_id: StringName) -> Texture2D:
+	if _sprite_cache.has(def_id):
+		return _sprite_cache[def_id]
+	if _sprites_checked.has(def_id):
+		return null  # previously looked up and absent
+	var tex := _load_sprite_optional(String(def_id))
+	_sprites_checked[def_id] = true
+	if tex != null:
+		_sprite_cache[def_id] = tex
+	return tex
+
+
+func _load_sprite_optional(name: String) -> Texture2D:
+	var path := SPRITE_DIR + name + ".png"
+	if not ResourceLoader.exists(path):
+		return null
+	var res := load(path)
+	if res is Texture2D:
+		return res
+	return null
 
 
 func _bar(value: float) -> String:
