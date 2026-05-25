@@ -4,6 +4,8 @@ A web-first tycoon game built on the standalone [Tycoon Engine](./engine).
 Build exhibits from zone tiles, fill them with animals, balance the books,
 and chase Zoo of the Year before 30 days run out.
 
+**Play it:** https://sneeosh.github.io/zoo-tycoon/
+
 See [`CLAUDE.md`](./CLAUDE.md) for the operating contract and
 [`ROADMAP.md`](./ROADMAP.md) for what's shipping when. The engine submodule
 is read-only — changes there cut a tag, then we bump.
