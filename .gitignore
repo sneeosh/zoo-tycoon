@@ -1,0 +1,17 @@
+# Godot
+.godot/
+*.translation
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.obsidian/
+
+# Claude Code per-user settings
+.claude/settings.local.json
+
+# Secrets
+.env
+.env.*
+!.env.example

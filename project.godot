@@ -1,0 +1,44 @@
+; Engine configuration file.
+;
+; Zoo Tycoon — the validation game for the standalone tycoon engine.
+; Spec: docs/build-plan.md §7 (Prompt 10) in the engine repo.
+;
+; This project consumes the engine as a git submodule pinned to a tagged
+; release. Goal: prove the engine runs an end-to-end economic loop with
+; ZERO modifications to addons/tycoon_core/.
+
+config_version=5
+
+[application]
+
+config/name="Zoo Tycoon (Engine Validation)"
+config/description="Minimal Zoo Tycoon proving the tycoon engine's seams hold. See CLAUDE.md."
+run/main_scene=""
+config/features=PackedStringArray("4.5", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+; Engine autoloads — order must match engine/project.godot exactly.
+EventBus="*res://addons/tycoon_core/autoload/event_bus.gd"
+SimClock="*res://addons/tycoon_core/autoload/sim_clock.gd"
+Ledger="*res://addons/tycoon_core/autoload/ledger.gd"
+ContentDB="*res://addons/tycoon_core/autoload/content_db.gd"
+EntityRegistry="*res://addons/tycoon_core/autoload/entity_registry.gd"
+AgentPool="*res://addons/tycoon_core/autoload/agent_pool.gd"
+EffectResolver="*res://addons/tycoon_core/autoload/effect_resolver.gd"
+ProgressionManager="*res://addons/tycoon_core/autoload/progression_manager.gd"
+SaveService="*res://addons/tycoon_core/autoload/save_service.gd"
+; Zoo's own bootstrap — registers behaviors/models with the engine.
+ZooBootstrap="*res://src/bootstrap.gd"
+
+[editor_plugins]
+
+; GUT plugin off — its editor code uses APIs that error in headless mode.
+; Tests run via gut_cmdln.gd directly. See engine/addons/README.md.
+enabled=PackedStringArray()
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
