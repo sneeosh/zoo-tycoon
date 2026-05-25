@@ -27,13 +27,26 @@ var entity_colors: Dictionary = {}
 var preview_def_id: StringName = &""
 
 var _hover_cell: Vector2i = Vector2i.ZERO
+var _hover_pos: Vector2 = Vector2.ZERO
 var _hovering: bool = false
+
+
+# Force the hover state from outside — used by the harness so scripted
+# scenarios can capture screenshots that include the inspector card.
+# `world_pos` is in game coordinates (same units as Agent.position); we
+# convert to the panel's local pixel space.
+func force_hover_at_world(world_pos: Vector2) -> void:
+	_hover_pos = _world_to_screen(world_pos)
+	_hover_cell = _to_grid(_hover_pos)
+	_hovering = true
 
 # Cached StyleBoxes per entity def — rounded + bordered drawing is much
 # easier through draw_style_box than open-coding the corner geometry.
 # Created lazily on first draw of each def.
 var _style_cache: Dictionary = {}        # entity_def_id -> StyleBoxFlat
 var _shadow_box: StyleBoxFlat
+var _card_box: StyleBoxFlat
+const VISITOR_HIT_RADIUS_PX: float = 9.0
 
 
 func _ready() -> void:
@@ -44,6 +57,21 @@ func _ready() -> void:
 	_shadow_box.corner_radius_top_right = 6
 	_shadow_box.corner_radius_bottom_left = 6
 	_shadow_box.corner_radius_bottom_right = 6
+	_card_box = StyleBoxFlat.new()
+	_card_box.bg_color = Color("#161e1a")
+	_card_box.border_color = Color("#3d4f44")
+	_card_box.border_width_top = 1
+	_card_box.border_width_bottom = 1
+	_card_box.border_width_left = 1
+	_card_box.border_width_right = 1
+	_card_box.corner_radius_top_left = 4
+	_card_box.corner_radius_top_right = 4
+	_card_box.corner_radius_bottom_left = 4
+	_card_box.corner_radius_bottom_right = 4
+	_card_box.content_margin_left = 10
+	_card_box.content_margin_right = 10
+	_card_box.content_margin_top = 8
+	_card_box.content_margin_bottom = 8
 
 
 func _process(_delta: float) -> void:
@@ -52,6 +80,7 @@ func _process(_delta: float) -> void:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
+		_hover_pos = event.position
 		_hover_cell = _to_grid(event.position)
 		_hovering = true
 	elif event is InputEventMouseButton and event.pressed:
@@ -74,6 +103,7 @@ func _draw() -> void:
 	_draw_entrance_gate()
 	_draw_visitors()
 	_draw_preview()
+	_draw_inspector_card()
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +335,132 @@ func _would_collide(pos: Vector2i, footprint: Vector2i) -> bool:
 				and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
 					return true
 	return false
+
+
+# ---------------------------------------------------------------------------
+# Hover inspector
+# ---------------------------------------------------------------------------
+
+# Hover info card. Suppressed during build-mode hover so it doesn't fight
+# the placement preview for attention. Visitors take priority over entities
+# because they're smaller and harder to land the cursor on.
+func _draw_inspector_card() -> void:
+	if not _hovering or preview_def_id != &"":
+		return
+	var lines := _inspect_visitor_at(_hover_pos)
+	if lines.is_empty():
+		lines = _inspect_entity_at(_hover_cell)
+	if lines.is_empty():
+		return
+	_render_card(lines, _hover_pos)
+
+
+func _inspect_visitor_at(local_pos: Vector2) -> Array[String]:
+	var hit_id: int = 0
+	for agent_id in AgentPool.get_agents_by_type(&"visitor"):
+		var ag: Agent = AgentPool.get_agent(agent_id)
+		if ag == null or not ag.alive:
+			continue
+		var pos := _world_to_screen(ag.position)
+		if pos.distance_to(local_pos) <= VISITOR_HIT_RADIUS_PX:
+			hit_id = agent_id
+			break
+	if hit_id == 0:
+		return []
+	var ag: Agent = AgentPool.get_agent(hit_id)
+	if ag == null:
+		return []
+	var state: StringName = ag.behavior_state.get(&"state", &"browsing")
+	var out: Array[String] = []
+	out.append("Visitor #%d" % hit_id)
+	out.append("state: %s" % String(state))
+	out.append("satisfaction: %s %.2f" %
+		[_bar(ag.satisfaction), ag.satisfaction])
+	for need_id in ag.need_levels.keys():
+		var lvl: float = ag.need_levels[need_id]
+		out.append("%s: %s %.2f" % [String(need_id), _bar(lvl), lvl])
+	# Traits worth surfacing — skip the noise/internal ones.
+	var ws: float = ag.traits.get(&"walking_speed", 0.0)
+	var sd: float = ag.traits.get(&"stay_duration", 0.0)
+	if ws > 0.0:
+		out.append("walking_speed: %.2f" % ws)
+	if sd > 0.0:
+		var spawn_tick: int = int(ag.behavior_state.get(&"spawn_tick", 0))
+		var ticks_left: int = max(0, int(sd) - (SimClock.current_tick - spawn_tick))
+		out.append("stays %d more ticks" % ticks_left)
+	if ag.target_entity_id != 0:
+		var inst := EntityRegistry.get_instance(ag.target_entity_id)
+		if inst != null:
+			out.append("heading to: %s" % inst.get_def().display_name)
+	return out
+
+
+func _inspect_entity_at(cell: Vector2i) -> Array[String]:
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null:
+			continue
+		if cell.x < inst.position.x or cell.x >= inst.position.x + def.footprint.x:
+			continue
+		if cell.y < inst.position.y or cell.y >= inst.position.y + def.footprint.y:
+			continue
+		var out: Array[String] = []
+		out.append(def.display_name)
+		out.append("build $%d  ·  maint $%d/day" %
+			[def.build_cost, def.maintenance_cost])
+		var targeters := AgentPool.count_targeting(inst_id)
+		out.append("visitors heading here: %d" % targeters)
+		if not def.satisfies.is_empty():
+			var sats: Array[String] = []
+			for s in def.satisfies:
+				sats.append(String(s))
+			out.append("satisfies: %s" % ", ".join(sats))
+		if not def.appeal_profile.is_empty():
+			var bits: Array[String] = []
+			for axis in def.appeal_profile.keys():
+				bits.append("%s %.1f" % [String(axis), def.appeal_profile[axis]])
+			out.append("appeal: %s" % ", ".join(bits))
+		return out
+	return []
+
+
+func _render_card(lines: Array[String], anchor: Vector2) -> void:
+	var font := get_theme_default_font()
+	var fs := 11
+	var line_h := fs + 3
+	var max_w: float = 0.0
+	for line in lines:
+		var w: float = font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		if w > max_w:
+			max_w = w
+	var card_w := max_w + 20  # left/right margins from _card_box
+	var card_h := lines.size() * line_h + 16
+	# Pin card to keep it on-screen.
+	var origin := anchor + Vector2(14, 14)
+	if origin.x + card_w > size.x:
+		origin.x = max(0.0, anchor.x - card_w - 14)
+	if origin.y + card_h > size.y:
+		origin.y = max(0.0, anchor.y - card_h - 14)
+	var rect := Rect2(origin, Vector2(card_w, card_h))
+	draw_style_box(_card_box, rect)
+	var text_origin := origin + Vector2(10, 8)
+	for i in lines.size():
+		var color := Color("#e6e6e6") if i == 0 else Color("#a8c4b0")
+		var size_modifier := 0 if i > 0 else 1
+		draw_string(font,
+			text_origin + Vector2(0, fs + i * line_h),
+			lines[i],
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			fs + size_modifier,
+			color)
+
+
+func _bar(value: float) -> String:
+	# ASCII progress bar — 8 cells, each = 0.125 of full.
+	var filled := int(round(clampf(value, 0.0, 1.0) * 8.0))
+	var s := ""
+	for i in 8:
+		s += "▰" if i < filled else "▱"
+	return s

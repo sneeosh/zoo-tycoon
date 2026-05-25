@@ -46,6 +46,7 @@ func _ready() -> void:
 	var sess := ScriptedSession.create_from_env(self)
 	if sess != null:
 		sess.register_action("assert_quality_at_least", _harness_assert_quality)
+		sess.register_action("hover_at", _harness_hover_at)
 		await sess.run()
 		return
 
@@ -56,6 +57,17 @@ func _ready() -> void:
 	# One-shot screenshot mode runs against the staged starter park.
 	if await Screenshotter.maybe_capture(self):
 		return
+
+
+func _harness_hover_at(action: Dictionary) -> bool:
+	# Drives the MapView's hover state from a scripted scenario so we can
+	# screenshot the inspector card without a real cursor. action.pos is
+	# in world (tile) coordinates.
+	var pos_arr: Array = action.get("pos", [0, 0])
+	if _map_view == null:
+		return false
+	_map_view.force_hover_at_world(Vector2(float(pos_arr[0]), float(pos_arr[1])))
+	return true
 
 
 func _harness_assert_quality(action: Dictionary) -> bool:
