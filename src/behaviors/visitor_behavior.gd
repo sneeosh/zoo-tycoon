@@ -21,6 +21,15 @@ const REACH_DISTANCE: float = 0.6
 const BROWSE_ARRIVAL_DISTANCE: float = 1.5
 const BROWSE_SPEED_FACTOR: float = 0.55   # browse pace = walking_speed * this
 const HUNGRY_WEIGHT: int = 3              # weight bias when picking browse target
+# Linger time at a browse target scales with how well the exhibit matches
+# the visitor type's preferences (via EffectResolver.appeal_match). A
+# perfect match → MAX; a mediocre one → MIN; below FLOOR → BASE so even
+# unappealing exhibits get a quick look. This is what makes the cool
+# exhibits actually feel cool in-game — visitors crowd them longer.
+const LINGER_TICKS_BASE: int = 25
+const LINGER_TICKS_MIN: int = 45
+const LINGER_TICKS_MAX: int = 160
+const LINGER_APPEAL_FLOOR: float = 0.2
 
 # Fallback values if a trait is missing from tuning. Keeps the behavior
 # robust to design churn — a missing trait shouldn't crash the sim.
@@ -38,6 +47,7 @@ const TRAIT_FUDGE := &"distance_fudge"
 const STATE := &"state"
 const SPAWN_TICK := &"spawn_tick"
 const BROWSE_TARGET := &"browse_target"
+const LINGER_UNTIL := &"linger_until"     # 0 = not currently lingering
 
 const ST_BROWSING := &"browsing"
 const ST_SEEKING := &"seeking"
@@ -148,7 +158,23 @@ func _step_browsing(agent: Agent) -> void:
 	var center := Vector2(inst.position) + Vector2(def.footprint) * 0.5
 	var to_target := center - agent.position
 	if to_target.length() <= BROWSE_ARRIVAL_DISTANCE:
-		_pick_browse_target(agent)
+		# Arrived. Linger so satisfaction can accrue from proximity effects
+		# and the player sees visitors clustered AT the exhibit, not
+		# bouncing through it. Linger duration sampled per-arrival.
+		var linger_until: int = agent.behavior_state.get(LINGER_UNTIL, 0)
+		if linger_until == 0:
+			agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
+				_linger_duration_for(agent, def)
+		elif SimClock.current_tick >= linger_until:
+			# Done lingering — move on.
+			_pick_browse_target(agent)
+			agent.behavior_state[LINGER_UNTIL] = 0
+			return
+		# Small drift while lingering so visitors at the same exhibit
+		# don't perfectly overlap.
+		agent.position += Vector2(
+			SimClock.rng.randf_range(-0.03, 0.03),
+			SimClock.rng.randf_range(-0.03, 0.03))
 		return
 	agent.position += to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
 
@@ -190,6 +216,26 @@ func _pick_satisfier_with_noise(agent: Agent, need_id: StringName) -> int:
 			best_score = score
 			best_id = entity_id
 	return best_id
+
+
+# Linger duration at a browse target, in ticks. Scales with appeal_match:
+#   appeal ≤ FLOOR → BASE (visitor glances and moves on)
+#   appeal = 1     → MAX (a perfect-match exhibit holds them)
+# A small random jitter (±15%) prevents identical-trait visitors arriving
+# together from departing in unison.
+func _linger_duration_for(_agent: Agent, def: EntityDef) -> int:
+	var agent_type: AgentType = ContentDB.get_agent_type(_agent.agent_type_id)
+	if agent_type == null:
+		return LINGER_TICKS_MIN
+	var appeal := EffectResolver.appeal_match(agent_type, def)
+	var base: float
+	if appeal <= LINGER_APPEAL_FLOOR:
+		base = LINGER_TICKS_BASE
+	else:
+		var t := (appeal - LINGER_APPEAL_FLOOR) / (1.0 - LINGER_APPEAL_FLOOR)
+		base = lerpf(LINGER_TICKS_MIN, LINGER_TICKS_MAX, clampf(t, 0.0, 1.0))
+	var jitter := SimClock.rng.randf_range(0.85, 1.15)
+	return int(base * jitter)
 
 
 # Browse target picked from entities with appeal_match > 0, weighted by

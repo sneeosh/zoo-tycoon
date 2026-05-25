@@ -286,7 +286,9 @@ func _refresh_hud() -> void:
 	var breakdown: Dictionary = Ledger.get_yesterday_breakdown()
 	var quality: float = ZooBootstrap.get_quality_rating()
 	_money_label.text = "$%d" % Ledger.get_balance()
-	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day, SimClock.current_tick]
+	# Engine current_day is 0-indexed (incremented on day boundaries).
+	# Player-facing displays use 1-indexed days.
+	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day + 1, SimClock.current_tick]
 	_quality_label.text = "%.1f★" % quality
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
@@ -416,6 +418,8 @@ func _on_remove_requested(cell: Vector2i) -> void:
 func _on_day_settled(day: int, income: int, expense: int) -> void:
 	var net := income - expense
 	var color := "#83c779" if net >= 0 else "#e76f51"
+	# Engine day is 0-indexed; show 1-indexed in the log.
+	day = day + 1
 	_push_log("[b]Day %d closed.[/b] [color=%s]Net $%d[/color]  (+$%d / −$%d)" %
 		[day, color, net, income, expense])
 
