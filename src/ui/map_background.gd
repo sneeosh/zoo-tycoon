@@ -22,6 +22,7 @@ func _ready() -> void:
 	EventBus.entity_removed.connect(func(_id): queue_redraw())
 	EventBus.region_created.connect(func(_rid): queue_redraw())
 	EventBus.region_destroyed.connect(func(_rid): queue_redraw())
+	EventBus.region_changed.connect(func(_rid): queue_redraw())
 	resized.connect(func(): queue_redraw())
 
 
@@ -29,8 +30,56 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_grass_texture()
 	_draw_decorative_foliage()
+	_draw_region_auras()
 	_draw_grid()
 	_draw_vignette()
+
+
+# ---------------------------------------------------------------------------
+# Region auras — tint + perimeter for each connected region.
+# ---------------------------------------------------------------------------
+
+func _draw_region_auras() -> void:
+	for region: Region in RegionRegistry.all_regions():
+		if region.cells.is_empty():
+			continue
+		var color := _region_tint(region)
+		var cell_set := {}
+		for c in region.cells:
+			cell_set[c] = true
+		var fill_color := Color(color.r, color.g, color.b, 0.38)
+		for c in region.cells:
+			var rect := Rect2(_cell_to_screen(c),
+				Vector2(TILE_SIZE, TILE_SIZE))
+			draw_rect(rect, fill_color, true)
+		var stroke := Color(color.r, color.g, color.b, 0.85)
+		var w: float = 2.5
+		for c in region.cells:
+			var screen := _cell_to_screen(c)
+			var p0 := screen
+			var p1 := screen + Vector2(TILE_SIZE, 0)
+			var p2 := screen + Vector2(TILE_SIZE, TILE_SIZE)
+			var p3 := screen + Vector2(0, TILE_SIZE)
+			if not cell_set.has(c + Vector2i(0, -1)):
+				draw_line(p0, p1, stroke, w)
+			if not cell_set.has(c + Vector2i(1, 0)):
+				draw_line(p1, p2, stroke, w)
+			if not cell_set.has(c + Vector2i(0, 1)):
+				draw_line(p2, p3, stroke, w)
+			if not cell_set.has(c + Vector2i(-1, 0)):
+				draw_line(p3, p0, stroke, w)
+
+
+func _region_tint(region: Region) -> Color:
+	if &"water" in region.provided_zone_tags:
+		return Color("#5fa8d4")
+	if &"tall_cage" in region.provided_zone_tags:
+		return Color("#6fc2a0")
+	if &"rocks" in region.provided_zone_tags:
+		return Color("#d49a5a")
+	if &"grass" in region.provided_zone_tags:
+		return Color("#9bc26a")
+	return Color("#a0a0a0")
 
 
 # ---------------------------------------------------------------------------
