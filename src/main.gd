@@ -27,6 +27,7 @@ var _map_view: MapView
 var _money_label: Label
 var _day_label: Label
 var _quality_label: Label
+var _reputation_label: Label
 var _agents_label: Label
 var _yesterday_label: Label
 var _log_text: RichTextLabel
@@ -122,12 +123,14 @@ func _build_top_bar(parent: Control) -> void:
 	_money_label = _stat("$0", 22, Color("#f4d35e"))
 	_day_label = _stat("Day 1", 16, Color("#e6e6e6"))
 	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
+	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
 	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
 	_yesterday_label = _stat("", 12, Color("#7e9286"))
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
 	row.add_child(_quality_label)
+	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
 	row.add_child(_v_sep())
 	row.add_child(_yesterday_label)
@@ -290,6 +293,10 @@ func _refresh_hud() -> void:
 	# Player-facing displays use 1-indexed days.
 	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day + 1, SimClock.current_tick]
 	_quality_label.text = "%.1f★" % quality
+	var rep := ProgressionManager.reputation
+	var rep_color := Color("#c9a4ff") if rep >= 0 else Color("#e76f51")
+	_reputation_label.text = "Rep %+d" % rep
+	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
 		breakdown["income"], breakdown["expense"], breakdown["net"]]

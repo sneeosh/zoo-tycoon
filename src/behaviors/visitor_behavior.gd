@@ -48,6 +48,11 @@ const STATE := &"state"
 const SPAWN_TICK := &"spawn_tick"
 const BROWSE_TARGET := &"browse_target"
 const LINGER_UNTIL := &"linger_until"     # 0 = not currently lingering
+# Satisfaction at the moment the visitor decided to leave. Reading
+# agent.satisfaction in on_despawn isn't right — hunger keeps decaying
+# during the walk to the exit, which would penalize otherwise-happy
+# visitors. This captures the "review" they'd write on the way out.
+const DEPARTURE_SATISFACTION := &"departure_satisfaction"
 
 const ST_BROWSING := &"browsing"
 const ST_SEEKING := &"seeking"
@@ -91,11 +96,13 @@ func on_tick(agent: Agent) -> void:
 		var ticks_alive: int = SimClock.current_tick - int(agent.behavior_state.get(SPAWN_TICK, 0))
 		var stay_duration: int = int(agent.traits.get(TRAIT_STAY, FALLBACK_STAY_DURATION))
 		if ticks_alive >= stay_duration:
+			agent.behavior_state[DEPARTURE_SATISFACTION] = agent.satisfaction
 			agent.behavior_state[STATE] = ST_LEAVING
 			return
 		var impatience: float = agent.traits.get(TRAIT_IMPATIENCE, FALLBACK_IMPATIENCE)
 		if agent.satisfaction <= impatience:
 			# Frustrated departure — visitor gives up on the zoo.
+			agent.behavior_state[DEPARTURE_SATISFACTION] = agent.satisfaction
 			agent.behavior_state[STATE] = ST_LEAVING
 			return
 
@@ -106,8 +113,19 @@ func on_tick(agent: Agent) -> void:
 	_step_browsing(agent)
 
 
-func on_despawn(_agent: Agent) -> void:
-	pass
+func on_despawn(agent: Agent) -> void:
+	# Reputation impact: a happy visitor tells their friends (+1), a
+	# frustrated one writes a bad review (-1), an in-between one is
+	# forgettable (0). We use the satisfaction snapshot captured at
+	# departure-decision time, not the moment of despawn, because hunger
+	# decay during the walk to the exit would unfairly penalize visitors
+	# who had a great visit but got peckish on the way home.
+	var rating: float = agent.behavior_state.get(
+		DEPARTURE_SATISFACTION, agent.satisfaction)
+	if rating >= 0.7:
+		ProgressionManager.add_reputation(1)
+	elif rating < 0.35:
+		ProgressionManager.add_reputation(-1)
 
 
 # ---------------------------------------------------------------------------

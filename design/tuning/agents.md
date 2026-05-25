@@ -35,7 +35,7 @@ instead of class constants so the variation lives in design data, not code.
 | -------- | -------------- | ---- | ---- |
 | visitor  | walking_speed  | 0.12 | 0.26 |
 | visitor  | stay_duration  | 220  | 460  |
-| visitor  | impatience     | 0.15 | 0.40 |
+| visitor  | impatience     | 0.10 | 0.28 |
 | visitor  | distance_fudge | 0.0  | 3.5  |
 
 ## Preferences
