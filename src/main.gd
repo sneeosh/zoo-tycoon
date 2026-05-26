@@ -66,6 +66,12 @@ var _admin_modal: Control
 var _admin_fee_value: Label
 var _admin_open_label: Label
 
+# Active "move placement" mode — set by the ⇄ button in the Manage Exhibit
+# panel. Next map click in the same region writes state["primary_cell"].
+# -1 region id means inactive.
+var _moving_region_id: int = -1
+var _moving_index: int = -1
+
 # Tutorial state — set by _start_tutorial. The overlay's only visible while
 # active. Each step has its own advance condition checked via engine signals.
 var _tutorial_active: bool = false
@@ -212,8 +218,17 @@ func _refresh_region_panel() -> void:
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(name_label)
 
+		var move := Button.new()
+		move.text = "⇄"
+		move.tooltip_text = "Move to a different tile in this exhibit"
+		move.custom_minimum_size = Vector2(28, 28)
+		move.focus_mode = Control.FOCUS_NONE
+		move.pressed.connect(_begin_move_placement.bind(_selected_region_id, i))
+		row.add_child(move)
+
 		var rm := Button.new()
 		rm.text = "×"
+		rm.tooltip_text = "Remove (½ refund)"
 		rm.custom_minimum_size = Vector2(28, 28)
 		rm.focus_mode = Control.FOCUS_NONE
 		rm.pressed.connect(_on_remove_placement.bind(_selected_region_id, i))
@@ -1298,6 +1313,58 @@ func _happiness_color(h: float) -> Color:
 	return Color("#83c779")
 
 
+func _begin_move_placement(region_id: int, index: int) -> void:
+	var region := RegionRegistry.get_region(region_id)
+	if region == null or index >= region.placements.size():
+		return
+	var def: PlaceableDef = ContentDB.placeable_defs.get(
+		region.placements[index].placeable_def_id)
+	_moving_region_id = region_id
+	_moving_index = index
+	_clear_build_selection()
+	if def != null:
+		_push_log("Move mode: click a tile in Exhibit #%d to relocate the %s. (Esc cancels.)" %
+			[region_id, def.display_name])
+
+
+func _cancel_move_placement() -> void:
+	if _moving_region_id < 0:
+		return
+	_moving_region_id = -1
+	_moving_index = -1
+	_push_log("[color=#7e9286]Move cancelled.[/color]")
+
+
+func _try_move_placement_at(cell: Vector2i) -> bool:
+	# Returns true if the click was consumed by an active move.
+	if _moving_region_id < 0:
+		return false
+	var region := RegionRegistry.get_region(_moving_region_id)
+	if region == null or _moving_index >= region.placements.size():
+		_moving_region_id = -1
+		_moving_index = -1
+		return false
+	var target_region := RegionRegistry.region_at_cell(cell)
+	if target_region == null or target_region.region_id != _moving_region_id:
+		_push_log("[color=#e76f51]Pick a tile inside Exhibit #%d.[/color]" %
+			_moving_region_id)
+		return true   # still consume the click; move stays armed
+	# Stash the new anchor on the placement's state dict — the map renderer
+	# already prefers state["primary_cell"] when present.
+	var placement: Placement = region.placements[_moving_index]
+	placement.state["primary_cell"] = cell
+	var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+	if def != null:
+		_push_log("Moved %s to (%d, %d)." % [def.display_name, cell.x, cell.y])
+	_moving_region_id = -1
+	_moving_index = -1
+	# region_changed isn't fired by us touching state, but the map redraws
+	# every frame so the new position renders immediately. Force a panel
+	# refresh in case any happiness shifted.
+	_refresh_region_panel()
+	return true
+
+
 func _on_add_placement(region_id: int, def_id: StringName) -> void:
 	var p := RegionRegistry.add_placement(region_id, def_id)
 	if p != null:
@@ -1882,10 +1949,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match event.keycode:
 		KEY_ESCAPE:
-			# Cancel current selection: build tool first, then any open
-			# Manage Region panel. Only quits if there's nothing to cancel
-			# (and even then never on web — a web tab "quit" is a no-op).
-			if _selected_def_id != &"":
+			# Cancel cascade: active move > build tool > region selection.
+			# Only quits if there's nothing to cancel (and never on web —
+			# a web tab "quit" is a no-op).
+			if _moving_region_id >= 0:
+				_cancel_move_placement()
+			elif _selected_def_id != &"":
 				_clear_build_selection()
 			elif _selected_region_id >= 0:
 				_selected_region_id = -1
@@ -2005,6 +2074,9 @@ func _place_placeable_at(cell: Vector2i) -> void:
 
 
 func _on_placement_requested(cell: Vector2i) -> void:
+	# Active "move placement" mode wins over everything else.
+	if _try_move_placement_at(cell):
+		return
 	# Placeable mode: selected def is an animal or piece of infrastructure
 	# that lives inside a Region. Find the region under the cursor and add.
 	if ContentDB.placeable_defs.has(_selected_def_id):
