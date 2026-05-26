@@ -83,12 +83,12 @@ func test_visitor_seeks_and_buys_food_when_hungry() -> void:
 	var post_entry := Ledger.get_balance()
 	assert_eq(post_entry - pre_balance, VisitorValueModel.TICKET_PRICE)
 
-	# Drive ticks. hunger threshold = 0.4, decay = 0.005/tick → crosses
-	# at tick ~121. Then behavior heads to food stand (~5 tiles away,
-	# 0.15/tick → ~34 ticks). After eating, hunger decays again. We
-	# can't snapshot hunger==1.0 at an arbitrary end-tick — check the
-	# transaction log for the food purchase instead.
-	for i in range(200):
+	# Drive ticks. hunger threshold = 0.4, decay = 0.0015/tick → crosses
+	# around tick ~400. Then behavior heads to food stand (~5 tiles
+	# away, walking speed ~0.18/tick → ~30 ticks). After eating, hunger
+	# decays again. We can't snapshot hunger==1.0 at an arbitrary
+	# end-tick — check the transaction log for the food purchase.
+	for i in range(600):
 		SimClock.advance_tick()
 
 	var has_food_purchase := false

@@ -155,7 +155,7 @@ func _refresh_region_panel() -> void:
 	_region_panel.visible = true
 
 	# Header
-	var title := _stat("Region #%d" % region.region_id, 18, Color("#e6e6e6"))
+	var title := _stat("Exhibit #%d" % region.region_id, 18, Color("#e6e6e6"))
 	_region_panel_body.add_child(title)
 	var subtitle := Label.new()
 	subtitle.text = "%s  ·  %d cells\nProvides: %s" % [
@@ -577,11 +577,11 @@ func _on_endgame_continue() -> void:
 const TUTORIAL_STEPS: Array = [
 	{
 		"title": "Step 1 of 3 — Build an exhibit",
-		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit Region automatically.",
+		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit automatically.",
 	},
 	{
 		"title": "Step 2 of 3 — Add an animal",
-		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Region panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
+		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Exhibit panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
 	},
 	{
 		"title": "Step 3 of 3 — Speed time, watch them pay",
@@ -779,7 +779,7 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 const GOAL_SPECS: Array = [
 	{"id": "earn_1k",    "label": "Earn $1,000 in revenue"},
 	{"id": "crowd_10",   "label": "Host 10 guests at once"},
-	{"id": "second",     "label": "Build a third exhibit region"},
+	{"id": "second",     "label": "Open a third exhibit"},
 	{"id": "happy_lion", "label": "Lion happiness ≥ 80%"},
 	{"id": "day_3",      "label": "Reach Day 3"},
 ]
@@ -1140,7 +1140,7 @@ func _on_add_placement(region_id: int, def_id: StringName) -> void:
 	var p := RegionRegistry.add_placement(region_id, def_id)
 	if p != null:
 		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
-		_push_log("Added [b]%s[/b] to Region #%d" % [def.display_name, region_id])
+		_push_log("Added [b]%s[/b] to Exhibit #%d" % [def.display_name, region_id])
 		_refresh_region_panel()
 
 
@@ -1152,7 +1152,7 @@ func _on_remove_placement(region_id: int, index: int) -> void:
 		region.placements[index].placeable_def_id)
 	if RegionRegistry.remove_placement(region_id, index):
 		var name := def.display_name if def != null else "placement"
-		_push_log("Removed %s from Region #%d" % [name, region_id])
+		_push_log("Removed %s from Exhibit #%d" % [name, region_id])
 		_refresh_region_panel()
 
 
@@ -1476,7 +1476,7 @@ func _build_left_panel(parent: Control) -> void:
 	animal_ids.sort_custom(func(a, b): return String(a) < String(b))
 	infra_ids.sort_custom(func(a, b): return String(a) < String(b))
 
-	_add_build_subhead(col, "Zone tiles")
+	_add_build_subhead(col, "Exhibit tiles")
 	for def_id in zone_ids:
 		_add_build_button(col, def_id)
 	_add_build_subhead(col, "Amenities")
@@ -1495,7 +1495,7 @@ func _build_left_panel(parent: Control) -> void:
 	col.add_child(HSeparator.new())
 
 	var hint := Label.new()
-	hint.text = "L-click map: place / select region\nR-click map: sell (½ refund)\nSpace: add a visitor\nP: toggle pause"
+	hint.text = "L-click map: place / select exhibit\nR-click map: sell (½ refund)\nEsc: clear selection\nP: toggle pause"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color("#7e9286"))
 	col.add_child(hint)
@@ -1829,15 +1829,15 @@ func _place_placeable_at(cell: Vector2i) -> void:
 		return
 	var check := RegionRegistry.can_add_placement(region.region_id, _selected_def_id)
 	if not check["ok"]:
-		_push_log("[color=#e76f51]Can't add %s to Region #%d: %s[/color]" %
+		_push_log("[color=#e76f51]Can't add %s to Exhibit #%d: %s[/color]" %
 			[def.display_name, region.region_id, check["reason"]])
 		return
 	var placement := RegionRegistry.add_placement(region.region_id, _selected_def_id)
 	if placement == null:
-		_push_log("[color=#e76f51]Failed to add %s to Region #%d.[/color]" %
+		_push_log("[color=#e76f51]Failed to add %s to Exhibit #%d.[/color]" %
 			[def.display_name, region.region_id])
 		return
-	_push_log("Added [b]%s[/b] to Region #%d" % [def.display_name, region.region_id])
+	_push_log("Added [b]%s[/b] to Exhibit #%d" % [def.display_name, region.region_id])
 	# Stay in place mode so the player can quickly add more of the same.
 
 

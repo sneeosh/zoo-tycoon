@@ -18,7 +18,7 @@ class_name VisitorBehavior
 # visitors gravitate toward exhibits that match the agent type's preferences.
 
 const REACH_DISTANCE: float = 0.6
-const BROWSE_ARRIVAL_DISTANCE: float = 1.5
+const BROWSE_ARRIVAL_DISTANCE: float = 0.5
 const BROWSE_SPEED_FACTOR: float = 0.55   # browse pace = walking_speed * this
 const HUNGRY_WEIGHT: int = 3              # weight bias when picking browse target
 # Linger time at a browse target scales with how well the exhibit matches
@@ -199,15 +199,48 @@ func _step_browsing(agent: Agent) -> void:
 			SimClock.rng.randf_range(-0.04, 0.04),
 			SimClock.rng.randf_range(-0.04, 0.04))
 		return
-	agent.position += to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
+	var step := to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
+	agent.position = _avoid_regions(agent.position, step)
+
+
+# If `pos + step` would land inside a Region, slide along it instead — try
+# the two perpendicular directions and pick whichever brings us closer to
+# the original step direction without entering a region. If both still
+# overlap, take the straight step anyway (visitor will be inside briefly,
+# but the next tick they'll be pushed out again by the same logic).
+func _avoid_regions(pos: Vector2, step: Vector2) -> Vector2:
+	var direct := pos + step
+	if RegionRegistry.region_at_cell(Vector2i(floor(direct.x), floor(direct.y))) == null:
+		return direct
+	# Side-step options: ±90° perpendicular at same speed.
+	var perp := Vector2(-step.y, step.x)
+	var option_a := pos + perp
+	var option_b := pos - perp
+	var a_blocked := RegionRegistry.region_at_cell(
+		Vector2i(floor(option_a.x), floor(option_a.y))) != null
+	var b_blocked := RegionRegistry.region_at_cell(
+		Vector2i(floor(option_b.x), floor(option_b.y))) != null
+	if not a_blocked and b_blocked:
+		return option_a
+	if a_blocked and not b_blocked:
+		return option_b
+	if not a_blocked and not b_blocked:
+		# Pick the one whose resulting position is closer to the original
+		# target heading. We don't know the target here, but the dot
+		# product of (perp choice) with (step) is zero — so prefer the
+		# side that keeps us moving in the same general world quadrant.
+		# Cheap proxy: pick option_a; deterministic tie-break.
+		return option_a
+	# Both blocked — go direct and rely on the next tick to recover.
+	return direct
 
 
 # A viewing cell is a tile adjacent (4-neighbor) to the region but NOT in it.
-# Picking randomly among the candidates spreads visitors around the perimeter
-# instead of stacking them on one spot. Returns the world-space center of the
-# chosen cell. Falls back to the region centroid if the region has no
-# exterior neighbors (fully surrounded — shouldn't happen in practice).
-func _pick_viewing_point(region: Region, _agent: Agent) -> Vector2:
+# We weight candidates by inverse-distance from the visitor so each visitor
+# walks to the *closest* fence side rather than potentially cutting straight
+# across the exhibit to reach a far-side cell. Some randomness stays so a
+# crowd doesn't all stack on one slot.
+func _pick_viewing_point(region: Region, agent: Agent) -> Vector2:
 	var cell_set := {}
 	for c in region.cells:
 		cell_set[c] = true
@@ -227,9 +260,26 @@ func _pick_viewing_point(region: Region, _agent: Agent) -> Vector2:
 			candidates.append(ext)
 	if candidates.is_empty():
 		return _region_centroid(region)
+	var weights: Array[float] = []
+	var total: float = 0.0
+	for c in candidates:
+		var center := Vector2(c) + Vector2(0.5, 0.5)
+		var d := center.distance_to(agent.position)
+		# Inverse-square falloff: a cell at distance 1 is 5× as likely as
+		# one at distance 5. Keeps a small chance of "far side" choices.
+		var w: float = 1.0 / (1.0 + d * d * 0.4)
+		weights.append(w)
+		total += w
+	var pick := SimClock.rng.randf() * total
+	var picked: Vector2i = candidates[candidates.size() - 1]
+	var accum: float = 0.0
+	for i in candidates.size():
+		accum += weights[i]
+		if pick <= accum:
+			picked = candidates[i]
+			break
 	# A bit of noise inside the chosen cell so two visitors landing on the
 	# same viewing slot don't pixel-stack.
-	var picked: Vector2i = candidates[SimClock.rng.randi_range(0, candidates.size() - 1)]
 	var jitter := Vector2(
 		SimClock.rng.randf_range(0.2, 0.8),
 		SimClock.rng.randf_range(0.2, 0.8))

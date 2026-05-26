@@ -10,4 +10,4 @@ without confounding balance.
 
 | id     | display_name | base_decay_per_tick |
 | ------ | ------------ | ------------------- |
-| hunger | Hunger       | 0.005               |
+| hunger | Hunger       | 0.0015              |

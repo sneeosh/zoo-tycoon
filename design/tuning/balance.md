@@ -7,7 +7,7 @@ Parsed by ContentDB at startup into the engine's BalanceConfig Resource.
 
 ## Time
 
-ticks_per_day      = 240
+ticks_per_day      = 800
 days_per_period    = 7
 
 ## Spawn curve
