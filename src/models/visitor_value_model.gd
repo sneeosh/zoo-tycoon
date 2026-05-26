@@ -8,11 +8,16 @@ class_name VisitorValueModel
 # 10 explicitly keeps this trivial; if these ever grew real depth, they'd
 # move to design/tuning/economy.md.
 
+# Defaults — used by tests and as the fallback when ZooBootstrap hasn't
+# loaded yet. The runtime entry fee is editable via the entrance-gate
+# admin modal and lives in ZooBootstrap.entry_fee.
 const TICKET_PRICE: int = 10
 const FOOD_PRICE: int = 5
 
 
 func compute_entry_fee(_agent: Agent) -> int:
+	if ZooBootstrap.scenario != null:
+		return ZooBootstrap.entry_fee
 	return TICKET_PRICE
 
 

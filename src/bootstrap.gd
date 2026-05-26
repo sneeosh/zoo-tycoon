@@ -23,6 +23,16 @@ var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 # Exposed so the UI can show targets, evaluate end-game, etc.
 var scenario: Scenario
 
+# Park-admin state. Editable via the entrance-gate admin modal.
+# entry_fee is what new visitors pay on arrival; park_open gates the
+# AgentPool spawn loop (sets base_spawn_rate to 0 when closed so the
+# engine still runs but doesn't admit guests).
+var entry_fee: int = 10
+var park_open: bool = true
+var _default_base_spawn_rate: float = 0.5
+
+signal admin_changed
+
 
 func _ready() -> void:
 	if not ContentDB.is_loaded:
@@ -57,7 +67,22 @@ func _ready() -> void:
 
 	scenario = Scenario.load_from_tuning()
 
+	# Cache the engine's default spawn rate so the open/closed toggle can
+	# restore it later. ContentDB has already applied balance.md by now.
+	_default_base_spawn_rate = AgentPool.base_spawn_rate
+
 	print("[Zoo] Bootstrap complete. Starting balance: %d" % Ledger.get_balance())
+
+
+func set_park_open(open: bool) -> void:
+	park_open = open
+	AgentPool.base_spawn_rate = _default_base_spawn_rate if open else 0.0
+	admin_changed.emit()
+
+
+func set_entry_fee(fee: int) -> void:
+	entry_fee = clampi(fee, 0, 1000)
+	admin_changed.emit()
 
 
 # Convenience for game UI to read the zoo's quality rating without

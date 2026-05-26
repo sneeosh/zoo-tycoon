@@ -192,6 +192,7 @@ func _draw() -> void:
 # Drawn smaller than a full tile so multiple placements in the same
 # region don't visually collide.
 func _draw_placements() -> void:
+	var t := Time.get_ticks_msec() / 1000.0
 	for region: Region in RegionRegistry.all_regions():
 		for i in region.placements.size():
 			var placement: Placement = region.placements[i]
@@ -208,22 +209,34 @@ func _draw_placements() -> void:
 			var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
 			if def == null:
 				continue
+			# Wander offset for animals (anything with an appeal contribution
+			# — troughs and infrastructure stay put). Two Lissajous-style
+			# sines with different per-placement phase give a roaming look
+			# inside ~⅓ of a tile, never leaving the anchor cell. Pure
+			# render-time animation; no engine state.
+			var wander := Vector2.ZERO
+			if not def.appeal_contribution.is_empty():
+				var phase := float(region.region_id) * 1.7 + float(i) * 0.91
+				var radius := float(TILE_SIZE) * 0.30
+				wander = Vector2(
+					sin(t * 0.65 + phase) * radius,
+					cos(t * 0.48 + phase * 1.3) * radius)
 			var sprite := _load_sprite_optional(String(def.sprite_key))
 			var anchor_screen := _cell_to_screen(anchor)
 			var sprite_size: float = float(TILE_SIZE) * 1.1  # slight overflow ok
 			var rect := Rect2(
 				anchor_screen + Vector2(
 					(TILE_SIZE - sprite_size) * 0.5,
-					(TILE_SIZE - sprite_size) * 0.5),
+					(TILE_SIZE - sprite_size) * 0.5) + wander,
 				Vector2(sprite_size, sprite_size))
-			# Soft shadow under each placement.
+			# Shadow stays anchored to the ground; only the sprite hops.
 			draw_circle(
-				rect.position + rect.size * 0.5 + Vector2(0, 3),
+				anchor_screen + Vector2(TILE_SIZE * 0.5, TILE_SIZE * 0.5 + 3) \
+					+ Vector2(wander.x, 0.0),
 				sprite_size * 0.45, Color(0, 0, 0, 0.30))
 			if sprite != null:
 				draw_texture_rect(sprite, rect, false)
 			else:
-				# Fallback: coloured dot.
 				draw_circle(
 					rect.position + rect.size * 0.5,
 					sprite_size * 0.45, Color("#c89465"))

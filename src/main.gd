@@ -9,6 +9,7 @@ extends Node
 # satisfaction, etc.; this just stages content and observes/dispatches input.
 
 const STARTER_VISITOR_COUNT: int = 6
+const GATE_TILE: Vector2i = Vector2i(0, 0)
 const HUD_REFRESH_SECONDS: float = 0.2
 const LOG_MAX_LINES: int = 60
 const MAP_VIEW_SCRIPT := preload("res://src/ui/map_view.gd")
@@ -61,6 +62,9 @@ var _endgame_modal: Control
 var _endgame_title: Label
 var _endgame_body: VBoxContainer
 var _endgame_resolved: bool = false    # idempotent: only fire end-game once
+var _admin_modal: Control
+var _admin_fee_value: Label
+var _admin_open_label: Label
 
 # Tutorial state — set by _start_tutorial. The overlay's only visible while
 # active. Each step has its own advance condition checked via engine signals.
@@ -568,6 +572,164 @@ func _on_endgame_continue() -> void:
 	_endgame_modal.visible = false
 	SimClock.play()
 	_refresh_speed_buttons()
+
+
+# ============================================================================
+# Park admin modal — opens on clicking the entrance gate
+# ============================================================================
+
+func _build_admin_modal(parent: Control) -> void:
+	_admin_modal = Control.new()
+	_admin_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_admin_modal.visible = false
+	_admin_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	parent.add_child(_admin_modal)
+
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0, 0, 0, 0.65)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	backdrop.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed:
+			_close_admin_modal())
+	_admin_modal.add_child(backdrop)
+
+	var card := PanelContainer.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -260
+	card.offset_top = -180
+	card.offset_right = 260
+	card.offset_bottom = 180
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_admin_modal.add_child(card)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	card.add_child(margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	margin.add_child(col)
+
+	var header := HBoxContainer.new()
+	col.add_child(header)
+	var title := _stat("Park Admin", 22, Color("#f4d35e"))
+	header.add_child(title)
+	var hspacer := Control.new()
+	hspacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(hspacer)
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.custom_minimum_size = Vector2(36, 30)
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(_close_admin_modal)
+	header.add_child(close_btn)
+
+	# Entry-fee row: label + -/+ buttons.
+	var fee_row := HBoxContainer.new()
+	fee_row.add_theme_constant_override("separation", 10)
+	col.add_child(fee_row)
+	var fee_label := Label.new()
+	fee_label.text = "Entry fee"
+	fee_label.add_theme_font_size_override("font_size", 14)
+	fee_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	fee_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fee_row.add_child(fee_label)
+	var minus := Button.new()
+	minus.text = "−"
+	minus.custom_minimum_size = Vector2(36, 32)
+	minus.focus_mode = Control.FOCUS_NONE
+	minus.pressed.connect(func(): _bump_entry_fee(-5))
+	fee_row.add_child(minus)
+	_admin_fee_value = Label.new()
+	_admin_fee_value.custom_minimum_size = Vector2(70, 0)
+	_admin_fee_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_admin_fee_value.add_theme_font_size_override("font_size", 16)
+	_admin_fee_value.add_theme_color_override("font_color", Color("#f4d35e"))
+	fee_row.add_child(_admin_fee_value)
+	var plus := Button.new()
+	plus.text = "+"
+	plus.custom_minimum_size = Vector2(36, 32)
+	plus.focus_mode = Control.FOCUS_NONE
+	plus.pressed.connect(func(): _bump_entry_fee(5))
+	fee_row.add_child(plus)
+
+	var fee_hint := Label.new()
+	fee_hint.text = "Higher fee = more revenue per guest, but fewer guests if it's too steep."
+	fee_hint.add_theme_font_size_override("font_size", 11)
+	fee_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	fee_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(fee_hint)
+
+	col.add_child(HSeparator.new())
+
+	# Park open/closed toggle.
+	var open_row := HBoxContainer.new()
+	open_row.add_theme_constant_override("separation", 10)
+	col.add_child(open_row)
+	var open_label := Label.new()
+	open_label.text = "Park status"
+	open_label.add_theme_font_size_override("font_size", 14)
+	open_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	open_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	open_row.add_child(open_label)
+	_admin_open_label = Label.new()
+	_admin_open_label.custom_minimum_size = Vector2(100, 0)
+	_admin_open_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_admin_open_label.add_theme_font_size_override("font_size", 14)
+	open_row.add_child(_admin_open_label)
+	var toggle := Button.new()
+	toggle.text = "Toggle"
+	toggle.custom_minimum_size = Vector2(90, 32)
+	toggle.focus_mode = Control.FOCUS_NONE
+	toggle.pressed.connect(_toggle_park_open)
+	open_row.add_child(toggle)
+
+	var open_hint := Label.new()
+	open_hint.text = "Close the park to stop new guest arrivals — useful while you build or save money on a slow day."
+	open_hint.add_theme_font_size_override("font_size", 11)
+	open_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	open_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(open_hint)
+
+
+func _open_admin_modal() -> void:
+	_refresh_admin_modal()
+	_admin_modal.visible = true
+
+
+func _close_admin_modal() -> void:
+	_admin_modal.visible = false
+
+
+func _refresh_admin_modal() -> void:
+	if _admin_fee_value == null:
+		return
+	_admin_fee_value.text = "$%d" % ZooBootstrap.entry_fee
+	if ZooBootstrap.park_open:
+		_admin_open_label.text = "Open"
+		_admin_open_label.add_theme_color_override("font_color", Color("#83c779"))
+	else:
+		_admin_open_label.text = "Closed"
+		_admin_open_label.add_theme_color_override("font_color", Color("#e76f51"))
+
+
+func _bump_entry_fee(delta: int) -> void:
+	ZooBootstrap.set_entry_fee(ZooBootstrap.entry_fee + delta)
+	_refresh_admin_modal()
+
+
+func _toggle_park_open() -> void:
+	ZooBootstrap.set_park_open(not ZooBootstrap.park_open)
+	_refresh_admin_modal()
+	if ZooBootstrap.park_open:
+		_push_log("[color=#83c779]Park reopened.[/color]")
+	else:
+		_push_log("[color=#e76f51]Park closed — no new guests will arrive.[/color]")
 
 
 # ============================================================================
@@ -1526,6 +1688,7 @@ func _build_right_column(parent: Control) -> void:
 	_build_tutorial_overlay(parent)
 	_build_welcome_modal(parent)
 	_build_endgame_modal(parent)
+	_build_admin_modal(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -1858,7 +2021,12 @@ func _on_placement_requested(cell: Vector2i) -> void:
 			_push_log("[color=#e76f51]Can't place %s at (%d, %d): %s[/color]" %
 				[def.display_name, cell.x, cell.y, reason])
 		return
-	# No build selection: if the cell is in a Region, open the manage panel.
+	# No build selection: clicking the entrance gate opens the park admin
+	# modal; clicking inside an exhibit opens the Manage Exhibit panel;
+	# clicking blank ground clears the panel selection.
+	if cell == GATE_TILE:
+		_open_admin_modal()
+		return
 	var region := RegionRegistry.region_at_cell(cell)
 	if region != null:
 		_selected_region_id = region.region_id
