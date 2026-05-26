@@ -254,6 +254,17 @@ func _draw_entities() -> void:
 		if def == null:
 			continue
 		_draw_one_entity(inst, def, font)
+		# An arena with an active booking gets a yellow star above the
+		# top edge so the player can spot which arenas are running shows
+		# without opening their modals.
+		if inst.entity_def_id == &"arena":
+			var booking := ZooBootstrap.get_booking(inst_id)
+			if not booking.is_empty():
+				var center := _cell_to_screen(inst.position) + Vector2(
+					def.footprint.x * TILE_SIZE * 0.5, -10)
+				draw_string(font, center - Vector2(7, 0),
+					"★", HORIZONTAL_ALIGNMENT_LEFT, -1, 22,
+					Color(0.96, 0.83, 0.37, 0.95))
 
 
 func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:

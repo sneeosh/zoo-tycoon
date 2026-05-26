@@ -23,6 +23,7 @@ in placeables.md — they go inside regions, not on the grid directly.
 | cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |
 | food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |
 | restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     |           |                |           |              |
+| arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |
 
 ## Effects
 

@@ -22,6 +22,7 @@ const ENTITY_COLORS := {
 	&"cage_panel":  Color("#7e8a92"),
 	&"food_stand":  Color("#e27d60"),
 	&"restroom":    Color("#41b3a3"),
+	&"arena":       Color("#a86a32"),
 }
 
 var _selected_def_id: StringName = &""
@@ -65,6 +66,9 @@ var _endgame_resolved: bool = false    # idempotent: only fire end-game once
 var _admin_modal: Control
 var _admin_fee_value: Label
 var _admin_open_label: Label
+var _arena_modal: Control
+var _arena_body: VBoxContainer
+var _arena_subject_id: int = 0   # entity_instance_id of the open arena
 
 # Active "move placement" mode — set by the ⇄ button in the Manage Exhibit
 # panel. Next map click in the same region writes state["primary_cell"].
@@ -587,6 +591,220 @@ func _on_endgame_continue() -> void:
 	_endgame_modal.visible = false
 	SimClock.play()
 	_refresh_speed_buttons()
+
+
+# ============================================================================
+# Arena modal — book an animal to perform
+# ============================================================================
+
+func _build_arena_modal(parent: Control) -> void:
+	_arena_modal = Control.new()
+	_arena_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_arena_modal.visible = false
+	_arena_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	parent.add_child(_arena_modal)
+
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0, 0, 0, 0.65)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	backdrop.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed:
+			_close_arena_modal())
+	_arena_modal.add_child(backdrop)
+
+	var card := PanelContainer.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -300
+	card.offset_top = -260
+	card.offset_right = 300
+	card.offset_bottom = 260
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_arena_modal.add_child(card)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	card.add_child(margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	margin.add_child(col)
+
+	var header := HBoxContainer.new()
+	col.add_child(header)
+	var title := _stat("Arena", 22, Color("#f4d35e"))
+	header.add_child(title)
+	var hspacer := Control.new()
+	hspacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(hspacer)
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.custom_minimum_size = Vector2(36, 30)
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.pressed.connect(_close_arena_modal)
+	header.add_child(close_btn)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(scroll)
+
+	_arena_body = VBoxContainer.new()
+	_arena_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_arena_body.add_theme_constant_override("separation", 6)
+	scroll.add_child(_arena_body)
+
+
+func _open_arena_modal(arena_id: int) -> void:
+	_arena_subject_id = arena_id
+	_refresh_arena_modal()
+	_arena_modal.visible = true
+
+
+func _close_arena_modal() -> void:
+	_arena_modal.visible = false
+	_arena_subject_id = 0
+
+
+func _refresh_arena_modal() -> void:
+	if _arena_body == null or _arena_subject_id == 0:
+		return
+	for child in _arena_body.get_children():
+		child.queue_free()
+
+	var booking := ZooBootstrap.get_booking(_arena_subject_id)
+
+	# Current performer.
+	var now_label := Label.new()
+	now_label.text = "Now performing"
+	now_label.add_theme_font_size_override("font_size", 12)
+	now_label.add_theme_color_override("font_color", Color("#7e9286"))
+	_arena_body.add_child(now_label)
+
+	if booking.is_empty():
+		var none_lbl := Label.new()
+		none_lbl.text = "  (empty — pick an animal below to start a show)"
+		none_lbl.add_theme_font_size_override("font_size", 13)
+		none_lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+		_arena_body.add_child(none_lbl)
+	else:
+		var region: Region = RegionRegistry.get_region(booking["region_id"])
+		if region != null and booking["index"] < region.placements.size():
+			var placement: Placement = region.placements[booking["index"]]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+			if def != null:
+				var row := HBoxContainer.new()
+				row.add_theme_constant_override("separation", 8)
+				_arena_body.add_child(row)
+				var attitude: float = float(placement.state.get("attitude", 1.0))
+				var name_lbl := Label.new()
+				name_lbl.text = "  %s  ·  exhibit #%d  ·  attitude %.0f%%" % [
+					def.display_name, region.region_id, attitude * 100.0]
+				name_lbl.add_theme_font_size_override("font_size", 13)
+				name_lbl.add_theme_color_override("font_color",
+					_happiness_color(attitude))
+				name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				row.add_child(name_lbl)
+				var stop := Button.new()
+				stop.text = "Stop show"
+				stop.custom_minimum_size = Vector2(110, 30)
+				stop.focus_mode = Control.FOCUS_NONE
+				stop.pressed.connect(_on_stop_show)
+				row.add_child(stop)
+				var rev: int = _show_revenue_for(def)
+				var rev_lbl := Label.new()
+				rev_lbl.text = "    Pays $%d/day · animals lose %.0f%% attitude/day; rest restores %.0f%%." % [
+					rev,
+					ZooBootstrap.SHOW_DAILY_FATIGUE * 100.0,
+					ZooBootstrap.SHOW_REST_RECOVERY * 100.0]
+				rev_lbl.add_theme_font_size_override("font_size", 11)
+				rev_lbl.add_theme_color_override("font_color", Color("#7e9286"))
+				rev_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				_arena_body.add_child(rev_lbl)
+
+	_arena_body.add_child(HSeparator.new())
+
+	var roster := Label.new()
+	roster.text = "Book a performer"
+	roster.add_theme_font_size_override("font_size", 12)
+	roster.add_theme_color_override("font_color", Color("#7e9286"))
+	_arena_body.add_child(roster)
+
+	# Roster of animals in the park grouped by exhibit.
+	var any_listed: bool = false
+	for region: Region in RegionRegistry.all_regions():
+		for i in region.placements.size():
+			var placement: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue
+			any_listed = true
+			var booked_here: bool = not booking.is_empty() \
+				and booking["region_id"] == region.region_id \
+				and booking["index"] == i
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			_arena_body.add_child(row)
+			var attitude: float = float(placement.state.get("attitude", 1.0))
+			var name_lbl := Label.new()
+			name_lbl.text = "  %s  ·  Exhibit #%d  ·  attitude %.0f%%  ·  $%d/day" % [
+				def.display_name, region.region_id,
+				attitude * 100.0, _show_revenue_for(def)]
+			name_lbl.add_theme_font_size_override("font_size", 13)
+			name_lbl.add_theme_color_override("font_color",
+				Color("#cdd6cf") if not booked_here else Color("#f4d35e"))
+			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(name_lbl)
+			if booked_here:
+				var marker := Label.new()
+				marker.text = "★ on stage"
+				marker.add_theme_font_size_override("font_size", 11)
+				marker.add_theme_color_override("font_color", Color("#f4d35e"))
+				row.add_child(marker)
+			else:
+				var book_btn := Button.new()
+				book_btn.text = "Book"
+				book_btn.custom_minimum_size = Vector2(80, 30)
+				book_btn.focus_mode = Control.FOCUS_NONE
+				book_btn.pressed.connect(_on_book_show.bind(region.region_id, i))
+				row.add_child(book_btn)
+
+	if not any_listed:
+		var none := Label.new()
+		none.text = "  (No animals in the park yet. Add one to an exhibit first.)"
+		none.add_theme_font_size_override("font_size", 12)
+		none.add_theme_color_override("font_color", Color("#7e9286"))
+		_arena_body.add_child(none)
+
+
+func _on_book_show(region_id: int, index: int) -> void:
+	if ZooBootstrap.book_animal(_arena_subject_id, region_id, index):
+		var region: Region = RegionRegistry.get_region(region_id)
+		var def: PlaceableDef = null
+		if region != null and index < region.placements.size():
+			def = ContentDB.placeable_defs.get(
+				region.placements[index].placeable_def_id)
+		if def != null:
+			_push_log("[color=#f4d35e]Show booked:[/color] %s takes the stage." %
+				def.display_name)
+	_refresh_arena_modal()
+
+
+func _on_stop_show() -> void:
+	ZooBootstrap.stop_show(_arena_subject_id)
+	_push_log("Show ended.")
+	_refresh_arena_modal()
+
+
+func _show_revenue_for(def: PlaceableDef) -> int:
+	var appeal_sum: float = 0.0
+	for v in def.appeal_contribution.values():
+		appeal_sum += float(v)
+	return int(round(appeal_sum * float(ZooBootstrap.SHOW_REVENUE_PER_APPEAL)))
 
 
 # ============================================================================
@@ -1756,6 +1974,7 @@ func _build_right_column(parent: Control) -> void:
 	_build_welcome_modal(parent)
 	_build_endgame_modal(parent)
 	_build_admin_modal(parent)
+	_build_arena_modal(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -2093,11 +2312,14 @@ func _on_placement_requested(cell: Vector2i) -> void:
 			_push_log("[color=#e76f51]Can't place %s at (%d, %d): %s[/color]" %
 				[def.display_name, cell.x, cell.y, reason])
 		return
-	# No build selection: clicking the entrance gate opens the park admin
-	# modal; clicking inside an exhibit opens the Manage Exhibit panel;
-	# clicking blank ground clears the panel selection.
+	# No build selection: gate → admin modal; arena → arena modal;
+	# exhibit tile → Manage Exhibit panel; blank ground → clear panel.
 	if cell == GATE_TILE:
 		_open_admin_modal()
+		return
+	var arena_id := _arena_at(cell)
+	if arena_id != 0:
+		_open_arena_modal(arena_id)
 		return
 	var region := RegionRegistry.region_at_cell(cell)
 	if region != null:
@@ -2106,6 +2328,20 @@ func _on_placement_requested(cell: Vector2i) -> void:
 	else:
 		_selected_region_id = -1
 		_refresh_region_panel()
+
+
+func _arena_at(cell: Vector2i) -> int:
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		if inst.entity_def_id != &"arena":
+			continue
+		var def := inst.get_def()
+		if def == null:
+			continue
+		if cell.x >= inst.position.x and cell.x < inst.position.x + def.footprint.x \
+		and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
+			return inst_id
+	return 0
 
 
 func _on_remove_requested(cell: Vector2i) -> void:
