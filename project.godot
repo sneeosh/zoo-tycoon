@@ -35,8 +35,8 @@ ZooBootstrap="*res://src/bootstrap.gd"
 
 window/size/viewport_width=1600
 window/size/viewport_height=1000
-window/size/window_width_override=1600
-window/size/window_height_override=1000
+window/size/mode=2
+window/size/resizable=true
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
