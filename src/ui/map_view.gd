@@ -434,6 +434,12 @@ func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
 func _draw_preview() -> void:
 	if not (_hovering and preview_def_id != &""):
 		return
+	# Placeables: highlight the entire region under the cursor, green if it
+	# accepts the placeable, red if not (or if the cell isn't in any region).
+	if ContentDB.placeable_defs.has(preview_def_id):
+		_draw_placeable_preview()
+		return
+	# Entities (zone tiles + amenities): the classic footprint preview.
 	var def: EntityDef = ContentDB.get_entity_def(preview_def_id)
 	if def == null:
 		return
@@ -449,6 +455,50 @@ func _draw_preview() -> void:
 		col.a = 0.45
 	draw_rect(rect.grow(-3), col, true)
 	draw_rect(rect.grow(-3), Color(1, 1, 1, 0.7), false, 1.5)
+
+
+func _draw_placeable_preview() -> void:
+	var region := RegionRegistry.region_at_cell(_hover_cell)
+	if region == null:
+		# Tile-sized warning rectangle on the hover cell so the player sees
+		# they need to aim at an exhibit.
+		var rect := Rect2(_cell_to_screen(_hover_cell),
+			Vector2(TILE_SIZE, TILE_SIZE))
+		draw_rect(rect.grow(-3), Color(0.85, 0.25, 0.25, 0.30), true)
+		return
+	var check := RegionRegistry.can_add_placement(region.region_id, preview_def_id)
+	var ok: bool = check["ok"]
+	var def: PlaceableDef = ContentDB.placeable_defs[preview_def_id]
+	if Ledger.get_balance() < def.build_cost:
+		ok = false
+	var fill: Color = Color(0.51, 0.78, 0.47, 0.30) if ok \
+		else Color(0.90, 0.43, 0.31, 0.30)
+	var stroke: Color = Color(0.51, 0.78, 0.47, 0.85) if ok \
+		else Color(0.90, 0.43, 0.31, 0.85)
+	# Paint every cell of the region so an L-shaped exhibit reads correctly.
+	for c in region.cells:
+		var rect := Rect2(_cell_to_screen(c),
+			Vector2(TILE_SIZE, TILE_SIZE))
+		draw_rect(rect, fill, true)
+	# Trace the same perimeter MapBackground uses for region auras, in our
+	# accept/reject color so the player sees which exhibit they're targeting.
+	var cell_set := {}
+	for c in region.cells:
+		cell_set[c] = true
+	for c in region.cells:
+		var s := _cell_to_screen(c)
+		var p0 := s
+		var p1 := s + Vector2(TILE_SIZE, 0)
+		var p2 := s + Vector2(TILE_SIZE, TILE_SIZE)
+		var p3 := s + Vector2(0, TILE_SIZE)
+		if not cell_set.has(c + Vector2i(0, -1)):
+			draw_line(p0, p1, stroke, 2.5)
+		if not cell_set.has(c + Vector2i(1, 0)):
+			draw_line(p1, p2, stroke, 2.5)
+		if not cell_set.has(c + Vector2i(0, 1)):
+			draw_line(p2, p3, stroke, 2.5)
+		if not cell_set.has(c + Vector2i(-1, 0)):
+			draw_line(p3, p0, stroke, 2.5)
 
 
 # ---------------------------------------------------------------------------

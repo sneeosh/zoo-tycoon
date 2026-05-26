@@ -1361,6 +1361,56 @@ func _add_build_button(col: VBoxContainer, def_id: StringName) -> void:
 	col.add_child(btn)
 
 
+func _add_placeable_button(col: VBoxContainer, def_id: StringName) -> void:
+	# Same shape as _add_build_button but for PlaceableDefs. A toggled
+	# placeable enters "place inside a region" mode: clicking a region tile
+	# calls RegionRegistry.add_placement.
+	var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+	var btn := Button.new()
+	btn.text = "%s\n$%d" % [def.display_name, def.build_cost]
+	var sprite_path := "res://assets/sprites/%s.png" % String(def.sprite_key)
+	if ResourceLoader.exists(sprite_path):
+		var tex: Texture2D = load(sprite_path)
+		if tex != null:
+			btn.icon = tex
+			btn.expand_icon = true
+	btn.tooltip_text = _placeable_tooltip_for(def)
+	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	btn.custom_minimum_size = Vector2(0, 56)
+	btn.toggle_mode = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_constant_override("icon_max_width", 38)
+	btn.add_theme_constant_override("h_separation", 10)
+	btn.toggled.connect(_on_build_toggled.bind(def_id))
+	_build_buttons[def_id] = btn
+	col.add_child(btn)
+
+
+func _placeable_tooltip_for(def: PlaceableDef) -> String:
+	var lines: Array[String] = []
+	lines.append(def.display_name)
+	lines.append("Build:  $%d" % def.build_cost)
+	if def.maintenance_cost > 0:
+		lines.append("Upkeep: $%d/day" % def.maintenance_cost)
+	if not def.required_zone_tags.is_empty():
+		var tags: Array[String] = []
+		for t in def.required_zone_tags:
+			tags.append(String(t))
+		lines.append("Needs habitat: %s" % ", ".join(tags))
+	if def.social_min > 0 or def.social_max < 99:
+		lines.append("Group size: %d–%d" % [def.social_min, def.social_max])
+	if def.space_ideal > 0:
+		lines.append("Ideal space: %d tiles each" % def.space_ideal)
+	if not def.appeal_contribution.is_empty():
+		var bits: Array[String] = []
+		for axis in def.appeal_contribution.keys():
+			bits.append("%s %.1f" % [String(axis), def.appeal_contribution[axis]])
+		lines.append("Appeal: %s" % ", ".join(bits))
+	lines.append("")
+	lines.append("Select then click an exhibit to add.")
+	return "\n".join(lines)
+
+
 func _build_left_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
@@ -1378,9 +1428,19 @@ func _build_left_panel(parent: Control) -> void:
 	margin.add_theme_constant_override("margin_bottom", 14)
 	panel.add_child(margin)
 
+	# With the BUILD menu now hosting zones + amenities + animals +
+	# infrastructure (~13 buttons) plus the Mission + Milestones panels,
+	# the column easily exceeds 1000px. Wrap it in a ScrollContainer so it
+	# stays usable on short windows.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(scroll)
+
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
-	margin.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
 
 	var title := Label.new()
 	title.text = "BUILD"
@@ -1388,8 +1448,9 @@ func _build_left_panel(parent: Control) -> void:
 	title.add_theme_color_override("font_color", Color("#7e9286"))
 	col.add_child(title)
 
-	# Group by zone_kind (zone tiles) vs none (amenities). Stable inside each
-	# group: alphabetical by def_id.
+	# Group entities by zone_kind (zone tiles) vs none (amenities), and
+	# group placeables by has-appeal (animals) vs not (infrastructure).
+	# Stable order inside each group: alphabetical by def_id.
 	var zone_ids: Array[StringName] = []
 	var amenity_ids: Array[StringName] = []
 	for def_id in ContentDB.entity_defs.keys():
@@ -1401,12 +1462,32 @@ func _build_left_panel(parent: Control) -> void:
 	zone_ids.sort_custom(func(a, b): return String(a) < String(b))
 	amenity_ids.sort_custom(func(a, b): return String(a) < String(b))
 
+	var animal_ids: Array[StringName] = []
+	var infra_ids: Array[StringName] = []
+	for def_id in ContentDB.placeable_defs.keys():
+		var p: PlaceableDef = ContentDB.placeable_defs[def_id]
+		# Anything that contributes an appeal axis is an "animal" in the UI
+		# sense (it attracts visitors). Troughs and similar pure-utility
+		# placeables fall under "infrastructure".
+		if not p.appeal_contribution.is_empty():
+			animal_ids.append(def_id)
+		else:
+			infra_ids.append(def_id)
+	animal_ids.sort_custom(func(a, b): return String(a) < String(b))
+	infra_ids.sort_custom(func(a, b): return String(a) < String(b))
+
 	_add_build_subhead(col, "Zone tiles")
 	for def_id in zone_ids:
 		_add_build_button(col, def_id)
 	_add_build_subhead(col, "Amenities")
 	for def_id in amenity_ids:
 		_add_build_button(col, def_id)
+	_add_build_subhead(col, "Animals")
+	for def_id in animal_ids:
+		_add_placeable_button(col, def_id)
+	_add_build_subhead(col, "Infrastructure")
+	for def_id in infra_ids:
+		_add_placeable_button(col, def_id)
 
 	_build_mission_section(col)
 	_build_goals_section(col)
@@ -1586,13 +1667,23 @@ func _refresh_hud() -> void:
 func _refresh_affordability() -> void:
 	var balance := Ledger.get_balance()
 	for def_id in _build_buttons.keys():
-		var def: EntityDef = ContentDB.entity_defs[def_id]
 		var btn: Button = _build_buttons[def_id]
-		btn.disabled = balance < def.build_cost
+		var cost := _build_cost_for(def_id)
+		btn.disabled = balance < cost
 		if btn.disabled and btn.button_pressed:
 			btn.button_pressed = false
-			_selected_def_id = &""
-			_map_view.preview_def_id = &""
+			if _selected_def_id == def_id:
+				_clear_build_selection()
+
+
+func _build_cost_for(def_id: StringName) -> int:
+	# Same BUILD panel hosts EntityDefs (zone tiles + amenities) and
+	# PlaceableDefs (animals + infrastructure). Either has build_cost.
+	if ContentDB.entity_defs.has(def_id):
+		return (ContentDB.entity_defs[def_id] as EntityDef).build_cost
+	if ContentDB.placeable_defs.has(def_id):
+		return (ContentDB.placeable_defs[def_id] as PlaceableDef).build_cost
+	return 0
 
 
 func _refresh_speed_buttons() -> void:
@@ -1628,7 +1719,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match event.keycode:
 		KEY_ESCAPE:
-			get_tree().quit()
+			# Cancel current selection: build tool first, then any open
+			# Manage Region panel. Only quits if there's nothing to cancel
+			# (and even then never on web — a web tab "quit" is a no-op).
+			if _selected_def_id != &"":
+				_clear_build_selection()
+			elif _selected_region_id >= 0:
+				_selected_region_id = -1
+				_refresh_region_panel()
+			else:
+				if OS.has_feature("web"):
+					pass
+				else:
+					get_tree().quit()
 		KEY_SPACE:
 			AgentPool.spawn(&"visitor", Vector2(
 				SimClock.rng.randf_range(0, 6),
@@ -1653,8 +1756,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
 	if not pressed:
 		if _selected_def_id == def_id:
-			_selected_def_id = &""
-			_map_view.preview_def_id = &""
+			_clear_build_selection()
 		return
 	# Single-select: untoggle every other build button.
 	for other_id in _build_buttons.keys():
@@ -1662,6 +1764,15 @@ func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
 			(_build_buttons[other_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = def_id
 	_map_view.preview_def_id = def_id
+
+
+func _clear_build_selection() -> void:
+	if _selected_def_id == &"":
+		return
+	if _build_buttons.has(_selected_def_id):
+		(_build_buttons[_selected_def_id] as Button).set_pressed_no_signal(false)
+	_selected_def_id = &""
+	_map_view.preview_def_id = &""
 
 
 const SAVE_SLOT := "main"
@@ -1705,8 +1816,38 @@ func _on_speed_pressed(key: String) -> void:
 	_refresh_speed_buttons()
 
 
+func _place_placeable_at(cell: Vector2i) -> void:
+	var def: PlaceableDef = ContentDB.placeable_defs[_selected_def_id]
+	var region := RegionRegistry.region_at_cell(cell)
+	if region == null:
+		_push_log("[color=#e76f51]Click an exhibit tile to add a %s.[/color]" %
+			def.display_name)
+		return
+	if Ledger.get_balance() < def.build_cost:
+		_push_log("[color=#e76f51]Not enough money for %s ($%d).[/color]" %
+			[def.display_name, def.build_cost])
+		return
+	var check := RegionRegistry.can_add_placement(region.region_id, _selected_def_id)
+	if not check["ok"]:
+		_push_log("[color=#e76f51]Can't add %s to Region #%d: %s[/color]" %
+			[def.display_name, region.region_id, check["reason"]])
+		return
+	var placement := RegionRegistry.add_placement(region.region_id, _selected_def_id)
+	if placement == null:
+		_push_log("[color=#e76f51]Failed to add %s to Region #%d.[/color]" %
+			[def.display_name, region.region_id])
+		return
+	_push_log("Added [b]%s[/b] to Region #%d" % [def.display_name, region.region_id])
+	# Stay in place mode so the player can quickly add more of the same.
+
+
 func _on_placement_requested(cell: Vector2i) -> void:
-	# Build mode: place the selected entity at the cell.
+	# Placeable mode: selected def is an animal or piece of infrastructure
+	# that lives inside a Region. Find the region under the cursor and add.
+	if ContentDB.placeable_defs.has(_selected_def_id):
+		_place_placeable_at(cell)
+		return
+	# Entity mode: selected def is a zone tile or amenity placed on the grid.
 	if _selected_def_id != &"":
 		var id := EntityRegistry.place(_selected_def_id, cell)
 		if id == 0:
