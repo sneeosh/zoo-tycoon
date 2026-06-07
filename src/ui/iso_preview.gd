@@ -19,6 +19,7 @@ const GROUND_H := 18
 
 var origin := Vector2(660, 70)
 var _sprites := {}       # name -> Texture2D | null
+var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
 
 
 func _ready() -> void:
@@ -254,18 +255,52 @@ func _draw_billboard(dr: Dictionary) -> void:
 	var cy := cell.y + float(fp.y) * 0.5 - 0.5
 	var base := _tile_center(cx, cy)
 	var w: float = maxf(fp.x, fp.y) * TW * (0.45 if dr.get("small", false) else 0.78)
-	# Ground shadow (an ellipse).
-	draw_set_transform(base, 0.0, Vector2(1.0, 0.5))
-	draw_circle(Vector2.ZERO, w * 0.42, Color(0, 0, 0, 0.28))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var sprite := _sprite(dr["sprite"])
-	var rect := Rect2(base - Vector2(w * 0.5, w * 0.92), Vector2(w, w))
+	# Seat the sprite by its actual opaque pixels rather than a fixed lift, so
+	# objects with different internal composition / transparent margins all
+	# rest on the tile instead of hovering. `foot` is the fraction down the PNG
+	# where opaque content ends; `cx_frac` is its opaque horizontal centre.
+	var meta := _sprite_anchor(dr["sprite"])
+	var foot: float = meta["foot"]
+	var cxf: float = meta["cx"]
+	var sink := 2.0   # let the contact point dip just under the tile centre
+	var rect := Rect2(base - Vector2(cxf * w, foot * w - sink), Vector2(w, w))
+	# Ground shadow (an ellipse) under the opaque footprint's contact point.
+	var shadow_w: float = w * meta["wfrac"]
+	draw_set_transform(base, 0.0, Vector2(1.0, 0.5))
+	draw_circle(Vector2.ZERO, shadow_w * 0.42, Color(0, 0, 0, 0.28))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if sprite != null:
 		draw_texture_rect(sprite, rect, false)
 	else:
 		var col := Color("#9a8f7d")
 		draw_rect(rect, col, true)
 		draw_rect(rect, Color(0, 0, 0, 0.3), false, 1.0)
+
+
+# Per-sprite anchoring metadata, computed once from the opaque bounding box:
+#   foot  — fraction down the PNG where opaque content ends (contact point)
+#   cx    — opaque horizontal centre as a fraction of width
+#   wfrac — opaque width as a fraction of the canvas (sizes the shadow)
+# Falls back to sane defaults when the image can't be inspected.
+func _sprite_anchor(name: String) -> Dictionary:
+	if _sprite_meta.has(name):
+		return _sprite_meta[name]
+	var meta := {"foot": 0.92, "cx": 0.5, "wfrac": 0.8}
+	var tex := _sprite(name)
+	if tex != null:
+		var img := tex.get_image()
+		if img != null:
+			var used := img.get_used_rect()
+			var th := float(img.get_height())
+			var tw := float(img.get_width())
+			if used.size.y > 0 and th > 0.0:
+				meta["foot"] = float(used.position.y + used.size.y) / th
+			if used.size.x > 0 and tw > 0.0:
+				meta["cx"] = (float(used.position.x) + float(used.size.x) * 0.5) / tw
+				meta["wfrac"] = float(used.size.x) / tw
+	_sprite_meta[name] = meta
+	return meta
 
 
 func _draw_guest(ag: Agent) -> void:
