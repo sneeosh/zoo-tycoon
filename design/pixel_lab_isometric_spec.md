@@ -83,17 +83,23 @@ same ¾ iso angle and sized to its footprint (1×1 ≈ 64×64, 2×2 ≈ 128×96)
 
 ## The code work remaining (mine, not yours)
 
-To promote iso from prototype to the real renderer:
+Progress so far (2026-06-07): iso is now a **real interactive view**, not a
+prototype.
 
-1. **Inverse projection** (screen → cell) for click-to-place, hover inspector,
-   and build preview in iso. (Math is straightforward; just not wired yet.)
-2. **Port the visual systems** already in the top-down view: day/night tint,
-   weather, water shimmer, mood bubbles, money-float toasts, the "no path
-   access" ⚠ and sick ✚ markers, pen ground-cover.
-3. **Textured ground** is now optional — the procedural ground already reads
-   cleanly with no grid. Only swap in tiles if they're seamless and a clear
-   upgrade (drop-in).
-4. **Tune** camera origin/zoom and depth-sort tie-breaks.
+- [x] **Inverse projection + interaction.** `_screen_to_cell` round-trips tile
+      centres (tested); `_gui_input` emits placement/remove; a build preview
+      draws footprint diamonds (entities) / region highlight (placeables) + a
+      hover outline. Both views now share `BaseMapView`, so `main.gd` drives
+      them through one path. (`tests/test_iso_view.gd`.)
+- [x] **Day/night tint** and the **"no path access" ⚠ warning** ported.
+- [ ] **Remaining visual ports:** hover inspector card, water shimmer, guest
+      mood bubbles, money-float toasts, sick ✚ marker, weather overlay, pen
+      ground-cover detailing.
+- [ ] **Camera/zoom:** origin + scale are fixed constants; needs a fit-to-view
+      (and ideally pan/zoom) pass, plus depth-sort tie-break tuning.
+- [ ] **Textured ground** stays optional — procedural ground already reads
+      cleanly with no grid; only swap in tiles if they're seamless and a clear
+      upgrade (drop-in).
 
 None of this touches the simulation — it's all in the view layer. Estimate:
 the inverse-projection + interaction is the main chunk; the rest is porting
