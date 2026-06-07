@@ -191,6 +191,12 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Marketing campaigns (4.2).** Spend cash to promote a
+  guest archetype for a few days (spawn-weight boost), closing the
+  investment→visitor-mix loop the archetypes opened. Run from the gate
+  admin panel; persists through save/load. *(Pulled forward from Phase 4 —
+  it's small and synergistic; the broader Phase 4 reach work still waits on
+  engine v1.0.)*
 - **2026-06-07** — **Difficulty scenarios (2.6) + a save/load fix.**
   **Difficulty** (Easy / Standard / Hard) as a scenario overlay — overrides
   the win bar, opening cash, and a global demand multiplier; picked at the
