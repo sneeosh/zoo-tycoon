@@ -2503,6 +2503,7 @@ func _stage_starter_park() -> void:
 	EntityRegistry.place(&"food_stand",  Vector2i(13, 4))  # touches (13,6)/(14,6)
 	EntityRegistry.place(&"drink_stand", Vector2i(11, 5))  # touches (11,6)
 	EntityRegistry.place(&"restroom",    Vector2i(4, 5))   # touches (4,6)
+	EntityRegistry.place(&"restroom",    Vector2i(8, 5))   # 2nd restroom (spillover bottleneck)
 	EntityRegistry.place(&"bench",       Vector2i(2, 5))   # touches (2,6)
 
 	# --- Lion + its infrastructure. ---
