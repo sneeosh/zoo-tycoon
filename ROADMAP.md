@@ -191,9 +191,12 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
-- **2026-06-07** — **Started Phase 3 depth early: guest archetypes (3.2)
-  + animal welfare (3.1).** With the Phase 1 character pack done, pulled
-  two engine-clean depth systems forward.
+- **2026-06-07** — **Started Phase 3 depth early: guest archetypes (3.2),
+  animal welfare (3.1), breeding (3.5).** With the Phase 1 character pack
+  done, pulled engine-clean depth systems forward. **Breeding** builds on
+  welfare: well-kept adult pairs produce offspring (space-capped, so
+  overcrowding self-limits), animals age and pass of old age, and rare
+  births award reputation — surfaced as log events + an age readout.
   **Guest archetypes** — Adult / Child / Family / Enthusiast, each a
   weighted `AgentType` sharing one behavior but differing in appeal
   preferences (so exhibit mix decides the crowd), need-decay, traits, and
