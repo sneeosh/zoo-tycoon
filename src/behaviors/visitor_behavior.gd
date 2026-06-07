@@ -370,6 +370,10 @@ func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
 		agent.need_levels[need] = 1.0
 
 	if total_charge > 0:
+		# Archetype spend (a Family party pays more than a lone Child).
+		if services != null:
+			total_charge = int(round(
+				total_charge * services.spend_multiplier(agent.agent_type_id)))
 		var label: String = NEED_LABELS.get(sought, String(sought).capitalize())
 		if to_refill.size() > 1:
 			label = "Meal"
@@ -401,7 +405,8 @@ func _maybe_donate(agent: Agent, region: Region) -> void:
 		if v > appeal_max:
 			appeal_max = v
 	var amount: int = int(round(
-		float(services.donation_amount_max) * agent.satisfaction * appeal_max))
+		float(services.donation_amount_max) * agent.satisfaction * appeal_max
+		* services.spend_multiplier(agent.agent_type_id)))
 	amount = maxi(1, amount)
 	ZooBootstrap.record_donation(region.region_id, amount)
 	ZooBootstrap.money_floated.emit(amount, agent.position)

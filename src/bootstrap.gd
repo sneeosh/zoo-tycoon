@@ -14,6 +14,10 @@ signal money_floated(amount: int, world_pos: Vector2)
 
 # Keep the instances alive at module scope. AgentPool holds refs but
 # storing here too means we can swap them at runtime if needed.
+# Guest archetype agent-type ids (design/tuning/agents.md). All share the
+# visitor behavior + satisfaction model.
+const GUEST_TYPES: Array[StringName] = [&"visitor", &"child", &"family", &"enthusiast"]
+
 var _visitor_behavior: VisitorBehavior
 var _visitor_satisfaction: VisitorSatisfactionModel
 var _zoo_quality: ZooQualityRating         # callable from game UI
@@ -74,8 +78,13 @@ func _ready() -> void:
 	_zoo_quality = ZooQualityRating.new()
 	_animal_happiness = ZooAnimalHappiness.new()
 
-	AgentPool.register_behavior(&"visitor", _visitor_behavior)
-	AgentPool.register_satisfaction_model(&"visitor", _visitor_satisfaction)
+	# All guest archetypes (Adult / Child / Family / Enthusiast — see
+	# design/tuning/agents.md) share one behavior + satisfaction model; they
+	# differ only in tuning (preferences, need decay, traits, spend). When a
+	# non-guest population lands (e.g. staff in Phase 3) it registers its own.
+	for guest_type in GUEST_TYPES:
+		AgentPool.register_behavior(guest_type, _visitor_behavior)
+		AgentPool.register_satisfaction_model(guest_type, _visitor_satisfaction)
 	# v0.4.0 — engine multiplies placement appeal_contribution by the
 	# happiness this returns when computing region appeal. Without this
 	# registration, the engine's default returns 1.0 (no opinion) and

@@ -81,3 +81,22 @@ a donation fires at all.
 donation_view_chance      = 0.35
 donation_amount_max       = 6
 donation_min_satisfaction = 0.55
+
+## Guest types
+
+<!--
+Adaptation plan §2 item 2 — per-archetype spend. spend_multiplier scales
+everything a guest of that type pays: the gate ticket, food/drink/meals, and
+donations. A Family is a whole party (2.2×); a Child spends little on their
+own (0.5×); an Enthusiast splurges and tips (1.4×); an Adult is the 1.0
+baseline. This is what makes the guest mix — driven by which exhibits you
+build — show up in the books. Archetype ids must match agents.md; an
+unlisted type defaults to 1.0.
+-->
+
+| agent_id   | spend_multiplier |
+| ---------- | ---------------- |
+| visitor    | 1.0              |
+| child      | 0.5              |
+| family     | 2.2              |
+| enthusiast | 1.4              |

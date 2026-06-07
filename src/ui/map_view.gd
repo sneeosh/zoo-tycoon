@@ -38,6 +38,15 @@ var _sprites_checked: Dictionary = {}    # entity_def_id (StringName) -> bool (t
 var _placeable_sprite_cache: Dictionary = {}  # placeable_def_id (StringName) -> Texture2D
 var _visitor_sprite: Texture2D
 
+# Per-archetype body tint so the crowd is legible at a glance (the
+# satisfaction halo stays separate). Keys match agents.md agent-type ids.
+const ARCHETYPE_COLORS := {
+	&"visitor":    Color("#dfe6df"),   # Adult — neutral
+	&"child":      Color("#f4a261"),   # Child — orange
+	&"family":     Color("#83c779"),   # Family — green
+	&"enthusiast": Color("#c9a4ff"),   # Enthusiast — purple
+}
+
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
 var _hovering: bool = false
@@ -437,15 +446,17 @@ func _draw_one_visitor(ag: Agent) -> void:
 	draw_arc(pos, 11.0, 0.0, TAU, 24,
 		Color(sat_color.r, sat_color.g, sat_color.b, 0.85), 1.5)
 
+	var arch_color: Color = ARCHETYPE_COLORS.get(ag.agent_type_id, Color("#dfe6df"))
 	if _visitor_sprite != null:
-		# Bigger sprite so visitors read clearly from across the map.
+		# Bigger sprite so visitors read clearly from across the map; tinted by
+		# archetype so families/children/enthusiasts are distinguishable.
 		var sprite_size := Vector2(28, 28)
 		var sprite_rect := Rect2(pos - sprite_size * 0.5, sprite_size)
-		draw_texture_rect(_visitor_sprite, sprite_rect, false)
+		draw_texture_rect(_visitor_sprite, sprite_rect, false, arch_color)
 	else:
-		# Fallback: colored circle visitor.
-		draw_circle(pos, 8.0, sat_color)
-		draw_arc(pos, 8.0, 0, TAU, 22, sat_color.darkened(0.55), 1.4)
+		# Fallback: archetype-colored circle visitor.
+		draw_circle(pos, 8.0, arch_color)
+		draw_arc(pos, 8.0, 0, TAU, 22, arch_color.darkened(0.55), 1.4)
 		draw_circle(pos + Vector2(-2.0, -2.0), 2.0, Color(1, 1, 1, 0.55))
 	_draw_visitor_mood(ag, pos)
 
@@ -671,7 +682,9 @@ func _inspect_visitor_at(local_pos: Vector2) -> Array[String]:
 		return []
 	var state: StringName = ag.behavior_state.get(&"state", &"browsing")
 	var out: Array[String] = []
-	out.append("Visitor #%d" % hit_id)
+	var atype: AgentType = ContentDB.get_agent_type(ag.agent_type_id)
+	var type_name: String = atype.display_name if atype != null else "Visitor"
+	out.append("%s #%d" % [type_name, hit_id])
 	out.append("state: %s" % String(state))
 	out.append("satisfaction: %s %.2f" %
 		[_bar(ag.satisfaction), ag.satisfaction])

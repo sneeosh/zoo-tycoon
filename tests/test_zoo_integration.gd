@@ -58,6 +58,35 @@ func test_visitor_agent_type_loaded() -> void:
 	assert_true(need_ids.has(&"energy"), "energy need present")
 
 
+func test_guest_archetypes_loaded() -> void:
+	# Four guest archetypes, each a full AgentType with the four needs and its
+	# own appeal preferences.
+	for tid in [&"visitor", &"child", &"family", &"enthusiast"]:
+		var at: AgentType = ContentDB.get_agent_type(tid)
+		assert_not_null(at, "archetype '%s' loaded" % tid)
+		assert_eq(at.needs.size(), 4, "'%s' has four needs" % tid)
+	assert_true(ContentDB.get_agent_type(&"child").preferences.has(&"cute"),
+		"children prefer cute exhibits")
+	assert_true(ContentDB.get_agent_type(&"enthusiast").preferences.has(&"exotic"),
+		"enthusiasts prefer exotic exhibits")
+	var sc := ServiceConfig.load_from_tuning()
+	assert_almost_eq(sc.spend_multiplier(&"family"), 2.2, 0.001, "family parties spend more")
+	assert_almost_eq(sc.spend_multiplier(&"visitor"), 1.0, 0.001, "adult is the spend baseline")
+
+
+func test_archetype_spend_scales_gate_fee() -> void:
+	# A guest's archetype scales what they pay at the gate (and inside).
+	var fee := ZooBootstrap.entry_fee
+	var pre := Ledger.get_balance()
+	AgentPool.spawn(&"family")
+	assert_eq(Ledger.get_balance() - pre, int(round(fee * 2.2)),
+		"a family pays a party-sized gate fee")
+	var pre2 := Ledger.get_balance()
+	AgentPool.spawn(&"child")
+	assert_eq(Ledger.get_balance() - pre2, int(round(fee * 0.5)),
+		"a child pays half the gate fee")
+
+
 func test_amenities_satisfy_each_need() -> void:
 	# Every guest need must have at least one satisfier entity, or the need
 	# is unmeetable and the four-need model just punishes the player.
