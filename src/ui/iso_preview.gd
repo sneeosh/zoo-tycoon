@@ -28,12 +28,28 @@ var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hovering: bool = false
 
+# Camera. Everything is drawn in unscaled "model space" (origin/TW/TH); a single
+# view transform maps model→screen with fit-to-view + wheel zoom + drag pan, so
+# the projection math below never changes. _user_zoom multiplies the fit scale;
+# _pan is a screen-space offset added on top.
+const MIN_USER_ZOOM := 0.4
+const MAX_USER_ZOOM := 3.0
+const FIT_MARGIN := 0.9
+var _view_xf := Transform2D()
+var _fit_zoom := 1.0
+var _model_center := Vector2.ZERO
+var _user_zoom := 1.0
+var _pan := Vector2.ZERO
+var _last_size := Vector2.ZERO
+var _panning := false
+
 
 func _ready() -> void:
 	# STOP so we receive _gui_input — this is an interactive view now, not a
 	# passive overlay.
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
+	resized.connect(_rebuild_view)
 
 
 var _time := 0.0
@@ -43,12 +59,38 @@ func _process(d: float) -> void:
 	queue_redraw()
 
 
-# Inverse of _project/_tile_center: which grid cell does a local screen point
-# fall in? The 2:1 diamond lattice is a linear shear of (gx,gy), so invert it
-# and round — rounding the fractional cell is exactly "point in diamond".
+# Model-space bounding rect of the drawn ground (its four diamond corners).
+func _ground_model_rect() -> Rect2:
+	var pts := [_project(0, 0), _project(GROUND_W, 0),
+		_project(GROUND_W, GROUND_H), _project(0, GROUND_H)]
+	var r := Rect2(pts[0], Vector2.ZERO)
+	for p in pts:
+		r = r.expand(p)
+	return r
+
+
+# Recompute the view transform: fit the ground into the control, then apply the
+# user's zoom (about the model centre) and pan.
+func _rebuild_view() -> void:
+	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	var gr := _ground_model_rect()
+	_model_center = gr.position + gr.size * 0.5
+	_fit_zoom = minf(size.x / gr.size.x, size.y / gr.size.y) * FIT_MARGIN
+	var z := _fit_zoom * _user_zoom
+	_view_xf = Transform2D(0.0, Vector2(z, z), 0.0, size * 0.5 - _model_center * z + _pan)
+	_last_size = size
+
+
+# Inverse of _project/_tile_center, accounting for the view transform: which
+# grid cell does a local screen point fall in? The 2:1 diamond lattice is a
+# linear shear of (gx,gy), so invert it and round — rounding the fractional
+# cell is exactly "point in diamond". (With an identity view transform this is
+# pure model-space math, which is what the unit tests exercise.)
 func _screen_to_cell(p: Vector2) -> Vector2i:
-	var dx := p.x - origin.x
-	var dy := p.y - origin.y - TH * 0.5   # _tile_center adds (0, TH/2)
+	var m := _view_xf.affine_inverse() * p
+	var dx := m.x - origin.x
+	var dy := m.y - origin.y - TH * 0.5   # _tile_center adds (0, TH/2)
 	var u := dx / (TW * 0.5)              # u = gx - gy
 	var v := dy / (TH * 0.5)              # v = gx + gy
 	return Vector2i(roundi((u + v) * 0.5), roundi((v - u) * 0.5))
@@ -56,14 +98,32 @@ func _screen_to_cell(p: Vector2) -> Vector2i:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
+		if _panning:
+			_pan += event.relative
+			_rebuild_view()
 		_hover_cell = _screen_to_cell(event.position)
 		_hovering = true
-	elif event is InputEventMouseButton and event.pressed:
-		var cell := _screen_to_cell(event.position)
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			placement_requested.emit(cell)
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			remove_requested.emit(cell)
+	elif event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_zoom_at(event.position, 1.1)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			_zoom_at(event.position, 1.0 / 1.1)
+		elif event.button_index == MOUSE_BUTTON_MIDDLE:
+			_panning = event.pressed
+		elif event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			placement_requested.emit(_screen_to_cell(event.position))
+		elif event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			remove_requested.emit(_screen_to_cell(event.position))
+
+
+# Zoom about the cursor: keep the model point under `screen_pos` fixed.
+func _zoom_at(screen_pos: Vector2, factor: float) -> void:
+	var m := _view_xf.affine_inverse() * screen_pos
+	_user_zoom = clampf(_user_zoom * factor, MIN_USER_ZOOM, MAX_USER_ZOOM)
+	var z := _fit_zoom * _user_zoom
+	# Solve pan so screen(m) lands back on the cursor after the zoom change.
+	_pan = screen_pos - size * 0.5 - (m - _model_center) * z
+	_rebuild_view()
 
 
 func _notification(what: int) -> void:
@@ -86,15 +146,21 @@ func _tile_center(gx: float, gy: float) -> Vector2:
 
 
 func _draw() -> void:
-	# Backdrop.
+	if _last_size != size:
+		_rebuild_view()
+	# Backdrop fills the whole control in screen space.
 	draw_rect(Rect2(Vector2.ZERO, size), Color("#101a14"), true)
+	# The world is drawn in model space under the fit/zoom/pan transform.
+	draw_set_transform_matrix(_view_xf)
 	_draw_ground()
 	_draw_region_fills()
 	_draw_ground_scatter()
 	_draw_sorted_objects()
-	_draw_day_night()
 	_draw_path_warnings()
 	_draw_preview()
+	# Back to screen space for the full-screen dusk overlay.
+	draw_set_transform_matrix(Transform2D())
+	_draw_day_night()
 
 
 # Dusk/night tint — same model as the top-down view: dim toward the edges of
@@ -485,10 +551,12 @@ func _draw_billboard(dr: Dictionary) -> void:
 	var bob: float = dr.get("bob", 0.0)
 	var rect := Rect2(base - Vector2(cxf * w, foot * w - sink - bob), Vector2(w, w))
 	# Ground shadow (an ellipse) under the opaque footprint's contact point.
+	# Compose the squash with the view transform, then restore to the view
+	# (not identity) so following draws stay in model space.
 	var shadow_w: float = w * meta["wfrac"]
-	draw_set_transform(base, 0.0, Vector2(1.0, 0.5))
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1, 0), Vector2(0, 0.5), base))
 	draw_circle(Vector2.ZERO, shadow_w * 0.42, Color(0, 0, 0, 0.28))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	draw_set_transform_matrix(_view_xf)
 	if sprite != null:
 		draw_texture_rect(sprite, rect, false)
 	else:
@@ -524,9 +592,9 @@ func _sprite_anchor(name: String) -> Dictionary:
 
 func _draw_guest(ag: Agent) -> void:
 	var base := _tile_center(ag.position.x, ag.position.y)
-	draw_set_transform(base, 0.0, Vector2(1.0, 0.5))
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1, 0), Vector2(0, 0.5), base))
 	draw_circle(Vector2.ZERO, 6.0, Color(0, 0, 0, 0.25))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	draw_set_transform_matrix(_view_xf)
 	var palette := {
 		&"child": Color("#f4a261"), &"family": Color("#83c779"),
 		&"enthusiast": Color("#c9a4ff")}

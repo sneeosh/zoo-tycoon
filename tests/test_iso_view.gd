@@ -7,34 +7,51 @@ extends GutTest
 # flow can't silently drift. Pure view logic; no engine touched.
 
 
+# Build with a real, non-identity view transform (a genuine fit-to-view) so
+# the tests exercise the camera path, not just the identity case.
 func _new_iso() -> IsoPreview:
 	var iso := IsoPreview.new()
-	# _ready sets mouse_filter etc.; not required for the pure math, but call
-	# it so the instance is in the same state as in-game.
 	add_child_autofree(iso)
+	iso.size = Vector2(900, 600)
+	iso._rebuild_view()
 	return iso
+
+
+# Screen position of a cell centre, forward through the view transform — the
+# pixel the player actually clicks.
+func _cell_pixel(iso: IsoPreview, gx: int, gy: int) -> Vector2:
+	return iso._view_xf * iso._tile_center(gx, gy)
 
 
 func test_screen_to_cell_round_trips_tile_centers() -> void:
 	var iso := _new_iso()
-	# Every cell's projected centre must invert back to that exact cell —
-	# this is what makes "click the diamond you see" land on the right tile.
+	# Every cell's on-screen centre must pick that exact cell — this is what
+	# makes "click the diamond you see" land on the right tile, under zoom/pan.
 	for gx in range(0, 28):
 		for gy in range(0, 18):
-			var center: Vector2 = iso._tile_center(gx, gy)
-			var cell: Vector2i = iso._screen_to_cell(center)
+			var cell: Vector2i = iso._screen_to_cell(_cell_pixel(iso, gx, gy))
 			assert_eq(cell, Vector2i(gx, gy),
 				"cell (%d,%d) centre must invert to itself" % [gx, gy])
 
 
 func test_screen_to_cell_is_stable_within_a_diamond() -> void:
 	var iso := _new_iso()
-	# A point nudged a few px around a tile centre (but inside its diamond)
-	# still resolves to that tile — no off-by-one at sub-cell offsets.
-	var center: Vector2 = iso._tile_center(10, 6)
+	# A point nudged a few screen px around a tile centre (but inside its
+	# diamond) still resolves to that tile — no off-by-one at sub-cell offsets.
+	var center := _cell_pixel(iso, 10, 6)
 	for off in [Vector2(6, 0), Vector2(-6, 0), Vector2(0, 4), Vector2(0, -4)]:
 		assert_eq(iso._screen_to_cell(center + off), Vector2i(10, 6),
 			"nudged point %s should stay in cell (10,6)" % off)
+
+
+func test_zoom_keeps_the_cursor_anchored() -> void:
+	var iso := _new_iso()
+	# Zooming in about a screen point must keep the same cell under the cursor.
+	var pix := _cell_pixel(iso, 12, 7)
+	var before := iso._screen_to_cell(pix)
+	iso._zoom_at(pix, 1.3)
+	assert_eq(iso._screen_to_cell(pix), before,
+		"the cell under the cursor must not move when zooming")
 
 
 func test_left_click_emits_placement_for_hovered_cell() -> void:
@@ -43,7 +60,7 @@ func test_left_click_emits_placement_for_hovered_cell() -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
 	ev.pressed = true
-	ev.position = iso._tile_center(7, 4)
+	ev.position = _cell_pixel(iso, 7, 4)
 	iso._gui_input(ev)
 	assert_signal_emitted_with_parameters(iso, "placement_requested", [Vector2i(7, 4)])
 
@@ -54,6 +71,6 @@ func test_right_click_emits_remove_for_hovered_cell() -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_RIGHT
 	ev.pressed = true
-	ev.position = iso._tile_center(3, 9)
+	ev.position = _cell_pixel(iso, 3, 9)
 	iso._gui_input(ev)
 	assert_signal_emitted_with_parameters(iso, "remove_requested", [Vector2i(3, 9)])
