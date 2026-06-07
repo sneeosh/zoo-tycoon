@@ -39,6 +39,11 @@ const WEATHER_ICONS := {
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
 var _map_view: BaseMapView
+# Which projection is active. Initial mode honors TYCOON_ISO; the top-bar View
+# button flips it at runtime by rebuilding the view in place.
+var _use_iso: bool = OS.get_environment("TYCOON_ISO") != ""
+var _view_container: VBoxContainer
+var _view_btn: Button
 # region_id -> true for populated exhibits with no gate-reachable path cell
 # within viewing distance (guests can't reach them). Recomputed each HUD tick.
 var _disconnected_regions: Dictionary = {}
@@ -2121,6 +2126,14 @@ func _build_top_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
 
+	_view_btn = Button.new()
+	_view_btn.custom_minimum_size = Vector2(96, 36)
+	_view_btn.focus_mode = Control.FOCUS_NONE
+	_view_btn.tooltip_text = "Switch between top-down and isometric view"
+	_view_btn.pressed.connect(_toggle_view)
+	_update_view_button()
+	row.add_child(_view_btn)
+
 	var help_btn := Button.new()
 	help_btn.text = "?"
 	help_btn.tooltip_text = "Show the welcome guide again"
@@ -2367,17 +2380,11 @@ func _build_right_column(parent: Control) -> void:
 	center.add_theme_constant_override("separation", 0)
 	parent.add_child(center)
 
-	# TYCOON_ISO swaps in the isometric view. Both views share BaseMapView, so
-	# the wiring below is identical — iso is a full interactive view, not a
-	# passive overlay. The shipping default stays top-down.
-	if OS.get_environment("TYCOON_ISO") != "":
-		_map_view = IsoPreview.new()
-	else:
-		_map_view = MAP_VIEW_SCRIPT.new()
-	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_map_view.entity_colors = ENTITY_COLORS
-	_map_view.placement_requested.connect(_on_placement_requested)
-	_map_view.remove_requested.connect(_on_remove_requested)
+	# Top-down vs isometric. Both share BaseMapView so main drives either
+	# identically; the player flips between them at runtime with the View
+	# button in the top bar (initial mode honors the TYCOON_ISO env var).
+	_view_container = center
+	_map_view = _make_view()
 	center.add_child(_map_view)
 
 	_build_region_panel(parent)
@@ -2810,6 +2817,43 @@ func _place_placeable_at(cell: Vector2i) -> void:
 		return
 	_push_log("Added [b]%s[/b] to Exhibit #%d" % [def.display_name, region.region_id])
 	# Stay in place mode so the player can quickly add more of the same.
+
+
+# Build the active view (top-down or iso) and wire it to main. Both implement
+# BaseMapView so the wiring is identical; only the class differs.
+func _make_view() -> BaseMapView:
+	var v: BaseMapView = IsoPreview.new() if _use_iso else MAP_VIEW_SCRIPT.new()
+	v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.entity_colors = ENTITY_COLORS
+	v.placement_requested.connect(_on_placement_requested)
+	v.remove_requested.connect(_on_remove_requested)
+	return v
+
+
+# Flip projection at runtime: rebuild the view in place, carrying over the
+# transient view state (build preview + disconnected-exhibit badges).
+func _toggle_view() -> void:
+	if _view_container == null or _map_view == null:
+		return
+	_use_iso = not _use_iso
+	var prev_preview := _map_view.preview_def_id
+	var prev_disconnected := _map_view.disconnected_regions
+	var idx := _map_view.get_index()
+	_view_container.remove_child(_map_view)
+	_map_view.queue_free()
+	_map_view = _make_view()
+	_view_container.add_child(_map_view)
+	_view_container.move_child(_map_view, idx)
+	_map_view.preview_def_id = prev_preview
+	_map_view.disconnected_regions = prev_disconnected
+	_update_view_button()
+
+
+func _update_view_button() -> void:
+	if _view_btn == null:
+		return
+	# Show the current mode; pressing switches to the other.
+	_view_btn.text = "View: Iso" if _use_iso else "View: Top"
 
 
 func _on_placement_requested(cell: Vector2i) -> void:
