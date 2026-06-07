@@ -44,7 +44,24 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color("#101a14"), true)
 	_draw_ground()
 	_draw_region_fills()
+	_draw_ground_scatter()
 	_draw_sorted_objects()
+
+
+# Fill cell (gx,gy)'s diamond with a solid colour. The polygon is inflated a
+# hair so antialiased neighbours meet with no hairline seam. No edge stroke —
+# adjacent solid diamonds share their borders exactly, so the ground reads as
+# one continuous surface (no grid). This is why we draw ground procedurally
+# instead of tiling the supplied iso PNGs, which bake a dark rim into every
+# tile edge and therefore always paint a visible diamond lattice.
+func _fill_diamond(gx: float, gy: float, fill: Color) -> void:
+	var t := _project(gx, gy)
+	var hw := TW * 0.5 + 0.75
+	var hh := TH * 0.5 + 0.5
+	var c := t + Vector2(0, TH * 0.5)
+	draw_colored_polygon(PackedVector2Array([
+		c + Vector2(0, -hh), c + Vector2(hw, 0),
+		c + Vector2(0, hh), c + Vector2(-hw, 0)]), fill)
 
 
 func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
@@ -56,54 +73,84 @@ func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
 		draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), edge, 1.0)
 
 
-# Draw a 64×32 isometric ground tile texture at cell (gx,gy). Falls back to a
-# flat diamond if the texture is missing.
-func _draw_tile_tex(gx: int, gy: int, tex_name: String) -> void:
-	var tex := _iso_tex(tex_name)
-	if tex == null:
-		_draw_diamond(gx, gy, Color("#3c5e36"), Color(0, 0, 0, 0.07))
-		return
-	draw_texture_rect(tex, Rect2(_project(gx, gy) - Vector2(TW * 0.5, 0),
-		Vector2(TW, TH)), false)
-
-
-func _iso_tex(name: String) -> Texture2D:
-	return _sprite(name)
+# A grass-toned diamond with subtle per-cell variation so the parkland reads
+# as living turf rather than a flat green field — without any tile seams.
+func _grass_color(gx: int, gy: int) -> Color:
+	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
+	var base := Color("#3c5e36")
+	var v := float(h % 7) / 7.0
+	var col := base.lerp(Color("#4a6e3f"), v * 0.6)
+	if (h / 7) % 4 == 0:
+		col = col.darkened(0.06)
+	return col
 
 
 func _draw_ground() -> void:
-	for gx in GROUND_W:
-		for gy in GROUND_H:
-			_draw_tile_tex(gx, gy, "iso_grass")
+	for gy in range(GROUND_H):
+		for gx in range(GROUND_W):
+			_fill_diamond(gx, gy, _grass_color(gx, gy))
 
 
-func _region_tint(region: Region) -> Color:
+# Enclosure floors are drawn as solid, varied diamonds (same seamless trick as
+# the grass) so a multi-tile pen reads as one continuous surface, not a grid.
+func _region_floor_color(region: Region, gx: int, gy: int) -> Color:
+	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
+	var base: Color
 	if &"water" in region.provided_zone_tags:
-		return Color("#4f93c4")
-	if &"tall_cage" in region.provided_zone_tags:
-		return Color("#6fc2a0")
-	if &"rocks" in region.provided_zone_tags:
-		return Color("#9c7b4f")
-	if &"grass" in region.provided_zone_tags:
-		return Color("#6fa244")
-	return Color("#8a8a8a")
-
-
-func _region_tile(region: Region) -> String:
-	if &"water" in region.provided_zone_tags:
-		return "iso_water"
-	if &"rocks" in region.provided_zone_tags:
-		return "iso_rock"
-	if &"tall_cage" in region.provided_zone_tags:
-		return "iso_dirt"
-	return "iso_dirt"   # enclosure floor reads distinct from parkland grass
+		base = Color("#3f7fb0")
+	elif &"rocks" in region.provided_zone_tags:
+		base = Color("#9c7b4f")
+	elif &"tall_cage" in region.provided_zone_tags:
+		base = Color("#8a6f47")
+	else:
+		base = Color("#7a5d3a")   # dirt enclosure floor, distinct from grass
+	var v := float(h % 7) / 7.0
+	return base.lerp(base.lightened(0.12), v).darkened(0.04 * float((h / 7) % 3))
 
 
 func _draw_region_fills() -> void:
 	for region: Region in RegionRegistry.all_regions():
-		var tile := _region_tile(region)
 		for c in region.cells:
-			_draw_tile_tex(c.x, c.y, tile)
+			_fill_diamond(c.x, c.y, _region_floor_color(region, c.x, c.y))
+
+
+# Parkland decoration — tufts and shrubs scattered across grass cells that are
+# not inside a region or under a path. Deterministic per cell so it's stable
+# frame to frame; drawn after the ground fill, beneath objects.
+func _draw_ground_scatter() -> void:
+	var blocked := {}
+	for region: Region in RegionRegistry.all_regions():
+		for c in region.cells:
+			blocked[c] = true
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def != null and def.walkable:
+			blocked[inst.position] = true
+	for gy in range(GROUND_H):
+		for gx in range(GROUND_W):
+			if blocked.has(Vector2i(gx, gy)):
+				continue
+			var h := _hash2(gx + 31, gy + 17)
+			if (h % 4) != 0:
+				continue
+			var c := _tile_center(gx, gy)
+			var off := Vector2(
+				float((h / 7) % 16) - 8.0, float((h / 13) % 8) - 4.0)
+			_draw_tuft(c + off, h)
+
+
+func _draw_tuft(p: Vector2, h: int) -> void:
+	if (h % 3) == 0:
+		var r := 3.0 + float(h % 2)
+		draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.18))
+		draw_circle(p, r, Color("#35522482"))
+		draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#5a7b3aaa"))
+	else:
+		var col := Color("#4f7a3488") if (h % 2) == 0 else Color("#5e8a3c88")
+		for i in 3:
+			draw_line(p + Vector2(float(i - 1) * 1.6, 1.0),
+				p + Vector2(float(i - 1) * 1.6, -3.0 - float(h % 2)), col, 1.0)
 
 
 # Build one depth-sorted list of everything that has height — perimeter fence
@@ -130,7 +177,9 @@ func _draw_sorted_objects() -> void:
 		if def == null:
 			continue
 		if def.walkable:
-			_draw_tile_tex(inst.position.x, inst.position.y, "iso_path")
+			var ph := _hash2(inst.position.x * 3 + 7, inst.position.y * 5 + 11)
+			var pcol := Color("#c8b083").lerp(Color("#d8c39a"), float(ph % 5) / 5.0)
+			_fill_diamond(inst.position.x, inst.position.y, pcol.darkened(0.03 * float((ph / 5) % 3)))
 			continue
 		if def.zone_kind != &"":
 			continue   # zone tiles are GROUND (drawn as region-fill diamonds), not billboards
