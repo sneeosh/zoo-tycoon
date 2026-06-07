@@ -38,7 +38,7 @@ const WEATHER_ICONS := {
 
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
-var _map_view: MapView
+var _map_view: BaseMapView
 # region_id -> true for populated exhibits with no gate-reachable path cell
 # within viewing distance (guests can't reach them). Recomputed each HUD tick.
 var _disconnected_regions: Dictionary = {}
@@ -2367,19 +2367,18 @@ func _build_right_column(parent: Control) -> void:
 	center.add_theme_constant_override("separation", 0)
 	parent.add_child(center)
 
-	# EXPERIMENTAL: TYCOON_ISO swaps in the prototype isometric renderer (view
-	# only) to evaluate the iso direction. The shipping build stays top-down.
+	# TYCOON_ISO swaps in the isometric view. Both views share BaseMapView, so
+	# the wiring below is identical — iso is a full interactive view, not a
+	# passive overlay. The shipping default stays top-down.
 	if OS.get_environment("TYCOON_ISO") != "":
-		var iso := IsoPreview.new()
-		iso.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		center.add_child(iso)
+		_map_view = IsoPreview.new()
 	else:
 		_map_view = MAP_VIEW_SCRIPT.new()
-		_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		_map_view.entity_colors = ENTITY_COLORS
-		_map_view.placement_requested.connect(_on_placement_requested)
-		_map_view.remove_requested.connect(_on_remove_requested)
-		center.add_child(_map_view)
+	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_map_view.entity_colors = ENTITY_COLORS
+	_map_view.placement_requested.connect(_on_placement_requested)
+	_map_view.remove_requested.connect(_on_remove_requested)
+	center.add_child(_map_view)
 
 	_build_region_panel(parent)
 	_build_reports_modal(parent)

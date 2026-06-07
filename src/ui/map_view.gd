@@ -1,13 +1,13 @@
-extends Control
+extends BaseMapView
 class_name MapView
 # Zoo Tycoon — map view.
 #
 # Draws the EntityRegistry's placed entities, the AgentPool's visitors, and
 # the park entrance gate on a tile grid; handles click-to-place /
 # right-click-to-sell. Pure game UI; no engine modifications.
-
-signal placement_requested(grid_cell: Vector2i)
-signal remove_requested(grid_cell: Vector2i)
+#
+# The build/place/remove signals, preview_def_id, entity_colors, and
+# disconnected_regions live on BaseMapView (shared with the iso view).
 
 const TILE_SIZE: int = 36
 const GRID_ORIGIN: Vector2 = Vector2(28, 28)
@@ -21,13 +21,6 @@ const MIN_TILES_FOR_LABEL: int = 3
 const GATE_TILE: Vector2i = Vector2i(0, 0)
 const GATE_COLOR: Color = Color("#f4d35e")
 const GATE_POST_COLOR: Color = Color("#e6b32f")
-
-var entity_colors: Dictionary = {}
-# Set by main when a build button is toggled on; empty string = none.
-var preview_def_id: StringName = &""
-# region_id -> true for exhibits guests can't path to. Set by main; drawn as
-# a ⚠ badge so the disconnect is visible without opening the manage panel.
-var disconnected_regions: Dictionary = {}
 
 # Pixel-art sprites generated via Pixel Lab. Loaded lazily so the game
 # doesn't crash if a sprite is missing — we fall back to the colored

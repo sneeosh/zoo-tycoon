@@ -1,14 +1,16 @@
-extends Control
+extends BaseMapView
 class_name IsoPreview
-# EXPERIMENTAL isometric renderer — a prototype to validate the isometric
-# direction. OFF by default; enabled with the TYCOON_ISO env var so the
-# shipping build stays top-down.
+# Isometric view — a real, interactive view (behind the TYCOON_ISO env var
+# while it reaches parity with the top-down MapView). The shipping default is
+# still top-down.
 #
 # The point this proves: the simulation is projection-agnostic. This reads the
 # exact same EntityRegistry / RegionRegistry / AgentPool the top-down view
-# does and just draws them on a 2:1 isometric grid (diamond tiles, fences with
-# height, depth-sorted objects). The current top-down sprites are reused as
-# flat "billboards" — placeholders until real isometric art exists (see
+# does and draws them on a 2:1 isometric grid (diamond tiles, fences with
+# height, depth-sorted objects), and now handles input through the same
+# BaseMapView contract — inverse projection turns clicks into cells, so
+# build/place/remove and the build preview work here too. The current top-down
+# sprites are reused as upright "billboards" until real iso art exists (see
 # design/pixel_lab_isometric_spec.md).
 
 const TW := 64           # iso tile width  (2 : 1)
@@ -21,9 +23,16 @@ var origin := Vector2(660, 70)
 var _sprites := {}       # name -> Texture2D | null
 var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
 
+# Hover/interaction state (mirrors MapView). _hover_cell is the grid cell the
+# cursor is over, via inverse projection; _hovering gates the preview.
+var _hover_cell: Vector2i = Vector2i.ZERO
+var _hovering: bool = false
+
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# STOP so we receive _gui_input — this is an interactive view now, not a
+	# passive overlay.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
 
 
@@ -32,6 +41,39 @@ var _time := 0.0
 func _process(d: float) -> void:
 	_time += d
 	queue_redraw()
+
+
+# Inverse of _project/_tile_center: which grid cell does a local screen point
+# fall in? The 2:1 diamond lattice is a linear shear of (gx,gy), so invert it
+# and round — rounding the fractional cell is exactly "point in diamond".
+func _screen_to_cell(p: Vector2) -> Vector2i:
+	var dx := p.x - origin.x
+	var dy := p.y - origin.y - TH * 0.5   # _tile_center adds (0, TH/2)
+	var u := dx / (TW * 0.5)              # u = gx - gy
+	var v := dy / (TH * 0.5)              # v = gx + gy
+	return Vector2i(roundi((u + v) * 0.5), roundi((v - u) * 0.5))
+
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_hover_cell = _screen_to_cell(event.position)
+		_hovering = true
+	elif event is InputEventMouseButton and event.pressed:
+		var cell := _screen_to_cell(event.position)
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			placement_requested.emit(cell)
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			remove_requested.emit(cell)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_MOUSE_EXIT:
+		_hovering = false
+
+
+func force_hover_at_world(world_pos: Vector2) -> void:
+	_hover_cell = Vector2i(roundi(world_pos.x), roundi(world_pos.y))
+	_hovering = true
 
 
 # Top corner of cell (gx,gy)'s diamond.
@@ -50,6 +92,71 @@ func _draw() -> void:
 	_draw_region_fills()
 	_draw_ground_scatter()
 	_draw_sorted_objects()
+	_draw_preview()
+
+
+# A filled + outlined diamond on cell (gx,gy), used for hover + build feedback.
+func _preview_cell(gx: int, gy: int, fill: Color, stroke: Color) -> void:
+	var t := _project(gx, gy)
+	var pts := PackedVector2Array([
+		t, t + Vector2(TW * 0.5, TH * 0.5), t + Vector2(0, TH), t + Vector2(-TW * 0.5, TH * 0.5)])
+	if fill.a > 0.0:
+		draw_colored_polygon(pts, fill)
+	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), stroke, 2.0)
+
+
+# Build preview — mirrors MapView: footprint diamonds for entities, a
+# whole-region highlight for placeables (green = ok, red = can't). Also a quiet
+# hover outline when no build tool is active, so the cursor reads on the grid.
+func _draw_preview() -> void:
+	if not _hovering:
+		return
+	if preview_def_id == &"":
+		_preview_cell(_hover_cell.x, _hover_cell.y, Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.32))
+		return
+	if ContentDB.placeable_defs.has(preview_def_id):
+		_draw_placeable_preview()
+		return
+	var def: EntityDef = ContentDB.get_entity_def(preview_def_id)
+	if def == null:
+		return
+	var ok := Ledger.get_balance() >= def.build_cost and not _would_collide(_hover_cell, def.footprint)
+	var fill: Color = Color(0.51, 0.78, 0.47, 0.35) if ok else Color(0.90, 0.43, 0.31, 0.35)
+	var stroke: Color = Color(0.62, 0.88, 0.55, 0.95) if ok else Color(0.95, 0.5, 0.38, 0.95)
+	for dx in def.footprint.x:
+		for dy in def.footprint.y:
+			_preview_cell(_hover_cell.x + dx, _hover_cell.y + dy, fill, stroke)
+
+
+func _draw_placeable_preview() -> void:
+	var region := RegionRegistry.region_at_cell(_hover_cell)
+	if region == null:
+		_preview_cell(_hover_cell.x, _hover_cell.y, Color(0.90, 0.43, 0.31, 0.30), Color(0.95, 0.5, 0.38, 0.85))
+		return
+	var check := RegionRegistry.can_add_placement(region.region_id, preview_def_id)
+	var ok: bool = check["ok"]
+	var def: PlaceableDef = ContentDB.placeable_defs[preview_def_id]
+	if Ledger.get_balance() < def.build_cost:
+		ok = false
+	var fill: Color = Color(0.51, 0.78, 0.47, 0.30) if ok else Color(0.90, 0.43, 0.31, 0.30)
+	var stroke: Color = Color(0.62, 0.88, 0.55, 0.85) if ok else Color(0.95, 0.5, 0.38, 0.85)
+	for c in region.cells:
+		_preview_cell(c.x, c.y, fill, stroke)
+
+
+func _would_collide(pos: Vector2i, footprint: Vector2i) -> bool:
+	for dx in footprint.x:
+		for dy in footprint.y:
+			var cell := pos + Vector2i(dx, dy)
+			for inst_id in EntityRegistry.instances.keys():
+				var inst: EntityInstance = EntityRegistry.instances[inst_id]
+				var def := inst.get_def()
+				if def == null:
+					continue
+				if cell.x >= inst.position.x and cell.x < inst.position.x + def.footprint.x \
+				and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
+					return true
+	return false
 
 
 # Fill cell (gx,gy)'s diamond with a solid colour. The polygon is inflated a
