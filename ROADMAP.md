@@ -56,8 +56,8 @@ economic loop is live and honest:
 harness), engine has held under feature pressure with no seam leaks.
 
 **Gaps that block a "real game" feeling:** no sound, no mobile input, no
-staff, single visitor archetype, no welfare/breeding, no time-of-day, no
-scenarios.
+staff, no breeding, no time-of-day, no scenarios. *(Guest archetypes and
+animal welfare have since landed — see the decision log.)*
 
 ---
 
@@ -191,6 +191,19 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Started Phase 3 depth early: guest archetypes (3.2)
+  + animal welfare (3.1).** With the Phase 1 character pack done, pulled
+  two engine-clean depth systems forward.
+  **Guest archetypes** — Adult / Child / Family / Enthusiast, each a
+  weighted `AgentType` sharing one behavior but differing in appeal
+  preferences (so exhibit mix decides the crowd), need-decay, traits, and
+  spend (Family 2.2× … Child 0.5×, so the mix shows in the books). Tinted
+  by type on the map. **Animal welfare** — a care-driven welfare meter per
+  animal: poor exhibits erode it (scaling appeal down), low welfare →
+  sick, zero → death + reputation hit; surfaced as panel %/sick flag, a
+  map ✚, and log alerts. Both are zoo-side (no engine changes). One minor
+  seam noted: `RegionRegistry.remove_placement` always half-refunds, so a
+  death's refund is negated in zoo code. Zoo 25/25.
 - **2026-06-07** — **Paths-only guest movement landed (engine v0.6.0 →
   v0.6.1).** Bumped the engine to its new navigation surface
   (`WalkableNetwork`, `INetworkNavigator` + default A\*,
