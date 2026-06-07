@@ -24,6 +24,24 @@ const NEEDS_DEFICIT_WEIGHT: float = 0.2
 
 
 func compute_happiness(region: Region, index: int) -> float:
+	# The engine consumes this for guest appeal / quality. It's the exhibit's
+	# care quality (the breakdown happiness) scaled by the animal's welfare —
+	# a neglected, sick animal draws fewer guests. welfare defaults to 1.0
+	# (state set by the daily welfare update in bootstrap), so an exhibit with
+	# no welfare history behaves exactly as before.
+	var b := compute_breakdown(region, index)
+	var care: float = b.get("happiness", 1.0)
+	if not b.get("valid", false):
+		return care
+	var welfare: float = clampf(
+		float(region.placements[index].state.get("welfare", 1.0)), 0.0, 1.0)
+	return care * welfare
+
+
+# The care quality an exhibit provides one animal (space / social / needs /
+# attitude), WITHOUT the welfare discount — this is what *drives* welfare each
+# day, so welfare can't spiral by feeding back into itself.
+func care_quality(region: Region, index: int) -> float:
 	return compute_breakdown(region, index).get("happiness", 1.0)
 
 

@@ -352,6 +352,58 @@ func test_disconnected_exhibit_detection() -> void:
 	assert_eq(far_cell, INetworkNavigator.NO_STEP, "far exhibit has no path access")
 
 
+func test_welfare_kills_a_neglected_animal() -> void:
+	# A cramped lion with no food/water troughs has poor care quality, so its
+	# welfare declines day over day until it dies and is removed.
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 0))
+	EntityRegistry.place(&"rock_patch", Vector2i(2, 0))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(RegionRegistry.add_placement(region.region_id, &"lion"))
+	var died := false
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+		if region.placements.is_empty():
+			died = true
+			break
+	assert_true(died, "a neglected animal eventually dies of poor welfare")
+
+
+func test_welfare_recovers_under_good_care() -> void:
+	# A well-kept lion (room + troughs) recovers welfare and isn't sick.
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	region.placements[0].state["welfare"] = 0.4   # start ailing
+	for day in range(8):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+	assert_gt(float(region.placements[0].state["welfare"]), 0.9, "good care restores welfare")
+	assert_false(bool(region.placements[0].state.get("sick", false)), "recovered animal isn't sick")
+
+
+func test_welfare_scales_appeal() -> void:
+	# A neglected animal draws fewer guests: welfare scales the appeal the
+	# engine consumes, while care_quality (the welfare driver) does not.
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	var model := ZooBootstrap.get_happiness_model()
+	var care := model.care_quality(region, 0)
+	region.placements[0].state["welfare"] = 0.5
+	assert_almost_eq(model.compute_happiness(region, 0), care * 0.5, 0.001,
+		"welfare halves the appeal the engine sees")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with

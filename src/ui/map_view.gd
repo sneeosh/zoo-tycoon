@@ -253,6 +253,15 @@ func _draw_placements() -> void:
 				draw_circle(
 					rect.position + rect.size * 0.5,
 					sprite_size * 0.45, Color("#c89465"))
+			# Sick animals (welfare below the illness threshold) get a red
+			# medical cross so neglect is visible on the map, not just in the
+			# manage panel.
+			if bool(placement.state.get("sick", false)):
+				var badge := rect.position + Vector2(rect.size.x - 6, 4)
+				draw_string(get_theme_default_font(), badge + Vector2(1, 1), "✚",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0, 0, 0, 0.5))
+				draw_string(get_theme_default_font(), badge, "✚",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("#e76f51"))
 
 
 # A pulsing ⚠ badge over each exhibit guests can't path to (set by main via

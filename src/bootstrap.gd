@@ -31,6 +31,12 @@ var scenario: Scenario
 # VisitorBehavior when a guest satisfies a need at a satisfier entity.
 var services: ServiceConfig
 
+# Animal-welfare tuning (design/tuning/welfare.md). The daily update lives in
+# _on_day_ending_for_welfare; welfare lives in each animal placement's
+# state["welfare"] / state["sick"]. kind is "sick" / "recovered" / "died".
+var welfare: WelfareConfig
+signal animal_welfare_alert(region_id: int, index: int, kind: String, animal_name: String)
+
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
 # Exhibit panel. Not persisted (resets on load — it's a session tally).
@@ -108,7 +114,14 @@ func _ready() -> void:
 
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
+	welfare = WelfareConfig.load_from_tuning()
 	donations_by_region.clear()
+
+	# Welfare books a daily care update; a death's removal refund is negated
+	# below so a dying animal never pays the player (see seam note in the
+	# handler). Run after the arena hook so attitude is already settled.
+	Accounting.register_category(&"animal_loss", Accounting.Category.OPERATING_EXPENSE)
+	EventBus.day_ending.connect(_on_day_ending_for_welfare)
 
 	# Cache the engine's default spawn rate so the open/closed toggle and
 	# ticket-bracket elasticity can scale from it. ContentDB has already
@@ -293,3 +306,60 @@ func record_donation(region_id: int, amount: int) -> void:
 
 func donations_for_region(region_id: int) -> int:
 	return int(donations_by_region.get(region_id, 0))
+
+
+# ---------------------------------------------------------------------------
+# Animal welfare — daily care update + illness/death (roadmap 3.1)
+# ---------------------------------------------------------------------------
+
+func _on_day_ending_for_welfare(_day: int) -> void:
+	if welfare == null:
+		return
+	var deaths: Array = []   # {region_id, index, name, refund}
+	for region: Region in RegionRegistry.all_regions():
+		for i in region.placements.size():
+			var p: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals (appeal-contributing) have welfare
+			var care: float = _animal_happiness.care_quality(region, i)
+			var w: float = float(p.state.get("welfare", 1.0))
+			var was_sick: bool = bool(p.state.get("sick", false))
+			if care >= welfare.happiness_threshold:
+				w = minf(1.0, w + welfare.recovery_per_day)
+			else:
+				var severity: float = (welfare.happiness_threshold - care) \
+					/ maxf(welfare.happiness_threshold, 0.001)
+				w = maxf(0.0, w - welfare.decline_per_day * severity)
+			p.state["welfare"] = w
+			var sick: bool = w < welfare.illness_threshold
+			p.state["sick"] = sick
+			if w <= 0.0:
+				deaths.append({"region_id": region.region_id, "index": i,
+					"name": def.display_name, "refund": int(def.build_cost * 0.5)})
+			elif sick and not was_sick:
+				animal_welfare_alert.emit(region.region_id, i, "sick", def.display_name)
+			elif was_sick and not sick:
+				animal_welfare_alert.emit(region.region_id, i, "recovered", def.display_name)
+	# Remove the dead. Descending index so earlier removals don't shift the
+	# indices of later ones within the same region.
+	deaths.sort_custom(func(a, b): return a["index"] > b["index"])
+	for d in deaths:
+		if not RegionRegistry.remove_placement(d["region_id"], d["index"]):
+			continue
+		# SEAM NOTE: RegionRegistry.remove_placement posts a half build-cost
+		# refund — it can't tell a sale from a death. Negate it; a dead animal
+		# isn't an asset you recoup. A no-refund removal option upstream would
+		# retire this workaround.
+		if int(d["refund"]) > 0:
+			Ledger.post_expense(int(d["refund"]), "Loss: %s died" % d["name"], &"animal_loss")
+		ProgressionManager.add_reputation(-welfare.death_reputation_penalty)
+		animal_welfare_alert.emit(d["region_id"], d["index"], "died", d["name"])
+
+
+# Welfare/sick read for the UI. Returns {welfare:float, sick:bool}.
+func animal_welfare(region: Region, index: int) -> Dictionary:
+	if index < 0 or index >= region.placements.size():
+		return {"welfare": 1.0, "sick": false}
+	var st: Dictionary = region.placements[index].state
+	return {"welfare": float(st.get("welfare", 1.0)), "sick": bool(st.get("sick", false))}

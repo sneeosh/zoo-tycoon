@@ -278,10 +278,22 @@ func _refresh_region_panel() -> void:
 		_region_panel_body.add_child(row)
 
 		var name_label := Label.new()
-		var happiness := EffectResolver._happiness_model.compute_happiness(region, i)
-		name_label.text = "%s  (%.0f%%)" % [def.display_name, happiness * 100.0]
+		var is_animal := not def.appeal_contribution.is_empty()
+		# Animals show care quality (suitability) here, not the welfare-
+		# discounted appeal, plus a welfare read + sick flag.
+		var care := ZooBootstrap.get_happiness_model().care_quality(region, i) \
+			if is_animal else EffectResolver._happiness_model.compute_happiness(region, i)
+		var row_text := "%s  (%.0f%%)" % [def.display_name, care * 100.0]
+		var row_color := _happiness_color(care)
+		if is_animal:
+			var wf := ZooBootstrap.animal_welfare(region, i)
+			row_text += "  · welfare %.0f%%" % (float(wf["welfare"]) * 100.0)
+			if bool(wf["sick"]):
+				row_text += "  ⚠ sick"
+				row_color = Color("#e76f51")
+		name_label.text = row_text
 		name_label.add_theme_font_size_override("font_size", 13)
-		name_label.add_theme_color_override("font_color", _happiness_color(happiness))
+		name_label.add_theme_color_override("font_color", row_color)
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(name_label)
 
@@ -2195,6 +2207,7 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.donation_collected.connect(func(rid, _amt):
 		if rid == _selected_region_id:
 			_refresh_region_panel())
+	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
 
 
 func _stage_starter_park() -> void:
@@ -2599,6 +2612,21 @@ func _on_remove_requested(cell: Vector2i) -> void:
 # ============================================================================
 # Event-log helpers
 # ============================================================================
+
+func _on_welfare_alert(region_id: int, _index: int, kind: String, animal_name: String) -> void:
+	match kind:
+		"sick":
+			_push_log("[color=#e76f51]⚠ %s in Exhibit #%d is unwell.[/color] Improve its exhibit before it's too late." %
+				[animal_name, region_id])
+		"recovered":
+			_push_log("[color=#83c779]%s in Exhibit #%d is back to health.[/color]" %
+				[animal_name, region_id])
+		"died":
+			_push_log("[color=#e76f51][b]✝ %s in Exhibit #%d died of neglect.[/b][/color] Reputation took a hit." %
+				[animal_name, region_id])
+	if region_id == _selected_region_id:
+		_refresh_region_panel()
+
 
 func _on_day_settled(day: int, income: int, expense: int) -> void:
 	var net := income - expense
