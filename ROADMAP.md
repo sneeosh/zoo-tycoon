@@ -191,15 +191,18 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
-- **2026-06-07** — **Started Phase 3 depth early: guest archetypes (3.2),
-  animal welfare (3.1), breeding (3.5), day/night (3.4).** With the Phase 1
-  character pack done, pulled engine-clean depth systems forward.
-  **Breeding** builds on welfare: well-kept adult pairs produce offspring
-  (space-capped, so overcrowding self-limits), animals age and pass of old
-  age, and rare births award reputation. **Day/night** gates guest arrivals
-  to opening hours (derived from SimClock — no engine change), with a HUD
-  clock and a dusk/night map tint; nocturnal-appeal shifts are deferred to
-  an engine time-hook. Remaining Phase 3: staff (3.3), weather (3.6).
+- **2026-06-07** — **All six Phase 3 systems landed early** (3.1–3.6), all
+  engine-clean: **welfare** (care-driven health/illness/death), **guest
+  archetypes** (Adult/Child/Family/Enthusiast — preferences, decay, traits,
+  spend), **staff** (hire zookeepers → daily welfare vs. wages), **day/night
+  + opening hours** (SimClock-derived; HUD clock + dusk tint), **breeding &
+  generations** (well-kept pairs breed, space-capped; aging + old-age
+  death + rare-birth milestones), and **weather + seasons** (daily roll ×
+  season, both scaling guest demand). Two effects are intentionally deferred
+  to future engine hooks: nocturnal-appeal-by-time and per-animal
+  climate/welfare. Staff is a robust effect layer (not yet a walking
+  population). Test suite grew 8 → 33, all green. *(Pulled forward ahead of
+  the Phase 2 exit gate; the playtest is the go/no-go.)*
   **Guest archetypes** — Adult / Child / Family / Enthusiast, each a
   weighted `AgentType` sharing one behavior but differing in appeal
   preferences (so exhibit mix decides the crowd), need-decay, traits, and
