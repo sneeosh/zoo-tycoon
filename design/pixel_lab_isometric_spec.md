@@ -1,8 +1,10 @@
 # Isometric Direction — validation, plan, and Pixel Lab art spec
 
-**Status:** Prototype validated 2026-06-07. Isometric renderer exists behind
-the `TYCOON_ISO` env var (`src/ui/iso_preview.gd`); the shipping build stays
-top-down for now.
+**Status:** Functional parity reached 2026-06-07. The isometric view
+(`src/ui/iso_preview.gd`) is a real, interactive view — build/place/sell,
+camera (fit/zoom/pan), and all legibility systems — behind the `TYCOON_ISO`
+env var. The shipping default stays top-down until iso is promoted to a
+player-facing toggle. See the progress checklist in "code work remaining".
 
 ---
 
@@ -95,17 +97,26 @@ prototype.
       middle-drag pan — one view `Transform2D`, projection math untouched.
       (Cursor-anchored zoom is tested.)
 - [x] **Visual ports done:** day/night tint, "no path access" ⚠ warning,
-      water shimmer, money-float toasts, sick ✚ marker.
-- [ ] **Visual ports remaining:** guest mood bubbles (the big one — need
-      legibility), hover inspector card, weather overlay.
+      water shimmer, money-float toasts, sick ✚ marker, **guest mood bubbles +
+      archetype rendering**, **hover inspector card**.
+
+**Iso is now at functional parity with top-down** — build/place/sell, build
+preview, camera, and every legibility/feedback system listed above. (Tests:
+`tests/test_iso_view.gd`, 7 cases — projection round-trip, cursor-anchored
+zoom, click→cell, `_bar`, visitor inspection.)
+
+Remaining is polish / promotion, not parity:
+
+- [ ] **Player-facing toggle.** Iso is still behind the `TYCOON_ISO` env var;
+      it could become a settings/HUD toggle now that it's a full view.
+- [ ] **Weather visuals.** Neither view renders weather today (it only scales
+      demand). Rain/snow particles would be a net-new enhancement for *both*
+      views, not an iso port.
 - [ ] **Depth-sort tie-breaks** for edge cases (object vs. fence on the same
       cell) could use tuning.
-- [ ] **Textured ground** stays optional — procedural ground already reads
-      cleanly with no grid; only swap in tiles if they're seamless and a clear
-      upgrade (drop-in).
-
-Once mood bubbles + the hover inspector land, iso is at functional parity with
-top-down and the `TYCOON_ISO` flag could become a player-facing toggle.
+- [ ] **Real iso art** stays optional — procedural ground reads cleanly with no
+      grid; billboarded top-down sprites work. True ¾ iso building/animal art
+      would sharpen it but isn't a blocker (Priority C above).
 
 None of this touches the simulation — it's all in the view layer. Estimate:
 the inverse-projection + interaction is the main chunk; the rest is porting
