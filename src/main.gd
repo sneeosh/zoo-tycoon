@@ -2367,12 +2367,19 @@ func _build_right_column(parent: Control) -> void:
 	center.add_theme_constant_override("separation", 0)
 	parent.add_child(center)
 
-	_map_view = MAP_VIEW_SCRIPT.new()
-	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_map_view.entity_colors = ENTITY_COLORS
-	_map_view.placement_requested.connect(_on_placement_requested)
-	_map_view.remove_requested.connect(_on_remove_requested)
-	center.add_child(_map_view)
+	# EXPERIMENTAL: TYCOON_ISO swaps in the prototype isometric renderer (view
+	# only) to evaluate the iso direction. The shipping build stays top-down.
+	if OS.get_environment("TYCOON_ISO") != "":
+		var iso := IsoPreview.new()
+		iso.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		center.add_child(iso)
+	else:
+		_map_view = MAP_VIEW_SCRIPT.new()
+		_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_map_view.entity_colors = ENTITY_COLORS
+		_map_view.placement_requested.connect(_on_placement_requested)
+		_map_view.remove_requested.connect(_on_remove_requested)
+		center.add_child(_map_view)
 
 	_build_region_panel(parent)
 	_build_reports_modal(parent)
@@ -2725,7 +2732,8 @@ func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
 		if other_id != def_id:
 			(_build_buttons[other_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = def_id
-	_map_view.preview_def_id = def_id
+	if _map_view != null:
+		_map_view.preview_def_id = def_id
 
 
 func _clear_build_selection() -> void:
@@ -2734,7 +2742,8 @@ func _clear_build_selection() -> void:
 	if _build_buttons.has(_selected_def_id):
 		(_build_buttons[_selected_def_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = &""
-	_map_view.preview_def_id = &""
+	if _map_view != null:
+		_map_view.preview_def_id = &""
 
 
 const SAVE_SLOT := "main"
