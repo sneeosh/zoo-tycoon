@@ -54,6 +54,26 @@ func test_zoom_keeps_the_cursor_anchored() -> void:
 		"the cell under the cursor must not move when zooming")
 
 
+func test_bar_renders_proportional_fill() -> void:
+	var iso := _new_iso()
+	assert_eq(iso._bar(0.0).count("▰"), 0, "empty bar has no filled cells")
+	assert_eq(iso._bar(1.0).count("▰"), 8, "full bar is all filled")
+	assert_eq(iso._bar(0.5).count("▰"), 4, "half bar is half filled")
+
+
+func test_inspector_finds_a_visitor_at_its_screen_position() -> void:
+	AgentPool.reset()
+	var id := AgentPool.spawn(&"visitor", Vector2(5, 5))
+	assert_ne(id, 0, "visitor agent type must be loaded to spawn")
+	var iso := _new_iso()
+	# Project the visitor's body the same way the renderer does, then inspect.
+	var body: Vector2 = iso._view_xf * (iso._tile_center(5, 5) + Vector2(0, -12.0))
+	var lines: Array = iso._inspect_visitor_at(body)
+	assert_false(lines.is_empty(), "a visitor under the cursor must inspect")
+	assert_true(lines[0].contains("#%d" % id), "card header names the agent id")
+	AgentPool.reset()
+
+
 func test_left_click_emits_placement_for_hovered_cell() -> void:
 	var iso := _new_iso()
 	watch_signals(iso)

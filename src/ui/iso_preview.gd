@@ -26,7 +26,10 @@ var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
 # Hover/interaction state (mirrors MapView). _hover_cell is the grid cell the
 # cursor is over, via inverse projection; _hovering gates the preview.
 var _hover_cell: Vector2i = Vector2i.ZERO
+var _hover_screen: Vector2 = Vector2.ZERO
 var _hovering: bool = false
+var _card_box: StyleBoxFlat
+const VISITOR_HIT_RADIUS_PX := 16.0
 
 # Camera. Everything is drawn in unscaled "model space" (origin/TW/TH); a single
 # view transform maps model→screen with fit-to-view + wheel zoom + drag pan, so
@@ -57,6 +60,11 @@ func _ready() -> void:
 	set_process(true)
 	resized.connect(_rebuild_view)
 	ZooBootstrap.money_floated.connect(_on_money_floated)
+	_card_box = StyleBoxFlat.new()
+	_card_box.bg_color = Color("#161e1a")
+	_card_box.border_color = Color("#3d4f44")
+	_card_box.set_border_width_all(1)
+	_card_box.set_corner_radius_all(4)
 
 
 var _time := 0.0
@@ -126,6 +134,7 @@ func _gui_input(event: InputEvent) -> void:
 		if _panning:
 			_pan += event.relative
 			_rebuild_view()
+		_hover_screen = event.position
 		_hover_cell = _screen_to_cell(event.position)
 		_hovering = true
 	elif event is InputEventMouseButton:
@@ -158,6 +167,7 @@ func _notification(what: int) -> void:
 
 func force_hover_at_world(world_pos: Vector2) -> void:
 	_hover_cell = Vector2i(roundi(world_pos.x), roundi(world_pos.y))
+	_hover_screen = _view_xf * _tile_center(world_pos.x, world_pos.y)
 	_hovering = true
 
 
@@ -185,9 +195,107 @@ func _draw() -> void:
 	_draw_money_floats()
 	_draw_path_warnings()
 	_draw_preview()
-	# Back to screen space for the full-screen dusk overlay.
+	# Back to screen space for the full-screen dusk overlay + hover card.
 	draw_set_transform_matrix(Transform2D())
 	_draw_day_night()
+	_draw_inspector_card()
+
+
+# Hover inspector — a screen-space info card for the visitor or entity under
+# the cursor. Suppressed during build-mode (the preview owns that), mirroring
+# MapView. Visitors take priority (smaller, harder to land on).
+func _draw_inspector_card() -> void:
+	if not _hovering or preview_def_id != &"":
+		return
+	var lines := _inspect_visitor_at(_hover_screen)
+	if lines.is_empty():
+		lines = _inspect_entity_at(_hover_cell)
+	if lines.is_empty():
+		return
+	_render_card(lines, _hover_screen)
+
+
+func _inspect_visitor_at(screen_pos: Vector2) -> Array[String]:
+	var hit: Agent = null
+	for at in [&"visitor", &"child", &"family", &"enthusiast"]:
+		for agent_id in AgentPool.get_agents_by_type(at):
+			var ag: Agent = AgentPool.get_agent(agent_id)
+			if ag == null or not ag.alive:
+				continue
+			var body := _view_xf * (_tile_center(ag.position.x, ag.position.y) + Vector2(0, -12.0))
+			if body.distance_to(screen_pos) <= VISITOR_HIT_RADIUS_PX:
+				hit = ag
+				break
+		if hit != null:
+			break
+	if hit == null:
+		return [] as Array[String]
+	var out: Array[String] = []
+	var atype: AgentType = ContentDB.get_agent_type(hit.agent_type_id)
+	out.append("%s #%d" % [atype.display_name if atype != null else "Visitor", hit.agent_id])
+	out.append("state: %s" % String(hit.behavior_state.get(&"state", &"browsing")))
+	out.append("satisfaction: %s %.2f" % [_bar(hit.satisfaction), hit.satisfaction])
+	for need_id in hit.need_levels.keys():
+		var lvl: float = hit.need_levels[need_id]
+		out.append("%s: %s %.2f" % [String(need_id), _bar(lvl), lvl])
+	if hit.target_entity_id != 0:
+		var inst := EntityRegistry.get_instance(hit.target_entity_id)
+		if inst != null and inst.get_def() != null:
+			out.append("heading to: %s" % inst.get_def().display_name)
+	return out
+
+
+func _inspect_entity_at(cell: Vector2i) -> Array[String]:
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null:
+			continue
+		if cell.x < inst.position.x or cell.x >= inst.position.x + def.footprint.x:
+			continue
+		if cell.y < inst.position.y or cell.y >= inst.position.y + def.footprint.y:
+			continue
+		var out: Array[String] = []
+		out.append(def.display_name)
+		out.append("build $%d  ·  maint $%d/day" % [def.build_cost, def.maintenance_cost])
+		out.append("visitors heading here: %d" % AgentPool.count_targeting(inst_id))
+		if not def.satisfies.is_empty():
+			var sats: Array[String] = []
+			for s in def.satisfies:
+				sats.append(String(s))
+			out.append("satisfies: %s" % ", ".join(sats))
+		return out
+	return [] as Array[String]
+
+
+func _bar(value: float) -> String:
+	var filled := int(round(clampf(value, 0.0, 1.0) * 8.0))
+	var s := ""
+	for i in 8:
+		s += "▰" if i < filled else "▱"
+	return s
+
+
+func _render_card(lines: Array[String], anchor: Vector2) -> void:
+	var font := get_theme_default_font()
+	var fs := 11
+	var line_h := fs + 3
+	var max_w := 0.0
+	for line in lines:
+		max_w = maxf(max_w, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	var card_w := max_w + 20
+	var card_h := lines.size() * line_h + 16
+	var o := anchor + Vector2(14, 14)
+	if o.x + card_w > size.x:
+		o.x = maxf(0.0, anchor.x - card_w - 14)
+	if o.y + card_h > size.y:
+		o.y = maxf(0.0, anchor.y - card_h - 14)
+	draw_style_box(_card_box, Rect2(o, Vector2(card_w, card_h)))
+	var text_o := o + Vector2(10, 8)
+	for i in lines.size():
+		var color := Color("#e6e6e6") if i == 0 else Color("#a8c4b0")
+		draw_string(font, text_o + Vector2(0, fs + i * line_h), lines[i],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs + (1 if i == 0 else 0), color)
 
 
 # Animated glints on water-exhibit cells so pools read as water, not flat blue.
