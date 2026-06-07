@@ -2212,6 +2212,11 @@ func _wire_engine_signals() -> void:
 			_refresh_region_panel())
 	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
 	ZooBootstrap.animal_born.connect(_on_animal_born)
+	ZooBootstrap.park_hours_changed.connect(func(open: bool):
+		if open:
+			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
+		else:
+			_push_log("[color=#7e9286]🌙 The park closes for the evening — no new guests until morning.[/color]"))
 
 
 func _stage_starter_park() -> void:
@@ -2293,7 +2298,11 @@ func _refresh_hud() -> void:
 	_money_label.text = "$%d" % Ledger.get_balance()
 	# Engine current_day is 0-indexed (incremented on day boundaries).
 	# Player-facing displays use 1-indexed days.
-	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day + 1, SimClock.current_tick]
+	var f := ZooBootstrap.time_of_day_fraction()
+	var mins := int(f * 24.0 * 60.0)
+	var clock_icon := "☀" if ZooBootstrap.is_within_open_hours() else "🌙"
+	_day_label.text = "Day %d  ·  %02d:%02d %s" % [
+		SimClock.current_day + 1, mins / 60, mins % 60, clock_icon]
 	_quality_label.text = "%.1f★" % quality
 	var rep := ProgressionManager.reputation
 	var rep_color := Color("#c9a4ff") if rep >= 0 else Color("#e76f51")

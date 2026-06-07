@@ -195,6 +195,7 @@ func _draw() -> void:
 	_draw_entrance_gate()
 	_draw_visitors()
 	_draw_money_floats()
+	_draw_day_night()
 	_draw_preview()
 	_draw_inspector_card()
 
@@ -542,6 +543,25 @@ func _draw_mood_chip(pos: Vector2, glyph: String, color: Color, intensity: float
 	var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 	draw_string(font, center - Vector2(sz.x * 0.5, -fs * 0.36), glyph,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, intensity))
+
+
+# A translucent overlay that darkens the play area toward evening/night,
+# following the day cycle (roadmap 3.4). Cosmetic — pure render, reads the
+# clock from ZooBootstrap. Dawn/dusk dim, midday clear, night darkest.
+func _draw_day_night() -> void:
+	if ZooBootstrap.services == null:
+		return
+	var f := ZooBootstrap.time_of_day_fraction()
+	var open_end: float = ZooBootstrap.services.open_end
+	var darkness: float
+	if f >= open_end or open_end <= 0.0:
+		darkness = 0.45                                   # closed: night
+	else:
+		var p := f / open_end                             # 0=open, 1=close
+		darkness = 0.30 * (1.0 - sin(p * PI))             # dim at the edges
+	if darkness <= 0.01:
+		return
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.10, 0.28, darkness), true)
 
 
 # ---------------------------------------------------------------------------

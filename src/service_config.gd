@@ -29,6 +29,10 @@ var donation_min_satisfaction: float = 0.55
 # Per-archetype spend multiplier (## Guest types). agent_type id -> float.
 var spend_by_type: Dictionary = {}
 
+# Opening hours as a fraction of the day [0,1) (## Day cycle).
+var open_start: float = 0.0
+var open_end: float = 0.80
+
 
 static func load_from_tuning() -> ServiceConfig:
 	var sc := ServiceConfig.new()
@@ -55,7 +59,16 @@ static func load_from_tuning() -> ServiceConfig:
 	sc._load_ticket_brackets(parsed)
 	sc._load_donations(parsed)
 	sc._load_guest_types(parsed)
+	sc._load_day_cycle(parsed)
 	return sc
+
+
+func _load_day_cycle(parsed: Dictionary) -> void:
+	var scalars: Dictionary = parsed["sections"].get("Day cycle", {}).get("scalars", {})
+	if scalars.is_empty():
+		return   # optional — defaults leave the park open all day
+	open_start = _scalar_float(scalars, "open_start", open_start)
+	open_end = _scalar_float(scalars, "open_end", open_end)
 
 
 func _load_guest_types(parsed: Dictionary) -> void:

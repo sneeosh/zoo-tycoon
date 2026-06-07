@@ -459,6 +459,21 @@ func test_animal_dies_of_old_age() -> void:
 	assert_eq(_count_species(region, &"lion"), 0, "an animal past its lifespan dies")
 
 
+func test_opening_hours_gate_arrivals() -> void:
+	# Guests arrive during opening hours and stop arriving after closing.
+	SimClock.current_tick = 0
+	assert_true(ZooBootstrap.is_within_open_hours(), "open at the start of the day")
+	ZooBootstrap._apply_spawn_rate()
+	assert_gt(AgentPool.base_spawn_rate, 0.0, "guests arrive while open")
+	SimClock.current_tick = int(SimClock.ticks_per_day * 0.9)   # past open_end 0.80
+	assert_false(ZooBootstrap.is_within_open_hours(), "closed in the evening")
+	ZooBootstrap._apply_spawn_rate()
+	assert_eq(AgentPool.base_spawn_rate, 0.0, "no new arrivals after closing")
+	# Restore a known clock + gate for later tests.
+	SimClock.current_tick = 0
+	ZooBootstrap.set_ticket_bracket(&"standard")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with

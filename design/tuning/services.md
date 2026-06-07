@@ -100,3 +100,19 @@ unlisted type defaults to 1.0.
 | child      | 0.5              |
 | family     | 2.2              |
 | enthusiast | 1.4              |
+
+## Day cycle
+
+<!--
+Roadmap 3.4 (day/night + opening hours). Opening hours as a fraction of the
+day in [0,1) — derived from SimClock (current_tick % ticks_per_day). Guests
+only arrive while the park is open; it empties through the evening as the
+last visitors finish up. open_end < 1.0 leaves a closed stretch each night
+so the day has a rhythm instead of a flat 24-hour spawn.
+
+(Nocturnal animals shifting appeal by time is a planned follow-up — it needs
+a time factor in appeal scoring and is noted as an engine time-hook.)
+-->
+
+open_start = 0.0
+open_end   = 0.80

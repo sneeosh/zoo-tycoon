@@ -58,6 +58,11 @@ var ticket_bracket: StringName = &"standard"
 var park_open: bool = true
 var _default_base_spawn_rate: float = 0.5
 
+# Day cycle (roadmap 3.4). Guests only arrive during opening hours; the gate
+# spawn rate is gated by both the manual park_open toggle and the hours.
+var _hours_open: bool = true
+signal park_hours_changed(open: bool)
+
 signal admin_changed
 
 # Arena show bookings — arena_instance_id → {region_id, index, started_day}.
@@ -139,6 +144,12 @@ func _ready() -> void:
 	# Start on the bracket marked default in services.md (Standard / $10).
 	if services != null and services.default_bracket != &"":
 		set_ticket_bracket(services.default_bracket)
+
+	# Gate guest arrivals by opening hours; re-apply the spawn rate when the
+	# park opens or closes for the day.
+	_hours_open = is_within_open_hours()
+	_apply_spawn_rate()
+	EventBus.tick.connect(_on_tick_hours)
 
 	Accounting.register_category(&"arena_show", Accounting.Category.REVENUE)
 
@@ -280,11 +291,35 @@ func current_demand_multiplier() -> float:
 
 
 # base_spawn_rate = engine default × bracket demand elasticity, gated to 0
-# when the park is closed. Composes with the engine's per-day
-# satisfaction→spawn multiplier (AgentPool.current_spawn_multiplier).
+# when the park is closed (manually) or outside opening hours. Composes with
+# the engine's per-day satisfaction→spawn multiplier.
 func _apply_spawn_rate() -> void:
+	var open := park_open and is_within_open_hours()
 	AgentPool.base_spawn_rate = (_default_base_spawn_rate
-		* current_demand_multiplier()) if park_open else 0.0
+		* current_demand_multiplier()) if open else 0.0
+
+
+# Fraction of the current day elapsed, in [0,1) — derived from SimClock.
+func time_of_day_fraction() -> float:
+	var tpd: int = maxi(SimClock.ticks_per_day, 1)
+	return float(SimClock.current_tick % tpd) / float(tpd)
+
+
+# Is the park within its opening hours right now? (Independent of the manual
+# park_open toggle.) Defaults open when no day-cycle tuning is loaded.
+func is_within_open_hours() -> bool:
+	if services == null:
+		return true
+	var f := time_of_day_fraction()
+	return f >= services.open_start and f < services.open_end
+
+
+func _on_tick_hours(_t: int) -> void:
+	var open := is_within_open_hours()
+	if open != _hours_open:
+		_hours_open = open
+		_apply_spawn_rate()
+		park_hours_changed.emit(open)
 
 
 # Convenience for game UI to read the zoo's quality rating without
