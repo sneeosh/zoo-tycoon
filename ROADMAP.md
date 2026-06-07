@@ -158,7 +158,7 @@ if the engine slips, we **shrink zoo scope**, never patch the submodule.
 | Engine release | Needed for | Notes |
 |---|---|---|
 | v0.5.0 *(current)* | Phase 1 | Already shipped |
-| v0.6.x | Audio (2.1), mobile input (2.2), save migration (2.5) | The audio + migration surfaces are the riskiest known seams |
+| v0.6.x | Audio (2.1), mobile input (2.2), save migration (2.5), **agent navigation on a constrained network** (Phase 1, paths-only) | The audio + migration surfaces are the riskiest known seams. Navigation seam spec: [`design/engine_seam_agent_navigation.md`](./design/engine_seam_agent_navigation.md) |
 | v0.7.x | Day/night clock (3.4), event hooks for weather (3.6) | |
 | v0.8.x | Multi-agent population polish (3.3) | |
 | **v1.0** | Stable surface for Phase 4 | Hard gate before research tree / scenario editor work |
@@ -185,6 +185,14 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-06** — **Agent navigation on a constrained network is
+  engine work, not zoo work.** Every tycoon on this engine needs
+  network-walking agents (zoo paths, hospital corridors, mall
+  aisles), so the capability belongs behind the engine seam. Filed as
+  [`design/engine_seam_agent_navigation.md`](./design/engine_seam_agent_navigation.md),
+  targeting engine **v0.6.x**. Hard gate on the first four
+  paths-only commits in the adaptation plan; the rest of the
+  Zoo Tycoon character pack can land in parallel without it.
 - **2026-06-06** — Adopted the **Zoo Tycoon Adaptation Plan**
   ([`design/zoo_tycoon_adaptation_plan.md`](./design/zoo_tycoon_adaptation_plan.md)).
   Pulls a ranked bundle of patterns from the 2001 game into the

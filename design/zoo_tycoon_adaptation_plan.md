@@ -174,14 +174,22 @@ without it.
 
 ### Engine implications
 
-- **Likely seam:** the engine's agent navigation may currently assume
-  free movement on zone tiles. Per the prime directive, we don't patch
-  it — we file an engine issue if path-restricted navigation isn't
-  reachable through the existing agent interface.
-- **Possible engine bump:** v0.6 may need to expose a path-aware
-  navigator. If so, sequence behind the v0.6 audio/migration work
-  already planned for Phase 2 — but consider that gating the rest of
-  Phase 1 on it is acceptable given the value.
+**Decided 2026-06-06: pathing belongs in the engine, not the zoo.**
+Network-constrained agent navigation is a generic tycoon primitive
+(zoo paths, theme park paths, hospital corridors, mall aisles) and
+goes behind the engine's existing interface seam. Full spec in
+[`engine_seam_agent_navigation.md`](./engine_seam_agent_navigation.md);
+targets engine **v0.6.x**.
+
+- Engine grows `WalkableNetwork` schema, `INetworkNavigator`
+  interface with default A\* impl, and an engagement-distance helper.
+- Zoo declares its `path` placeable as `walkable = true` and wires
+  the visitor agent type to the navigator. No bespoke pathfinder in
+  zoo code.
+- Engine v0.6.x becomes a **hard gate** on commits 1–4 of §6.
+  Commits 5–10 (needs, pricing, donations, suitability, mood bubbles,
+  buildings) can proceed in parallel without engine work and may land
+  first.
 
 ### Definition of done
 
@@ -296,7 +304,7 @@ sequence:
 
 | Adoption | Suspected seam | Action |
 |---|---|---|
-| Paths-only nav (item 0) | Agent navigation may assume free movement | File engine issue if `IAgentBehavior` can't express path-restricted nav. Possible v0.6 bump |
+| Paths-only nav (item 0) | Engine has no network-constrained agent navigation | **Filed** as `engine_seam_agent_navigation.md`. Targets engine v0.6.x. Hard gate on §6 commits 1–4 |
 | Donation boxes (item 5) | Per-placeable money sink might need a new interface | Probe before committing |
 | Guest types (item 2) | Multi-archetype agent population — roadmap already calls this out as 3.3-adjacent | Already a known seam (roadmap §4) |
 | Restaurant capstone (item 9) | Single building satisfying multiple needs may need a richer amenity interface | Probably reachable via existing `IPlaceableHappiness` + needs model; verify |
