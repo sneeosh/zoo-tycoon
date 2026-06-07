@@ -23,11 +23,11 @@ in placeables.md — they go inside regions, not on the grid directly.
 | cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |       |
 | path        | Path            | 15         | 0                | 1           | 1           | path         |           |                |           |              | true     |
 | food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |          |
-| drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | drink_stand  | thirst    |                |           |              |          |
+| drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | food_stand   | thirst    |                |           |              |          |
 | restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     | restroom  |                |           |              |          |
 | bench       | Bench           | 80         | 1                | 1           | 1           | bench        | energy    |                |           |              |          |
 | compost     | Compost Building| 400        | 0                | 2           | 2           | compost      |           |                |           |              |          |
-| restaurant  | Restaurant      | 1200       | 8                | 2           | 2           | restaurant   | hunger,thirst,restroom,energy |  |           |              |          |
+| restaurant  | Restaurant      | 1200       | 8                | 2           | 2           | food_stand   | hunger,thirst,restroom,energy |  |           |              |          |
 | arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |          |
 
 ## Effects

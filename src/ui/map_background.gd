@@ -90,8 +90,16 @@ func _draw_ground() -> void:
 	var s := size
 	draw_rect(Rect2(Vector2.ZERO, s), Color("#0c1410"), true)
 	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
-	draw_rect(build_rect, Color("#1f3324"), true)
-	draw_rect(build_rect.grow(-2), Color("#33502e"), true)
+	draw_rect(build_rect, Color("#24402a"), true)
+	draw_rect(build_rect.grow(-2), Color("#3c5e36"), true)
+	# Gentle top-to-bottom light banding for depth (lighter near the top).
+	var bands := 6
+	for i in bands:
+		var t := float(i) / float(bands)
+		var band := Rect2(
+			build_rect.position + Vector2(0, t * build_rect.size.y),
+			Vector2(build_rect.size.x, build_rect.size.y / float(bands)))
+		draw_rect(band, Color(1, 1, 1, 0.04 * (1.0 - t)), true)
 
 
 func _draw_grass_texture() -> void:
@@ -152,7 +160,7 @@ func _draw_decorative_foliage() -> void:
 			var h := _hash2(cx + 31, cy + 17)
 			var on_border := cx < 2 or cy < 2 \
 				or cx >= BUILDABLE_TILES.x - 2 or cy >= BUILDABLE_TILES.y - 2
-			var threshold: int = 2 if on_border else 90
+			var threshold: int = 2 if on_border else 48
 			if (h % threshold) != 0:
 				continue
 			if Vector2i(cx, cy) == GATE_TILE:

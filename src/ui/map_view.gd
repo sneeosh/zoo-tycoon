@@ -189,6 +189,8 @@ func _draw() -> void:
 	# Static layers (ground, grass, foliage, region auras, grid, vignette)
 	# are drawn by the MapBackground child Control; they re-render only on
 	# world events, not every frame.
+	_draw_paths()
+	_draw_water_shimmer()
 	_draw_entities()
 	_draw_placements()
 	_draw_path_warnings()
@@ -297,6 +299,73 @@ func _draw_path_warnings() -> void:
 # Entities
 # ---------------------------------------------------------------------------
 
+# Walkable path tiles, drawn as one groomed surface beneath everything else.
+# A warm sand fill with a soft inner highlight, faint speckle texture, and a
+# darker edge only where the path meets non-path — so a network reads as a
+# connected path, not a row of tiles.
+func _draw_paths() -> void:
+	var cells := {}
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null or not def.walkable:
+			continue
+		for dx in def.footprint.x:
+			for dy in def.footprint.y:
+				cells[inst.position + Vector2i(dx, dy)] = true
+	if cells.is_empty():
+		return
+	var fill := Color("#c4b487")
+	var hi := Color("#d6c79b")
+	var edge := Color("#8d7c57")
+	for c in cells:
+		var s: Vector2 = _cell_to_screen(c)
+		draw_rect(Rect2(s, Vector2(TILE_SIZE, TILE_SIZE)), fill, true)
+		# top highlight strip for a touch of depth.
+		draw_rect(Rect2(s, Vector2(TILE_SIZE, 4)), hi, true)
+		# deterministic pebble speckle.
+		var hsh := _hash2(c.x, c.y)
+		for k in 4:
+			var hk := hsh ^ (k * 911)
+			var px := s.x + float(hk % TILE_SIZE)
+			var py := s.y + float((hk / 7) % TILE_SIZE)
+			draw_circle(Vector2(px, py), 1.0, Color(0.55, 0.50, 0.38, 0.5))
+	# Darker edge where a path cell borders a non-path cell.
+	for c in cells:
+		var s: Vector2 = _cell_to_screen(c)
+		if not cells.has(c + Vector2i(0, -1)):
+			draw_line(s, s + Vector2(TILE_SIZE, 0), edge, 2.0)
+		if not cells.has(c + Vector2i(0, 1)):
+			draw_line(s + Vector2(0, TILE_SIZE), s + Vector2(TILE_SIZE, TILE_SIZE), edge, 2.0)
+		if not cells.has(c + Vector2i(-1, 0)):
+			draw_line(s, s + Vector2(0, TILE_SIZE), edge, 2.0)
+		if not cells.has(c + Vector2i(1, 0)):
+			draw_line(s + Vector2(TILE_SIZE, 0), s + Vector2(TILE_SIZE, TILE_SIZE), edge, 2.0)
+
+
+func _hash2(a: int, b: int) -> int:
+	return abs((a * 374761393 + b * 668265263) ^ 0x55555555) & 0x7FFFFFFF
+
+
+# Animated shimmer over water exhibits — a couple of slow, drifting highlight
+# streaks per cell. Pure cosmetic; drawn under the animals.
+func _draw_water_shimmer() -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	for region: Region in RegionRegistry.all_regions():
+		if not (&"water" in region.provided_zone_tags):
+			continue
+		for c in region.cells:
+			var s := _cell_to_screen(c)
+			var hsh := _hash2(c.x, c.y)
+			for k in 2:
+				var phase: float = t * 0.7 + float(hsh ^ (k * 53)) * 0.001
+				var yy: float = s.y + (0.32 + 0.42 * k) * TILE_SIZE + sin(phase) * 2.0
+				var xoff: float = (sin(phase * 1.3) + 1.0) * 0.5 * (TILE_SIZE * 0.35)
+				var x0: float = s.x + 4.0 + xoff
+				draw_line(Vector2(x0, yy), Vector2(x0 + TILE_SIZE * 0.4, yy),
+					Color(1, 1, 1, 0.16), 1.5)
+
+
 func _draw_entities() -> void:
 	var font := get_theme_default_font()
 	for inst_id in EntityRegistry.instances.keys():
@@ -304,6 +373,8 @@ func _draw_entities() -> void:
 		var def := inst.get_def()
 		if def == null:
 			continue
+		if def.walkable:
+			continue   # paths are drawn by _draw_paths
 		_draw_one_entity(inst, def, font)
 		# An arena with an active booking gets a yellow star above the
 		# top edge so the player can spot which arenas are running shows
@@ -327,7 +398,9 @@ func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:
 	shadow_rect.position += Vector2(2, 3)
 	draw_style_box(_shadow_box, shadow_rect)
 
-	var sprite := _sprite_for(inst.entity_def_id)
+	# Load by sprite_key (not def id) so a def can reuse another's art — e.g.
+	# the drink stand / restaurant reuse the food-stand stall.
+	var sprite := _load_sprite_optional(String(def.sprite_key))
 	if sprite != null:
 		# Pixel-art sprite fills the footprint with a small inset so it
 		# doesn't visually butt up against neighbouring grid cells.
@@ -335,35 +408,35 @@ func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:
 		draw_texture_rect(sprite, sprite_rect, false)
 		return
 
-	# Fallback: rounded coloured rect with display name. Used when a
-	# sprite hasn't been generated for an entity def yet.
+	# Fallback for a sprite-less entity: a clean stylized object — rounded
+	# body with top→bottom shading, a bright rim, and a light label — so it
+	# reads as an intentional object rather than a debug rect.
 	var inner := rect.grow(-3)
 	var style := _style_for(inst.entity_def_id)
 	draw_style_box(style, inner)
-	draw_rect(
-		Rect2(inner.position + Vector2(3, 3), Vector2(inner.size.x - 6, 3)),
-		Color(1, 1, 1, 0.18), true)
+	# Darker lower half for a touch of form.
+	draw_rect(Rect2(inner.position + Vector2(0, inner.size.y * 0.55),
+		Vector2(inner.size.x, inner.size.y * 0.45)), Color(0, 0, 0, 0.16), true)
+	# Bright top rim.
+	draw_rect(Rect2(inner.position + Vector2(3, 3), Vector2(inner.size.x - 6, 3)),
+		Color(1, 1, 1, 0.30), true)
+	var ink := Color(1, 1, 1, 0.92)
+	var ink_shadow := Color(0, 0, 0, 0.45)
 	if def.footprint.x >= MIN_TILES_FOR_LABEL:
-		draw_string(font,
-			inner.position + Vector2(5, 14),
-			def.display_name,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			inner.size.x - 8,
-			11,
-			Color("#10171a"))
+		var p := inner.position + Vector2(6, 15)
+		draw_string(font, p + Vector2(1, 1), def.display_name,
+			HORIZONTAL_ALIGNMENT_LEFT, inner.size.x - 10, 11, ink_shadow)
+		draw_string(font, p, def.display_name,
+			HORIZONTAL_ALIGNMENT_LEFT, inner.size.x - 10, 11, ink)
 	else:
 		var initial := def.display_name.substr(0, 1).to_upper()
-		var fs: int = 16 if def.footprint.x >= 2 else 12
+		var fs: int = 15 if def.footprint.x >= 2 else 12
 		var sz := font.get_string_size(initial, HORIZONTAL_ALIGNMENT_CENTER, -1, fs)
-		draw_string(font,
-			inner.position + Vector2(
-				(inner.size.x - sz.x) * 0.5,
-				(inner.size.y + sz.y) * 0.5 - 4),
-			initial,
-			HORIZONTAL_ALIGNMENT_CENTER,
-			inner.size.x,
-			fs,
-			Color("#10171a"))
+		var p := inner.position + Vector2(
+			(inner.size.x - sz.x) * 0.5, (inner.size.y + sz.y) * 0.5 - 4)
+		draw_string(font, p + Vector2(1, 1), initial,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, ink_shadow)
+		draw_string(font, p, initial, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, ink)
 
 
 func _style_for(def_id: StringName) -> StyleBoxFlat:
@@ -447,16 +520,16 @@ func _draw_one_visitor(ag: Agent) -> void:
 	var bob_offset := Vector2(0.0, sin(bob_phase) * 1.2)
 	var pos := _world_to_screen(ag.position) + bob_offset
 	var sat_color := _satisfaction_color(ag.satisfaction)
+	var arch_color: Color = ARCHETYPE_COLORS.get(ag.agent_type_id, Color("#dfe6df"))
 
 	# Drop shadow on the ground (no bob — shadow stays put while sprite hops).
 	var ground_pos := _world_to_screen(ag.position)
 	draw_circle(ground_pos + Vector2(0.0, 11.0), 9.0, Color(0, 0, 0, 0.32))
-	# Larger satisfaction halo so the mood read is obvious at a glance.
-	draw_circle(pos, 11.0, Color(sat_color.r, sat_color.g, sat_color.b, 0.45))
-	draw_arc(pos, 11.0, 0.0, TAU, 24,
-		Color(sat_color.r, sat_color.g, sat_color.b, 0.85), 1.5)
+	# Filled halo reads satisfaction (mood); the crisp ring reads archetype
+	# (who) — so a glance gives both the crowd's mood and its make-up.
+	draw_circle(pos, 10.0, Color(sat_color.r, sat_color.g, sat_color.b, 0.40))
+	draw_arc(pos, 12.0, 0.0, TAU, 26, arch_color, 2.2)
 
-	var arch_color: Color = ARCHETYPE_COLORS.get(ag.agent_type_id, Color("#dfe6df"))
 	if _visitor_sprite != null:
 		# Bigger sprite so visitors read clearly from across the map; tinted by
 		# archetype so families/children/enthusiasts are distinguishable.
