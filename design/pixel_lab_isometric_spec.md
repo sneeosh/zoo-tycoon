@@ -25,15 +25,28 @@ harness `TYCOON_ISO=1 TYCOON_SHOT=/tmp/iso.png:300`.)
 
 ## The art that actually moves the needle (Pixel Lab)
 
-The renderer currently fills tiles with flat tinted diamonds. Replacing those
-with proper isometric ground textures is ~80% of the visual jump.
+> **Update 2026-06-07 — the ground now renders procedurally, so the grid is
+> fixed without art.** The first cut of `iso_grass/dirt/rock/water/path.png`
+> baked a dark soil rim into every diamond edge, so tiling them painted a
+> visible grid (confirmed by a 3×3 tiling test). The renderer no longer tiles
+> those PNGs: ground, paths, and enclosure floors are drawn as solid,
+> per-cell-varied diamonds with scattered foliage (the same seamless technique
+> the top-down view uses). Adjacent solid diamonds share edges exactly, so
+> there is no lattice. **Priority A below is now optional polish, not a
+> blocker** — and if textured tiles ever come back they MUST be truly seamless
+> (see the hard requirement in the table).
 
-### Priority A — isometric ground tiles (diamond, **64×32**, seamless)
+### Priority A — isometric ground tiles (diamond, **64×32**, seamless) — OPTIONAL
 
-Each is a single diamond that fills a 64×32 canvas (the four points touch the
-mid-points of the canvas edges), transparent outside the diamond, and **tiles
-seamlessly** with copies of itself on all four diagonal edges (no border/frame
-— same rule as the top-down seamless tiles, but diamond-shaped).
+The procedural ground looks clean already; textured tiles are only worth it if
+they're a clear upgrade. **The one non-negotiable rule: zero border.** Each is a
+single diamond that fills a 64×32 canvas (the four points touch the mid-points
+of the canvas edges), transparent outside the diamond, and **tiles seamlessly**
+on all four diagonal edges — the texture must bleed all the way to every edge
+with **no darker rim, frame, or outline**. Verify by tiling the PNG 3×3: you
+must not be able to see where one diamond ends and the next begins. (The first
+batch failed exactly this test — the dark bottom-edge rim is what produced the
+grid.)
 
 | File | Surface |
 |---|---|
@@ -77,7 +90,9 @@ To promote iso from prototype to the real renderer:
 2. **Port the visual systems** already in the top-down view: day/night tint,
    weather, water shimmer, mood bubbles, money-float toasts, the "no path
    access" ⚠ and sick ✚ markers, pen ground-cover.
-3. **Textured ground** once the iso tiles above land (drop-in).
+3. **Textured ground** is now optional — the procedural ground already reads
+   cleanly with no grid. Only swap in tiles if they're seamless and a clear
+   upgrade (drop-in).
 4. **Tune** camera origin/zoom and depth-sort tie-breaks.
 
 None of this touches the simulation — it's all in the view layer. Estimate:
