@@ -185,6 +185,17 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-06** — Adopted the **Zoo Tycoon Adaptation Plan**
+  ([`design/zoo_tycoon_adaptation_plan.md`](./design/zoo_tycoon_adaptation_plan.md)).
+  Pulls a ranked bundle of patterns from the 2001 game into the
+  existing phases without replacing them. Headline: **paths-only
+  guest movement** becomes a Phase 1 prerequisite; the
+  "Zoo Tycoon character pack" (4 needs, bracketed pricing, donations,
+  suitability rating, guest mood bubbles, Compost Building,
+  Restaurant capstone) lands in Phase 1 alongside it. Guest types
+  pull forward into Phase 2; welfare/staff/breeding adoptions stay
+  in Phase 3 as planned. Research dossier:
+  [`design/research/zoo_tycoon_2001_reference.md`](./design/research/zoo_tycoon_2001_reference.md).
 - **2026-05-25** — Roadmap v2. Reframed from "validation game →
   successor repo" to "this *is* the product." Engine read-only contract
   retained; `CLAUDE.md` §0 scope rules are superseded by this document
