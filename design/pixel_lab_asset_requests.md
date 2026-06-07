@@ -32,6 +32,36 @@ Palette is warm and saturated with dark outlines.
 
 ---
 
+## Priority 0 — SEAMLESS enclosure floor tiles (fixes the "grid of squares" look)
+
+**The problem:** the current floor tiles (`grass_patch.png`, `rock_patch.png`,
+`water_patch.png`, `cage_panel.png`) are **framed standalone tiles** — each has
+a darker decorative border baked into all four edges. When you build a multi-
+tile enclosure, every tile shows its own frame, so the floor reads as a grid of
+separate squares with gaps instead of one continuous enclosure. The renderer
+already draws these edge-to-edge, so **this is purely an art issue** and new
+seamless art will fix it with no code change.
+
+**What to make:** *seamless / tileable* ground textures — the same texture must
+continue across tile boundaries with **no border or frame on the edges**, so a
+3×3 block of them looks like one continuous surface. (Test it by tiling 3×3:
+you should not be able to see where one tile ends and the next begins.)
+
+| File to replace | Surface | Size | Notes |
+|---|---|---|---|
+| `grass_patch.png` | Grass enclosure floor | 64×64 | Seamless mowed-grass texture, subtle tonal variation, **no edge border**. |
+| `rock_patch.png` | Rocky enclosure floor | 64×64 | Seamless rocky/gravel ground, scattered stones, no edge border. |
+| `water_patch.png` | Water enclosure floor | 64×64 | Seamless water surface (the game adds an animated shimmer on top), no edge border. |
+| `cage_panel.png` | Aviary floor | 64×64 | Seamless sandy/aviary ground, no edge border. |
+
+The fence/boundary around an enclosure is drawn by the game (a perimeter
+outline), so the floor tiles themselves should be **just the ground**, edge to
+edge. If you'd rather the enclosures keep a visible fence, a separate
+`fence.png` (a short run of wooden posts/rail, 64×64, tileable horizontally) is
+a nice-to-have and I'll draw it along region perimeters.
+
+---
+
 ## Priority 1 — replace the fallback boxes (most visible)
 
 These currently render as plain colored tiles with a letter. Real art here

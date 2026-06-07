@@ -402,9 +402,11 @@ func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:
 	# the drink stand / restaurant reuse the food-stand stall.
 	var sprite := _load_sprite_optional(String(def.sprite_key))
 	if sprite != null:
-		# Pixel-art sprite fills the footprint with a small inset so it
-		# doesn't visually butt up against neighbouring grid cells.
-		var sprite_rect := rect.grow(-2)
+		# Zone-tile floors (grass/rock/water/aviary) tile edge-to-edge — with a
+		# 1px overlap to hide seams — so an enclosure reads as continuous
+		# ground. Free-standing objects keep a small inset so they don't butt
+		# up against neighbouring cells.
+		var sprite_rect := rect.grow(1.0) if def.zone_kind != &"" else rect.grow(-2)
 		draw_texture_rect(sprite, sprite_rect, false)
 		return
 
