@@ -42,6 +42,12 @@ signal animal_welfare_alert(region_id: int, index: int, kind: String, animal_nam
 var breeding: BreedingConfig
 signal animal_born(region_id: int, species: StringName, animal_name: String, rare: bool)
 
+# Staff (roadmap 3.3). Hired zookeepers tend exhibits (a daily welfare bonus)
+# for a daily wage. Auto-distributed evenly across populated exhibits.
+var staff: StaffConfig
+var hired_keepers: int = 0
+signal staff_changed(hired: int)
+
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
 # Exhibit panel. Not persisted (resets on load — it's a session tally).
@@ -126,7 +132,9 @@ func _ready() -> void:
 	services = ServiceConfig.load_from_tuning()
 	welfare = WelfareConfig.load_from_tuning()
 	breeding = BreedingConfig.load_from_tuning()
+	staff = StaffConfig.load_from_tuning()
 	donations_by_region.clear()
+	hired_keepers = 0
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
 	# then aging/breeding — so the day's survivors age and breed. A death's
@@ -358,6 +366,16 @@ func donations_for_region(region_id: int) -> int:
 func _on_day_ending_for_welfare(_day: int) -> void:
 	if welfare == null:
 		return
+	# Keepers tend exhibits: a daily welfare bonus, distributed evenly across
+	# populated exhibits, plus their wages. Labor can keep an imperfect
+	# exhibit healthy.
+	var keeper_bonus: float = 0.0
+	if staff != null and hired_keepers > 0:
+		var exhibits: int = _populated_exhibit_count()
+		if exhibits > 0:
+			keeper_bonus = (float(hired_keepers) / float(exhibits)) * staff.keeper_welfare_bonus
+		Ledger.post_expense(hired_keepers * staff.keeper_wage_per_day,
+			"Keeper wages (%d)" % hired_keepers, &"zoo_staff")
 	var deaths: Array = []   # {region_id, index, name, refund}
 	for region: Region in RegionRegistry.all_regions():
 		for i in region.placements.size():
@@ -374,6 +392,7 @@ func _on_day_ending_for_welfare(_day: int) -> void:
 				var severity: float = (welfare.happiness_threshold - care) \
 					/ maxf(welfare.happiness_threshold, 0.001)
 				w = maxf(0.0, w - welfare.decline_per_day * severity)
+			w = minf(1.0, w + keeper_bonus)   # keepers help everywhere they tend
 			p.state["welfare"] = w
 			var sick: bool = w < welfare.illness_threshold
 			p.state["sick"] = sick
@@ -398,6 +417,38 @@ func _on_day_ending_for_welfare(_day: int) -> void:
 			Ledger.post_expense(int(d["refund"]), "Loss: %s died" % d["name"], &"animal_loss")
 		ProgressionManager.add_reputation(-welfare.death_reputation_penalty)
 		animal_welfare_alert.emit(d["region_id"], d["index"], "died", d["name"])
+
+
+# ---------------------------------------------------------------------------
+# Staff
+# ---------------------------------------------------------------------------
+
+func set_hired_keepers(n: int) -> void:
+	var capped := clampi(n, 0, staff.max_keepers if staff != null else 12)
+	if capped == hired_keepers:
+		return
+	hired_keepers = capped
+	staff_changed.emit(hired_keepers)
+
+
+# Number of exhibits that currently hold at least one animal (keeper coverage
+# is split across these).
+func _populated_exhibit_count() -> int:
+	var n := 0
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null and not def.appeal_contribution.is_empty():
+				n += 1
+				break
+	return n
+
+
+# Daily keeper wage bill at the current headcount.
+func keeper_wage_bill() -> int:
+	if staff == null:
+		return 0
+	return hired_keepers * staff.keeper_wage_per_day
 
 
 # Welfare/sick read for the UI. Returns {welfare:float, sick:bool}.

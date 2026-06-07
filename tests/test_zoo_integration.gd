@@ -19,6 +19,7 @@ func before_each() -> void:
 	SimClock.current_day = 0
 	SimClock.current_period = 0
 	SimClock.set_seed(1234)
+	ZooBootstrap.set_hired_keepers(0)
 
 
 # --- Content loaded from zoo/design/tuning/ -----------------------------
@@ -472,6 +473,34 @@ func test_opening_hours_gate_arrivals() -> void:
 	# Restore a known clock + gate for later tests.
 	SimClock.current_tick = 0
 	ZooBootstrap.set_ticket_bracket(&"standard")
+
+
+func test_keepers_maintain_welfare_and_cost_wages() -> void:
+	# Hiring keepers keeps an otherwise-neglected animal alive (welfare bonus),
+	# and charges wages each day.
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 0))
+	EntityRegistry.place(&"rock_patch", Vector2i(2, 0))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")   # cramped, no troughs
+	ZooBootstrap.set_hired_keepers(3)
+	var pre := Ledger.get_balance()
+	# Run the same number of days that killed the unkept lion; with keepers it
+	# survives.
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+		if region.placements.is_empty():
+			break
+	assert_false(region.placements.is_empty(), "keepers keep a neglected animal alive")
+	assert_lt(Ledger.get_balance(), pre, "keeper wages are charged daily")
+	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_keeper_headcount_is_capped() -> void:
+	ZooBootstrap.set_hired_keepers(9999)
+	assert_eq(ZooBootstrap.hired_keepers, ZooBootstrap.staff.max_keepers,
+		"headcount is capped at max_keepers")
+	ZooBootstrap.set_hired_keepers(0)
 
 
 func test_full_day_runs_end_to_end() -> void:

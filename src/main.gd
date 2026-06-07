@@ -83,6 +83,7 @@ var _admin_bracket_row: HBoxContainer
 var _admin_bracket_buttons: Dictionary = {}   # bracket id (StringName) -> Button
 var _admin_fee_caption: Label
 var _admin_open_label: Label
+var _admin_staff_value: Label
 var _arena_modal: Control
 var _arena_body: VBoxContainer
 var _arena_subject_id: int = 0   # entity_instance_id of the open arena
@@ -231,6 +232,14 @@ func _refresh_region_panel() -> void:
 			rec_label.add_theme_color_override("font_color", Color("#c9a4ff"))
 			rec_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			_region_panel_body.add_child(rec_label)
+		if ZooBootstrap.hired_keepers > 0:
+			var coverage := float(ZooBootstrap.hired_keepers) \
+				/ float(maxi(ZooBootstrap._populated_exhibit_count(), 1))
+			var keeper_label := Label.new()
+			keeper_label.text = "Keepers tending: %.1f" % coverage
+			keeper_label.add_theme_font_size_override("font_size", 11)
+			keeper_label.add_theme_color_override("font_color", Color("#a8c4b0"))
+			_region_panel_body.add_child(keeper_label)
 
 	# Path-access warning — guests can't reach an exhibit with no path nearby.
 	if _disconnected_regions.has(region.region_id):
@@ -1006,6 +1015,44 @@ func _build_admin_modal(parent: Control) -> void:
 	open_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(open_hint)
 
+	col.add_child(HSeparator.new())
+
+	# Zookeeper hire/fire row.
+	var staff_row := HBoxContainer.new()
+	staff_row.add_theme_constant_override("separation", 10)
+	col.add_child(staff_row)
+	var staff_label := Label.new()
+	staff_label.text = "Zookeepers"
+	staff_label.add_theme_font_size_override("font_size", 14)
+	staff_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	staff_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	staff_row.add_child(staff_label)
+	var s_minus := Button.new()
+	s_minus.text = "−"
+	s_minus.custom_minimum_size = Vector2(36, 32)
+	s_minus.focus_mode = Control.FOCUS_NONE
+	s_minus.pressed.connect(func(): _bump_keepers(-1))
+	staff_row.add_child(s_minus)
+	_admin_staff_value = Label.new()
+	_admin_staff_value.custom_minimum_size = Vector2(110, 0)
+	_admin_staff_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_admin_staff_value.add_theme_font_size_override("font_size", 14)
+	_admin_staff_value.add_theme_color_override("font_color", Color("#f4d35e"))
+	staff_row.add_child(_admin_staff_value)
+	var s_plus := Button.new()
+	s_plus.text = "+"
+	s_plus.custom_minimum_size = Vector2(36, 32)
+	s_plus.focus_mode = Control.FOCUS_NONE
+	s_plus.pressed.connect(func(): _bump_keepers(1))
+	staff_row.add_child(s_plus)
+
+	var staff_hint := Label.new()
+	staff_hint.text = "Keepers tend your exhibits — each adds welfare to your animals every day. Hire enough to keep them healthy without bleeding cash on wages."
+	staff_hint.add_theme_font_size_override("font_size", 11)
+	staff_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	staff_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(staff_hint)
+
 
 func _open_admin_modal() -> void:
 	_refresh_admin_modal()
@@ -1043,6 +1090,9 @@ func _refresh_admin_modal() -> void:
 	else:
 		_admin_open_label.text = "Closed"
 		_admin_open_label.add_theme_color_override("font_color", Color("#e76f51"))
+	if _admin_staff_value != null:
+		_admin_staff_value.text = "%d  ·  $%d/day" % [
+			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
 
 
 func _on_pick_ticket_bracket(id: StringName) -> void:
@@ -1051,6 +1101,19 @@ func _on_pick_ticket_bracket(id: StringName) -> void:
 	if not b.is_empty():
 		_push_log("[color=#f4d35e]Ticket price → %s ($%d).[/color]" %
 			[b["label"], int(b["price"])])
+	_refresh_admin_modal()
+
+
+func _bump_keepers(delta: int) -> void:
+	var before := ZooBootstrap.hired_keepers
+	ZooBootstrap.set_hired_keepers(before + delta)
+	var now := ZooBootstrap.hired_keepers
+	if now != before:
+		if now > before:
+			_push_log("[color=#83c779]Hired a zookeeper.[/color] Now %d on staff ($%d/day)." %
+				[now, ZooBootstrap.keeper_wage_bill()])
+		else:
+			_push_log("[color=#7e9286]Let a zookeeper go.[/color] Now %d on staff." % now)
 	_refresh_admin_modal()
 
 
