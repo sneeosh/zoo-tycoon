@@ -620,6 +620,61 @@ func test_playthrough_park_stays_solvent_and_profits() -> void:
 	ZooBootstrap.set_hired_keepers(0)
 
 
+func test_saveload_round_trips_the_whole_zoo() -> void:
+	# The engine doesn't persist region placements or zoo settings and doesn't
+	# rebuild regions on load; the zoo's save-state provider fills both gaps.
+	# Build a park with animal welfare/age state + zoo settings, save, wipe,
+	# load, and assert it all came back — including the cash balance (no
+	# double-charge).
+	ZooBootstrap.set_difficulty(&"hard")            # opening cash 7000
+	ZooBootstrap.set_ticket_bracket(&"premium")
+	ZooBootstrap.set_hired_keepers(2)
+	ZooBootstrap.set_park_open(false)
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	EntityRegistry.place(&"food_stand", Vector2i(8, 8))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	region.placements[0].state["welfare"] = 0.42
+	region.placements[0].state["age_days"] = 7
+	var bal_before := Ledger.get_balance()
+
+	SaveService.save_to_slot("rt")
+	# Wipe everything to a clean, different state.
+	EntityRegistry.reset(); RegionRegistry.reset(); NavigationRegistry.reset(); AgentPool.reset()
+	ZooBootstrap.set_hired_keepers(0); ZooBootstrap.set_park_open(true)
+	ZooBootstrap.set_ticket_bracket(&"standard")
+	Ledger.reset(123)
+	SaveService.load_from_slot("rt")
+
+	var r2 := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(r2, "exhibit was rebuilt on load")
+	assert_eq(r2.placements.size(), 2, "lion + trough restored")
+	var lion_i := -1
+	for i in r2.placements.size():
+		if r2.placements[i].placeable_def_id == &"lion":
+			lion_i = i
+	assert_gt(lion_i, -1, "the lion came back")
+	assert_almost_eq(float(r2.placements[lion_i].state.get("welfare", 1.0)), 0.42, 0.001,
+		"welfare state restored")
+	assert_eq(int(r2.placements[lion_i].state.get("age_days", 0)), 7, "age restored")
+	assert_eq(ZooBootstrap.hired_keepers, 2, "keepers restored")
+	assert_eq(ZooBootstrap.ticket_bracket, &"premium", "ticket bracket restored")
+	assert_false(ZooBootstrap.park_open, "park open/closed restored")
+	assert_eq(ZooBootstrap.scenario.difficulty, &"hard", "difficulty restored")
+	assert_eq(Ledger.get_balance(), bal_before, "cash balance preserved (no double-charge)")
+
+	SaveService.delete_slot("rt")
+	# Restore defaults for any later tests.
+	ZooBootstrap.set_difficulty(&"standard")
+	ZooBootstrap.set_park_open(true)
+	ZooBootstrap.set_ticket_bracket(&"standard")
+	ZooBootstrap.set_hired_keepers(0)
+
+
 func test_quality_rating_reflects_region_appeal() -> void:
 	# v0.4.0: rating is mean of regions' max-axis appeal × 5.
 	var initial := ZooBootstrap.get_quality_rating()

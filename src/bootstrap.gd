@@ -154,6 +154,12 @@ func _ready() -> void:
 	EventBus.day_ending.connect(_on_day_ending_for_welfare)
 	EventBus.day_ending.connect(_on_day_ending_for_breeding)
 
+	# Save/load completeness: the engine persists entities + ledger but NOT
+	# region placements (animals + their welfare/age state) or any zoo-side
+	# settings, and it doesn't rebuild regions on load. Register a provider
+	# that fills both gaps so a saved zoo reloads intact.
+	SaveService.register_game_state_provider("zoo", _save_game_state, _load_game_state)
+
 	# Cache the engine's default spawn rate so the open/closed toggle and
 	# ticket-bracket elasticity can scale from it. ContentDB has already
 	# applied balance.md by now.
@@ -583,3 +589,83 @@ func animal_age(region: Region, index: int) -> int:
 	if index < 0 or index >= region.placements.size():
 		return 0
 	return int(region.placements[index].state.get("age_days", 0))
+
+
+# ---------------------------------------------------------------------------
+# Save / load — completes the engine's save with region placements + zoo state
+# ---------------------------------------------------------------------------
+
+func _save_game_state() -> Dictionary:
+	var exhibits: Array = []
+	for region: Region in RegionRegistry.all_regions():
+		if region.cells.is_empty():
+			continue
+		var pls: Array = []
+		for p: Placement in region.placements:
+			pls.append({
+				"def": String(p.placeable_def_id),
+				"welfare": float(p.state.get("welfare", 1.0)),
+				"age_days": int(p.state.get("age_days", 0)),
+				"sick": bool(p.state.get("sick", false)),
+				"attitude": float(p.state.get("attitude", 1.0)),
+			})
+		# Anchor on a cell so we can find the rebuilt region after load.
+		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
+	return {
+		"ticket_bracket": String(ticket_bracket),
+		"park_open": park_open,
+		"hired_keepers": hired_keepers,
+		"current_weather": String(current_weather),
+		"difficulty": String(scenario.difficulty) if scenario != null else "standard",
+		"exhibits": exhibits,
+	}
+
+
+func _load_game_state(data: Dictionary) -> void:
+	# The engine restored entities + ledger but left the reactive registries
+	# stale (it doesn't re-emit entity_placed on load). Rebuild regions + the
+	# nav network from the restored entities.
+	RegionRegistry.reset()
+	NavigationRegistry.reset()
+	for inst_id in EntityRegistry.instances.keys():
+		EventBus.entity_placed.emit(inst_id)
+
+	# Restore zoo-side settings (apply_difficulty, not set_difficulty — the
+	# Ledger is already restored and must not be reset).
+	if scenario != null:
+		scenario.apply_difficulty(StringName(data.get("difficulty", "standard")))
+	park_open = bool(data.get("park_open", true))
+	hired_keepers = int(data.get("hired_keepers", 0))
+	current_weather = StringName(data.get("current_weather", current_weather))
+	set_ticket_bracket(StringName(data.get("ticket_bracket", "standard")))
+
+	# Rebuild placements directly (NOT via add_placement — that would charge
+	# the build cost again and double-register maintenance, which Ledger
+	# already restored). The restored recurring rules cover their upkeep.
+	for ex in data.get("exhibits", []):
+		var cell := Vector2i(int(ex["cell"][0]), int(ex["cell"][1]))
+		var region := RegionRegistry.region_at_cell(cell)
+		if region == null:
+			continue
+		for pd in ex.get("placements", []):
+			var def_id := StringName(pd.get("def", ""))
+			if not ContentDB.placeable_defs.has(def_id):
+				continue
+			var p := Placement.new()
+			p.placeable_def_id = def_id
+			p.added_at_tick = SimClock.current_tick
+			p.primary_cell = region.cells[0]
+			p.state = {
+				"welfare": float(pd.get("welfare", 1.0)),
+				"age_days": int(pd.get("age_days", 0)),
+				"sick": bool(pd.get("sick", false)),
+				"attitude": float(pd.get("attitude", 1.0)),
+			}
+			region.placements.append(p)
+
+	donations_by_region.clear()
+	arena_bookings.clear()
+	_apply_spawn_rate()
+	admin_changed.emit()
+	staff_changed.emit(hired_keepers)
+	difficulty_changed.emit(scenario.difficulty if scenario != null else &"standard")
