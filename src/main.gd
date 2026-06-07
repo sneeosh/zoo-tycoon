@@ -24,6 +24,8 @@ const ENTITY_COLORS := {
 	&"drink_stand": Color("#5aa9e6"),
 	&"restroom":    Color("#41b3a3"),
 	&"bench":       Color("#b08968"),
+	&"compost":     Color("#6b5d4f"),
+	&"restaurant":  Color("#d98c5f"),
 	&"arena":       Color("#a86a32"),
 }
 
@@ -40,6 +42,13 @@ var _fps_label: Label
 var _log_text: RichTextLabel
 var _build_buttons: Dictionary = {}    # StringName -> Button
 var _speed_buttons: Dictionary = {}    # String -> Button
+# Build ids currently locked behind a reputation gate (entity id -> true).
+# Kept in sync by _refresh_build_locks so _refresh_affordability respects it.
+var _locked_build_ids: Dictionary = {}
+# Reputation-gated buildables: entity id -> the unlock node that frees it.
+const REP_GATED_BUILDS := {
+	&"restaurant": &"dining",
+}
 var _region_panel: PanelContainer
 var _region_panel_body: VBoxContainer
 var _reports_modal: Control
@@ -2249,6 +2258,7 @@ func _refresh_hud() -> void:
 	if _goals_box != null:
 		_evaluate_goals()
 	_refresh_mission()
+	_refresh_build_locks()
 
 
 func _refresh_affordability() -> void:
@@ -2256,11 +2266,40 @@ func _refresh_affordability() -> void:
 	for def_id in _build_buttons.keys():
 		var btn: Button = _build_buttons[def_id]
 		var cost := _build_cost_for(def_id)
-		btn.disabled = balance < cost
+		btn.disabled = balance < cost or _locked_build_ids.has(def_id)
 		if btn.disabled and btn.button_pressed:
 			btn.button_pressed = false
 			if _selected_def_id == def_id:
 				_clear_build_selection()
+
+
+# Keep reputation-gated build buttons locked until the player earns the
+# required reputation, then auto-acquire the unlock (cost 0) and free them.
+# Driven from the periodic HUD refresh so it tracks reputation live.
+func _refresh_build_locks() -> void:
+	for ent_id in REP_GATED_BUILDS.keys():
+		var btn: Button = _build_buttons.get(ent_id)
+		if btn == null:
+			continue
+		var node_id: StringName = REP_GATED_BUILDS[ent_id]
+		if not ProgressionManager.is_unlocked(node_id) \
+				and ProgressionManager.can_unlock(node_id):
+			ProgressionManager.try_unlock(node_id)
+		if ProgressionManager.is_unlocked(node_id):
+			if _locked_build_ids.has(ent_id):
+				_locked_build_ids.erase(ent_id)
+				var def: EntityDef = ContentDB.get_entity_def(ent_id)
+				if def != null:
+					btn.tooltip_text = _build_tooltip_for(def)
+					_push_log("[color=#f4d35e]★ Unlocked: %s[/color] — your reputation opened it up." %
+						def.display_name)
+		else:
+			_locked_build_ids[ent_id] = true
+			var node := ContentDB.get_unlock_node(node_id)
+			var req: int = node.reputation_required if node != null else 0
+			btn.tooltip_text = "Locked — unlocks at Reputation %d (now %d)." % [
+				req, ProgressionManager.reputation]
+	_refresh_affordability()
 
 
 func _build_cost_for(def_id: StringName) -> int:

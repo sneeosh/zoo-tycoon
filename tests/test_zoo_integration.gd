@@ -217,6 +217,44 @@ func test_happiness_breakdown_identifies_dominant_factor() -> void:
 	assert_eq((b2["missing_needs"] as Array).size(), 0, "troughs meet the needs")
 
 
+func test_restaurant_satisfies_all_four_needs() -> void:
+	var rest: EntityDef = ContentDB.get_entity_def(&"restaurant")
+	assert_not_null(rest, "restaurant capstone loaded")
+	for need_id in [&"hunger", &"thirst", &"restroom", &"energy"]:
+		assert_true(need_id in rest.satisfies,
+			"restaurant satisfies '%s'" % need_id)
+
+
+func test_restaurant_is_a_one_stop_meal() -> void:
+	# A guest who gets hungry near a Restaurant (and nothing else) walks there
+	# and buys a "Meal" — the multi-need one-stop refill, not a single "Food".
+	EntityRegistry.place(&"restaurant", Vector2i(3, 3))
+	AgentPool.spawn(&"visitor", Vector2(0, 0))
+	for i in range(600):
+		SimClock.advance_tick()
+	var has_meal := false
+	for tx: Dictionary in Ledger.transactions:
+		if tx["label"] == "Meal":
+			has_meal = true
+			break
+	assert_true(has_meal, "guest bought a one-stop Meal at the restaurant")
+
+
+func test_compost_has_revenue_and_stink_effects() -> void:
+	var compost: EntityDef = ContentDB.get_entity_def(&"compost")
+	assert_not_null(compost, "compost building loaded")
+	assert_eq(compost.maintenance_cost, 0, "compost is zero-upkeep")
+	var has_revenue := false
+	var has_stink := false
+	for eff: Effect in compost.effects:
+		if eff.target == Effect.TARGET_REVENUE and eff.magnitude > 0.0:
+			has_revenue = true
+		if eff.target == Effect.TARGET_SATISFACTION and eff.magnitude < 0.0:
+			has_stink = true
+	assert_true(has_revenue, "compost earns revenue from the crowd")
+	assert_true(has_stink, "compost carries a stink satisfaction penalty")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with

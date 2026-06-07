@@ -25,6 +25,8 @@ in placeables.md — they go inside regions, not on the grid directly.
 | drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | drink_stand  | thirst    |                |           |              |
 | restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     | restroom  |                |           |              |
 | bench       | Bench           | 80         | 1                | 1           | 1           | bench        | energy    |                |           |              |
+| compost     | Compost Building| 400        | 0                | 2           | 2           | compost      |           |                |           |              |
+| restaurant  | Restaurant      | 1200       | 8                | 2           | 2           | restaurant   | hunger,thirst,restroom,energy |  |           |              |
 | arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |
 
 ## Effects
@@ -37,6 +39,16 @@ placements via the engine's compute_region_appeal (see
 engine/design/algorithms/region_appeal.md).
 -->
 
-| id           | entity_id  | target  | operation | magnitude | proximity | conditions |
-| ------------ | ---------- | ------- | --------- | --------- | --------- | ---------- |
-| food_revenue | food_stand | revenue | add       | 2.0       | 3.0       |            |
+<!--
+Compost Building (adaptation plan §2 item 8): zero-upkeep, high-margin, but
+"stinky". It earns by composting the litter of the crowd around it — a
+revenue effect scaling with nearby guests (wide radius) — while a tight
+satisfaction penalty drives off guests who stand too close. The placement
+puzzle: park it near guest flow to earn, but away from where they linger.
+-->
+
+| id              | entity_id  | target       | operation | magnitude | proximity | conditions |
+| --------------- | ---------- | ------------ | --------- | --------- | --------- | ---------- |
+| food_revenue    | food_stand | revenue      | add       | 2.0       | 3.0       |            |
+| compost_revenue | compost    | revenue      | add       | 1.5       | 6.0       |            |
+| compost_stink   | compost    | satisfaction | add       | -0.08     | 2.5       |            |

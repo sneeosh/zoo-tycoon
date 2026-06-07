@@ -171,27 +171,59 @@ const NEED_LABELS := {
 
 
 # A guest reached a satisfier for `agent.seeking_need`. Charge the service
-# price (if any), refill the need, and apply the eat→restroom spillover —
-# the original Zoo Tycoon twist where meeting one need worsens another.
-# All pricing/spillover comes from design/tuning/services.md via ServiceConfig.
+# price(s), refill the need(s), and apply the eat→restroom spillover — the
+# original Zoo Tycoon twist where meeting one need worsens another.
+#
+# A single-need stand (food / drink / restroom / bench) refills just its one
+# need. A multi-need building — the Restaurant capstone, which satisfies all
+# four — is a one-stop shop: the guest "has a meal" and every need it serves
+# refills in one visit, charged only for the needs that were actually low.
+# That convenience (vs. four separate trips) is what justifies the
+# restaurant's cost and reputation gate. All pricing/spillover comes from
+# design/tuning/services.md via ServiceConfig.
 func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
-	var need: StringName = agent.seeking_need
-	if need == &"":
+	var sought: StringName = agent.seeking_need
+	if sought == &"":
+		return
+	var def := inst.get_def()
+	if def == null:
 		return
 	var services: ServiceConfig = ZooBootstrap.services
-	if services != null:
-		var price := services.price_for(need)
-		if price > 0:
-			var label: String = NEED_LABELS.get(need, String(need).capitalize())
-			Ledger.post_income(price, label, services.source_for(need))
-			ZooBootstrap.money_floated.emit(price, agent.position)
-		var spill: Array = services.spillover_for(need)
-		var spill_need: StringName = spill[0]
-		var spill_amt: float = spill[1]
-		if spill_need != &"" and agent.need_levels.has(spill_need):
-			agent.need_levels[spill_need] = maxf(
-				0.0, float(agent.need_levels[spill_need]) - spill_amt)
-	agent.need_levels[need] = 1.0
+
+	# Needs this entity serves that the guest actually has. Always include the
+	# sought need even if the entity's `satisfies` list somehow omits it.
+	var to_refill: Array[StringName] = []
+	for need in def.satisfies:
+		if agent.need_levels.has(need) and need not in to_refill:
+			to_refill.append(need)
+	if sought not in to_refill and agent.need_levels.has(sought):
+		to_refill.append(sought)
+
+	var total_charge: int = 0
+	for need in to_refill:
+		var was_low: bool = float(agent.need_levels[need]) < 0.999
+		# Apply this need's spillover before refilling (a refilled spillover
+		# target below is then topped back up — the capstone benefit).
+		if services != null and was_low:
+			var spill: Array = services.spillover_for(need)
+			var spill_need: StringName = spill[0]
+			var spill_amt: float = spill[1]
+			if spill_need != &"" and agent.need_levels.has(spill_need):
+				agent.need_levels[spill_need] = maxf(
+					0.0, float(agent.need_levels[spill_need]) - spill_amt)
+			# Charge only for needs the guest actually needed topping up.
+			total_charge += services.price_for(need)
+
+	for need in to_refill:
+		agent.need_levels[need] = 1.0
+
+	if total_charge > 0:
+		var label: String = NEED_LABELS.get(sought, String(sought).capitalize())
+		if to_refill.size() > 1:
+			label = "Meal"
+		Ledger.post_income(total_charge, label,
+			services.source_for(sought) if services != null else sought)
+		ZooBootstrap.money_floated.emit(total_charge, agent.position)
 
 
 const DONATION_BOX_TAG := &"donation_box"
