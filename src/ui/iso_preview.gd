@@ -633,6 +633,10 @@ func _draw_sorted_objects() -> void:
 					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
 					"label": pdef.display_name, "small": true})
 
+	# Entrance gate: the ticket booth at cell (0,0), where guests enter/leave.
+	draws.append({"d": 0.4, "sprite": "ticket_booth", "fp": Vector2i.ONE,
+		"pos": Vector2(0, 0), "wmul": 1.3, "small": false})
+
 	# Parkland scenery.
 	if _scenery_dirty:
 		_rebuild_scenery()
@@ -673,6 +677,7 @@ func _rebuild_scenery() -> void:
 	_scenery_dirty = false
 	_scenery.clear()
 	var blocked := {Vector2i(0, 0): true}   # entrance gate
+	var path_cells: Array = []
 	for region: Region in RegionRegistry.all_regions():
 		for c in region.cells:
 			blocked[c] = true
@@ -684,6 +689,24 @@ func _rebuild_scenery() -> void:
 		for dx in def.footprint.x:
 			for dy in def.footprint.y:
 				blocked[inst.position + Vector2i(dx, dy)] = true
+		if def.walkable:
+			path_cells.append(inst.position)
+	# Lamp posts lining the promenade: beside every few path cells, on a free
+	# grass neighbour. Marked blocked so the tree scatter doesn't overlap them.
+	for c in path_cells:
+		var hp := _hash2(c.x * 5 + 1, c.y * 9 + 2)
+		if (hp % 4) != 0:
+			continue
+		for off in [Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(1, 0)]:
+			var n: Vector2i = c + off
+			if n.x < 0 or n.y < 0 or n.x >= GROUND_W or n.y >= GROUND_H:
+				continue
+			if blocked.has(n):
+				continue
+			blocked[n] = true
+			_scenery.append({"cell": n, "sprite": "lamp_post", "wmul": 0.7,
+				"jitter": Vector2.ZERO})
+			break
 	var pool: Array = []
 	for name in SCENERY_WEIGHTS:
 		for _w in range(SCENERY_WEIGHTS[name]):
