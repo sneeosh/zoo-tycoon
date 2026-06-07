@@ -56,8 +56,7 @@ economic loop is live and honest:
 harness), engine has held under feature pressure with no seam leaks.
 
 **Gaps that block a "real game" feeling:** no sound, no mobile input, no
-staff, single visitor archetype, **paths-only guest movement still
-pending engine v0.6.x**, no welfare/breeding, no time-of-day, no
+staff, single visitor archetype, no welfare/breeding, no time-of-day, no
 scenarios.
 
 ---
@@ -192,6 +191,23 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Paths-only guest movement landed (engine v0.6.0 →
+  v0.6.1).** Bumped the engine to its new navigation surface
+  (`WalkableNetwork`, `INetworkNavigator` + default A\*,
+  `NavigationRegistry`, engagement-distance helper) and wired the zoo onto
+  it: a walkable `path` tile (paint-to-place), guests route the network
+  toward exhibits/amenities and view from a path cell within the
+  engagement distance, and a "no path access" warning flags unreachable
+  exhibits. Path-first with a free-roam fallback (no network / off-network
+  / unreachable) — the sanctioned rollout step, so the economic loop still
+  works with zero paths. **Found + fixed an engine bug along the way:**
+  v0.6.0's `ContentDB` parsed the `walkable` columns inside the optional
+  `useful_life_days` block, so no tile ever registered as walkable; fixed
+  at the source per [`CLAUDE.md`](./CLAUDE.md) §1 (engine **v0.6.1**, commit
+  `4040ef6`) — writeup + durable patch in
+  [`design/engine_patches/`](./design/engine_patches/). The engine
+  commit/tag still needs pushing to the engine remote (this session lacked
+  credentials). Engine 295/295; zoo 20/20.
 - **2026-06-07** — **Landed the Zoo Tycoon character pack (minus paths).**
   Shipped adaptation-plan §6 commits 5–10 entirely in zoo code, engine
   submodule untouched: four guest needs (hunger / thirst / restroom /
