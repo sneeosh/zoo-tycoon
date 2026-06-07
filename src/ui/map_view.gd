@@ -725,7 +725,10 @@ func _cell_to_screen(cell: Vector2i) -> Vector2:
 
 
 func _world_to_screen(world_pos: Vector2) -> Vector2:
-	return GRID_ORIGIN + world_pos * TILE_SIZE
+	# Agents live in cell coordinates; a guest "on" cell (x,y) should render at
+	# that tile's CENTRE, not its top-left corner — otherwise path-walkers
+	# (which sit at integer cells) spill half a sprite off the tile edge.
+	return GRID_ORIGIN + (world_pos + Vector2(0.5, 0.5)) * TILE_SIZE
 
 
 func _satisfaction_color(s: float) -> Color:
