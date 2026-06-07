@@ -456,12 +456,17 @@ func _on_reports_pressed() -> void:
 const WELCOME_LINES: Array = [
 	"Welcome to your Zoo!",
 	"",
-	"You're the new director. Build exhibits, attract guests, and turn",
-	"a profit — see the MISSION panel on the left for your 30-day goal.",
+	"You're the new director. Build exhibits, lay paths so guests can",
+	"reach them, keep your animals well cared for, and turn a profit —",
+	"see the MISSION panel on the left for your 30-day goal.",
 	"",
-	"First time here? Take the 60-second tutorial — it walks you through",
-	"building your first exhibit, placing an animal, and watching a",
-	"guest pay. Otherwise, jump straight in with a pre-built starter zoo.",
+	"Guests have needs — food, drink, restrooms, rest — and arrive as",
+	"adults, families, children and enthusiasts who each love different",
+	"animals. Care for your animals and they'll breed; neglect them and",
+	"they sicken. The park opens by day and quiets at night.",
+	"",
+	"First time here? Take the 60-second tutorial. Otherwise, jump",
+	"straight in with a pre-built starter zoo.",
 ]
 
 
@@ -1064,16 +1069,20 @@ func _toggle_park_open() -> void:
 
 const TUTORIAL_STEPS: Array = [
 	{
-		"title": "Step 1 of 3 — Build an exhibit",
+		"title": "Step 1 of 4 — Build an exhibit",
 		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit automatically.",
 	},
 	{
-		"title": "Step 2 of 3 — Add an animal",
+		"title": "Step 2 of 4 — Add an animal",
 		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Exhibit panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
 	},
 	{
-		"title": "Step 3 of 3 — Speed time, watch them pay",
-		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in and pay — watch for the [color=#f4d35e]+$10[/color] floats above their heads.",
+		"title": "Step 3 of 4 — Lay a path",
+		"body": "Click [color=#f4d35e]Path[/color] under PATHS, then click a line of tiles from the [color=#f4d35e]entrance gate[/color] out toward your exhibit. Guests walk the paths you build — an exhibit with a path within view draws a crowd.",
+	},
+	{
+		"title": "Step 4 of 4 — Speed time, watch them pay",
+		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in along your path and pay — watch for the [color=#f4d35e]+$[/color] floats above their heads.",
 	},
 ]
 
@@ -1159,7 +1168,7 @@ func _show_tutorial_step() -> void:
 	var spec: Dictionary = TUTORIAL_STEPS[_tutorial_step]
 	_tutorial_progress.text = spec["title"]
 	_tutorial_prompt.text = spec["body"]
-	if _tutorial_step == 2:
+	if _tutorial_step == 3:
 		_tutorial_step3_floor = Ledger.get_balance()
 
 
@@ -1181,6 +1190,12 @@ func _check_tutorial_advance() -> void:
 					_advance_tutorial()
 					return
 		2:
+			# Done once the player has laid a few path tiles (a network forms).
+			var net := NavigationRegistry.get_network()
+			if net != null and net.cell_count() >= 3:
+				_advance_tutorial()
+				return
+		3:
 			# Done when balance has gone up by at least $10 (one ticket)
 			# since the step began.
 			if Ledger.get_balance() >= _tutorial_step3_floor + 10:
@@ -2192,6 +2207,7 @@ func _wire_engine_signals() -> void:
 	EventBus.region_changed.connect(func(_rid): _check_tutorial_advance())
 	EventBus.placement_added.connect(func(_rid, _idx): _check_tutorial_advance())
 	EventBus.balance_changed.connect(func(_b): _check_tutorial_advance())
+	EventBus.entity_placed.connect(func(_id): _check_tutorial_advance())   # path step
 
 	# Keep the region panel synced with engine state.
 	EventBus.region_changed.connect(func(rid):
