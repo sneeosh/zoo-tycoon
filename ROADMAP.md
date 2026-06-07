@@ -191,6 +191,17 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Difficulty scenarios (2.6) + a save/load fix.**
+  **Difficulty** (Easy / Standard / Hard) as a scenario overlay — overrides
+  the win bar, opening cash, and a global demand multiplier; picked at the
+  welcome screen, shown live in the MISSION panel. **Save/load was found
+  broken** (the engine persists entities + ledger but not region placements,
+  and doesn't rebuild regions on load → loading produced an empty park).
+  Fixed zoo-side via `register_game_state_provider`: placements + their
+  welfare/age state and all zoo settings now round-trip intact (proven by a
+  new test). That's an engine gap (RegionRegistry has no `save_state`)
+  worked around in zoo code — a candidate to push upstream. Suite 33 → 37.
+
 - **2026-06-07** — **All six Phase 3 systems landed early** (3.1–3.6), all
   engine-clean: **welfare** (care-driven health/illness/death), **guest
   archetypes** (Adult/Child/Family/Enthusiast — preferences, decay, traits,
