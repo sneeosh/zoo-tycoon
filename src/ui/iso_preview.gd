@@ -46,6 +46,16 @@ var _pan := Vector2.ZERO
 var _last_size := Vector2.ZERO
 var _panning := false
 
+# Parkland scenery billboards (trees / rocks / bushes), depth-sorted with
+# everything else so guests pass behind a tree. Deterministic per cell, cached
+# and rebuilt only when the built world changes.
+var _scenery: Array = []        # [{cell, sprite, wmul, jitter}]
+var _scenery_dirty := true
+const SCENERY_WEIGHTS := {
+	"tree_oak": 5, "tree_birch": 4, "tree_pine": 3, "tree_palm": 1,
+	"bush_large": 3, "bush_small": 3, "bush_flowering": 2, "boulder": 2,
+	"tree_stump": 1, "flowers_red": 2, "flowers_yellow": 2}
+
 # Floating "+$N" toasts (ZooBootstrap.money_floated), same model as MapView.
 const FLOAT_LIFETIME := 1.4
 const FLOAT_RISE := 1.0       # model-space rise (scales with zoom)
@@ -60,6 +70,11 @@ func _ready() -> void:
 	set_process(true)
 	resized.connect(_rebuild_view)
 	ZooBootstrap.money_floated.connect(_on_money_floated)
+	# Parkland scenery (trees/rocks/bushes) is deterministic per cell but must
+	# avoid built cells, so rebuild it whenever the world changes.
+	for sig in [EventBus.entity_placed, EventBus.entity_removed,
+			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
+		sig.connect(_mark_scenery_dirty)
 	_card_box = StyleBoxFlat.new()
 	_card_box.bg_color = Color("#161e1a")
 	_card_box.border_color = Color("#3d4f44")
@@ -618,6 +633,14 @@ func _draw_sorted_objects() -> void:
 					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
 					"label": pdef.display_name, "small": true})
 
+	# Parkland scenery.
+	if _scenery_dirty:
+		_rebuild_scenery()
+	for sc in _scenery:
+		var p: Vector2 = Vector2(sc["cell"]) + sc["jitter"]
+		draws.append({"d": p.x + p.y + 0.3, "sprite": sc["sprite"], "fp": Vector2i.ONE,
+			"pos": p, "wmul": sc["wmul"], "small": false})
+
 	# Guests.
 	for aid in AgentPool.get_agents_by_type(&"visitor"):
 		var ag: Agent = AgentPool.get_agent(aid)
@@ -637,6 +660,54 @@ func _draw_sorted_objects() -> void:
 			_draw_guest(dr["guest"])
 		else:
 			_draw_billboard(dr)
+
+
+# Rebuild the deterministic scenery scatter: a dense tree border framing the
+# park (the Zoo-Tycoon "park in a forest" look) and sparse interior clumps,
+# skipping any cell that's inside an exhibit, under a path/building, or the gate.
+func _mark_scenery_dirty(_arg = null) -> void:
+	_scenery_dirty = true
+
+
+func _rebuild_scenery() -> void:
+	_scenery_dirty = false
+	_scenery.clear()
+	var blocked := {Vector2i(0, 0): true}   # entrance gate
+	for region: Region in RegionRegistry.all_regions():
+		for c in region.cells:
+			blocked[c] = true
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null:
+			continue
+		for dx in def.footprint.x:
+			for dy in def.footprint.y:
+				blocked[inst.position + Vector2i(dx, dy)] = true
+	var pool: Array = []
+	for name in SCENERY_WEIGHTS:
+		for _w in range(SCENERY_WEIGHTS[name]):
+			pool.append(name)
+	for gy in range(GROUND_H):
+		for gx in range(GROUND_W):
+			if blocked.has(Vector2i(gx, gy)):
+				continue
+			var border := gx < 2 or gy < 2 or gx >= GROUND_W - 2 or gy >= GROUND_H - 2
+			var h := _hash2(gx * 7 + 3, gy * 13 + 5)
+			var threshold := 2 if border else 8
+			if (h % threshold) != 0:
+				continue
+			var sprite: String = pool[h % pool.size()]
+			var wmul := 1.0
+			if sprite.begins_with("tree"):
+				wmul = 1.5
+			elif sprite.begins_with("flowers"):
+				wmul = 0.55
+			elif sprite == "boulder" or sprite.begins_with("bush"):
+				wmul = 0.85
+			var jitter := Vector2(float((h / 7) % 7 - 3) * 0.05, float((h / 11) % 7 - 3) * 0.05)
+			_scenery.append({"cell": Vector2i(gx, gy), "sprite": sprite,
+				"wmul": wmul, "jitter": jitter})
 
 
 func _draw_fence_edge(cell: Vector2i, side: String) -> void:
@@ -717,7 +788,7 @@ func _draw_billboard(dr: Dictionary) -> void:
 		var cx := cell.x + float(fp.x) * 0.5 - 0.5
 		var cy := cell.y + float(fp.y) * 0.5 - 0.5
 		base = _tile_center(cx, cy)
-	var w: float = maxf(fp.x, fp.y) * TW * (0.45 if dr.get("small", false) else 0.78)
+	var w: float = maxf(fp.x, fp.y) * TW * (0.45 if dr.get("small", false) else 0.78) * dr.get("wmul", 1.0)
 	var sprite := _sprite(dr["sprite"])
 	# Seat the sprite by its actual opaque pixels rather than a fixed lift, so
 	# objects with different internal composition / transparent margins all
