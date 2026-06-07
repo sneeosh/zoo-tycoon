@@ -1,6 +1,6 @@
 # Zoo Tycoon — Product Roadmap
 
-**Status:** Living document. Last updated 2026-05-25.
+**Status:** Living document. Last updated 2026-06-07.
 **Owner:** Kenny Johnson (PM + Eng).
 
 > **This is the Zoo Tycoon repo.** It started as the engine's validation
@@ -191,6 +191,27 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Animals-as-agents direction set (spec authored, not yet
+  scheduled).** Decided to pursue promoting animals from static `Placement`
+  records to real engine `Agent`s — moving, needs-driven individuals — so their
+  movement is a consequence of the model, not a renderer trick (North Star
+  principle 2). Full design contract:
+  [`design/animals_as_agents_spec.md`](./design/animals_as_agents_spec.md).
+  Key findings: it's **overwhelmingly zoo-side** on the existing agent system
+  (new `animal` `AgentType` with `spawn_weight 0`, `AnimalBehavior` free-roam
+  state machine — **no pathfinding needed**, welfare-as-needs, Placement↔Agent
+  lifecycle binding, save/load persistence). **One engine seam filed:**
+  `AgentPool.compute_aggregate_satisfaction()` averages over *all* agents and
+  drives the visitor spawn curve, so animal welfare would leak into guest
+  demand (a hungry lion suppressing arrivals). Proposed additive
+  `AgentType.drives_spawn_balance` flag, **target engine v0.6.x** — *not*
+  patched in place. **Sequencing:** depends on that engine bump; slots
+  naturally as a Phase 3 deepening of the welfare/breeding systems (it makes
+  welfare continuous and watchable) but is **parked pending the post-playtest
+  go/no-go** — promote into a phase then, don't start the engine work before.
+  *Interim:* both renderers amble animals via a presentational sine-wander
+  (top-down already did; iso added today) — explicitly a stopgap the spec
+  deletes once the sim owns the position.
 - **2026-06-07** — **Marketing campaigns (4.2).** Spend cash to promote a
   guest archetype for a few days (spawn-weight boost), closing the
   investment→visitor-mix loop the archetypes opened. Run from the gate
