@@ -19,3 +19,9 @@
 # Optional Godot editor dev tooling — installed locally via
 # `npx @satelliteoflove/godot-mcp --install-addon .` when wanted.
 addons/godot_mcp/
+
+# Playwright MCP scratch (console dumps, page snapshots)
+.playwright-mcp/
+
+# Stray Obsidian vault accidentally created at repo root
+/zoo-tycoon/
