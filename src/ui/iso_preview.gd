@@ -603,9 +603,14 @@ func _draw_sorted_objects() -> void:
 				var seed := _hash2(home.x + i * 97 + 5, home.y + i * 53 + 3)
 				var speed: float = 0.8 if (&"bird" in pdef.own_tags) else 0.45
 				var pos := _wander_in(region, bb, seed, _time * speed)
+				# Heading: sample the wander a hair ahead and pick the facing
+				# sprite (true ¾ iso art) when a <species>_4dir/ set exists.
+				var ahead := _wander_in(region, bb, seed, _time * speed + 0.12)
+				var heading := _tile_center(ahead.x, ahead.y) - _tile_center(pos.x, pos.y)
+				var sprite_name := _directional_sprite(String(pdef.sprite_key), heading)
 				var bob := sin(_time * speed * 2.3 + float(seed % 17)) * 1.4
 				draws.append({"d": pos.x + pos.y + 0.5,
-					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "pos": pos,
+					"sprite": sprite_name, "fp": Vector2i.ONE, "pos": pos,
 					"bob": bob, "label": pdef.display_name, "small": false,
 					"sick": bool(p.state.get("sick", false))})
 			else:
@@ -871,6 +876,34 @@ func _sprite(name: String) -> Texture2D:
 	var tex: Texture2D = load(path) if ResourceLoader.exists(path) else null
 	_sprites[name] = tex
 	return tex
+
+
+# True ¾ isometric directional art: if assets/sprites/<species>_4dir/ exists,
+# return the sprite name facing the screen-space heading (N/S/E/W). Falls back
+# to the plain billboard sprite when there's no directional set for a species.
+var _has_4dir := {}   # species -> bool
+
+func _directional_sprite(species: String, heading: Vector2) -> String:
+	if not _has_4dir.has(species):
+		_has_4dir[species] = ResourceLoader.exists(
+			"res://assets/sprites/%s_4dir/south.png" % species)
+	if not _has_4dir[species]:
+		return species
+	# Map the heading's screen angle to the nearest cardinal facing. Default to
+	# "south" (facing the camera) when nearly stationary.
+	if heading.length() < 0.01:
+		return "%s_4dir/south" % species
+	var deg := rad_to_deg(heading.angle())   # screen space: +y is down
+	var dir := "south"
+	if deg >= -45.0 and deg < 45.0:
+		dir = "east"
+	elif deg >= 45.0 and deg < 135.0:
+		dir = "south"
+	elif deg >= -135.0 and deg < -45.0:
+		dir = "north"
+	else:
+		dir = "west"
+	return "%s_4dir/%s" % [species, dir]
 
 
 func _hash2(a: int, b: int) -> int:

@@ -74,6 +74,23 @@ func test_inspector_finds_a_visitor_at_its_screen_position() -> void:
 	AgentPool.reset()
 
 
+func test_directional_sprite_picks_facing_from_heading() -> void:
+	var iso := _new_iso()
+	# lion has a 4dir set (assets/sprites/lion_4dir/) — heading maps to facing.
+	assert_eq(iso._directional_sprite("lion", Vector2(1, 0)), "lion_4dir/east")
+	assert_eq(iso._directional_sprite("lion", Vector2(0, 1)), "lion_4dir/south")
+	assert_eq(iso._directional_sprite("lion", Vector2(-1, 0)), "lion_4dir/west")
+	assert_eq(iso._directional_sprite("lion", Vector2(0, -1)), "lion_4dir/north")
+	# A near-zero heading defaults to facing the camera.
+	assert_eq(iso._directional_sprite("lion", Vector2.ZERO), "lion_4dir/south")
+
+
+func test_directional_sprite_falls_back_without_a_4dir_set() -> void:
+	var iso := _new_iso()
+	# penguin has no _4dir/ set — return the plain billboard sprite key.
+	assert_eq(iso._directional_sprite("penguin", Vector2(1, 0)), "penguin")
+
+
 func test_left_click_emits_placement_for_hovered_cell() -> void:
 	var iso := _new_iso()
 	watch_signals(iso)
