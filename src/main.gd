@@ -288,6 +288,9 @@ func _refresh_region_panel() -> void:
 		if is_animal:
 			var wf := ZooBootstrap.animal_welfare(region, i)
 			row_text += "  · welfare %.0f%%" % (float(wf["welfare"]) * 100.0)
+			var age := ZooBootstrap.animal_age(region, i)
+			if age > 0:
+				row_text += " · %dd" % age
 			if bool(wf["sick"]):
 				row_text += "  ⚠ sick"
 				row_color = Color("#e76f51")
@@ -2208,6 +2211,7 @@ func _wire_engine_signals() -> void:
 		if rid == _selected_region_id:
 			_refresh_region_panel())
 	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
+	ZooBootstrap.animal_born.connect(_on_animal_born)
 
 
 func _stage_starter_park() -> void:
@@ -2624,6 +2628,20 @@ func _on_welfare_alert(region_id: int, _index: int, kind: String, animal_name: S
 		"died":
 			_push_log("[color=#e76f51][b]✝ %s in Exhibit #%d died of neglect.[/b][/color] Reputation took a hit." %
 				[animal_name, region_id])
+		"old_age":
+			_push_log("[color=#a8c4b0]%s in Exhibit #%d passed away of old age.[/color]" %
+				[animal_name, region_id])
+	if region_id == _selected_region_id:
+		_refresh_region_panel()
+
+
+func _on_animal_born(region_id: int, _species: StringName, animal_name: String, rare: bool) -> void:
+	if rare:
+		_push_log("[color=#f4d35e][b]★ A rare %s was born in Exhibit #%d![/b][/color] The press loves it — reputation up." %
+			[animal_name, region_id])
+	else:
+		_push_log("[color=#83c779]🐣 A baby %s was born in Exhibit #%d.[/color]" %
+			[animal_name, region_id])
 	if region_id == _selected_region_id:
 		_refresh_region_panel()
 

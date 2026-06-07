@@ -404,6 +404,61 @@ func test_welfare_scales_appeal() -> void:
 		"welfare halves the appeal the engine sees")
 
 
+func _count_species(region: Region, species: StringName) -> int:
+	var n := 0
+	for p in region.placements:
+		if p.placeable_def_id == species:
+			n += 1
+	return n
+
+
+func test_breeding_produces_offspring() -> void:
+	# A roomy exhibit with two well-kept adult lions produces offspring.
+	for x in range(0, 4):
+		for y in range(0, 4):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 4))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	for p in region.placements:
+		if p.placeable_def_id == &"lion":
+			p.state["age_days"] = 5
+			p.state["welfare"] = 1.0
+	var before := _count_species(region, &"lion")
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_breeding(day)
+	assert_gt(_count_species(region, &"lion"), before, "well-kept lion pair breeds")
+
+
+func test_no_breeding_with_a_single_animal() -> void:
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	region.placements[0].state["age_days"] = 5
+	region.placements[0].state["welfare"] = 1.0
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_breeding(day)
+	assert_eq(_count_species(region, &"lion"), 1, "a lone animal can't breed")
+
+
+func test_animal_dies_of_old_age() -> void:
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	region.placements[0].state["age_days"] = ZooBootstrap.breeding.max_age_days
+	ZooBootstrap._on_day_ending_for_breeding(0)
+	assert_eq(_count_species(region, &"lion"), 0, "an animal past its lifespan dies")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with

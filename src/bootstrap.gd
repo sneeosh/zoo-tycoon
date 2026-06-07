@@ -37,6 +37,11 @@ var services: ServiceConfig
 var welfare: WelfareConfig
 signal animal_welfare_alert(region_id: int, index: int, kind: String, animal_name: String)
 
+# Breeding/aging tuning (design/tuning/breeding.md). Daily logic in
+# _on_day_ending_for_breeding, which runs after the welfare update.
+var breeding: BreedingConfig
+signal animal_born(region_id: int, species: StringName, animal_name: String, rare: bool)
+
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
 # Exhibit panel. Not persisted (resets on load — it's a session tally).
@@ -115,13 +120,16 @@ func _ready() -> void:
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
 	welfare = WelfareConfig.load_from_tuning()
+	breeding = BreedingConfig.load_from_tuning()
 	donations_by_region.clear()
 
-	# Welfare books a daily care update; a death's removal refund is negated
-	# below so a dying animal never pays the player (see seam note in the
-	# handler). Run after the arena hook so attitude is already settled.
+	# Husbandry runs at day end: welfare first (care update + neglect deaths),
+	# then aging/breeding — so the day's survivors age and breed. A death's
+	# removal refund is negated in each handler so an animal lost to neglect or
+	# old age never pays the player (see seam note).
 	Accounting.register_category(&"animal_loss", Accounting.Category.OPERATING_EXPENSE)
 	EventBus.day_ending.connect(_on_day_ending_for_welfare)
+	EventBus.day_ending.connect(_on_day_ending_for_breeding)
 
 	# Cache the engine's default spawn rate so the open/closed toggle and
 	# ticket-bracket elasticity can scale from it. ContentDB has already
@@ -363,3 +371,79 @@ func animal_welfare(region: Region, index: int) -> Dictionary:
 		return {"welfare": 1.0, "sick": false}
 	var st: Dictionary = region.placements[index].state
 	return {"welfare": float(st.get("welfare", 1.0)), "sick": bool(st.get("sick", false))}
+
+
+# ---------------------------------------------------------------------------
+# Breeding & aging (roadmap 3.5) — runs at day end, after the welfare update.
+# ---------------------------------------------------------------------------
+
+func _on_day_ending_for_breeding(_day: int) -> void:
+	if breeding == null:
+		return
+	var old_age_deaths: Array = []   # {region_id, index, name, refund}
+	var births: Array = []           # {region_id, species}
+	for region: Region in RegionRegistry.all_regions():
+		# species id -> Array[int] of placement indices eligible to breed
+		var breeders: Dictionary = {}
+		for i in region.placements.size():
+			var p: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals age / breed
+			var age: int = int(p.state.get("age_days", 0)) + 1
+			p.state["age_days"] = age
+			if age > breeding.max_age_days:
+				old_age_deaths.append({"region_id": region.region_id, "index": i,
+					"name": def.display_name, "refund": int(def.build_cost * 0.5)})
+				continue
+			if age >= breeding.min_age_days \
+					and float(p.state.get("welfare", 1.0)) >= breeding.welfare_threshold:
+				if not breeders.has(p.placeable_def_id):
+					breeders[p.placeable_def_id] = [] as Array[int]
+				(breeders[p.placeable_def_id] as Array[int]).append(i)
+		# A species with two+ eligible adults may produce one offspring/day.
+		for species_id in breeders.keys():
+			if (breeders[species_id] as Array).size() < 2:
+				continue
+			if SimClock.rng.randf() < breeding.chance_per_day:
+				births.append({"region_id": region.region_id, "species": species_id})
+
+	# Old-age deaths first (descending index within a region).
+	old_age_deaths.sort_custom(func(a, b): return a["index"] > b["index"])
+	for d in old_age_deaths:
+		if not RegionRegistry.remove_placement(d["region_id"], d["index"]):
+			continue
+		if int(d["refund"]) > 0:   # negate the half-refund (see welfare seam note)
+			Ledger.post_expense(int(d["refund"]), "Old age: %s" % d["name"], &"animal_loss")
+		animal_welfare_alert.emit(d["region_id"], d["index"], "old_age", d["name"])
+
+	# Births (space permitting — add_placement fails when the pen is full).
+	for b in births:
+		var species: StringName = b["species"]
+		var def: PlaceableDef = ContentDB.placeable_defs.get(species)
+		if def == null:
+			continue
+		# Overcrowding is the natural population cap — skip silently when the
+		# pen is full (checking first avoids add_placement's warning).
+		if not RegionRegistry.can_add_placement(b["region_id"], species)["ok"]:
+			continue
+		var placement := RegionRegistry.add_placement(b["region_id"], species)
+		if placement == null:
+			continue
+		# A birth is free — negate the placement build cost (same source so the
+		# books wash out).
+		if def.build_cost > 0:
+			Ledger.post_income(def.build_cost, "Birth: %s" % def.display_name, species)
+		placement.state["age_days"] = 0
+		placement.state["welfare"] = 1.0
+		var rare: bool = SimClock.rng.randf() < breeding.rare_chance
+		if rare:
+			ProgressionManager.add_reputation(breeding.rare_reputation)
+		animal_born.emit(b["region_id"], species, def.display_name, rare)
+
+
+# Age (in days) of an animal placement, for the UI.
+func animal_age(region: Region, index: int) -> int:
+	if index < 0 or index >= region.placements.size():
+		return 0
+	return int(region.placements[index].state.get("age_days", 0))
