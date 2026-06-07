@@ -200,6 +200,25 @@ func _refresh_region_panel() -> void:
 		appeal_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_region_panel_body.add_child(appeal_label)
 
+	# Suitability — single 0–100 read plus an always-on recommendation.
+	var suit := _exhibit_suitability(region)
+	if suit.get("has_animals", false):
+		var pct: int = suit["percent"]
+		var suit_label := Label.new()
+		suit_label.text = "Suitability: %d%%" % pct
+		suit_label.add_theme_font_size_override("font_size", 14)
+		suit_label.add_theme_color_override("font_color",
+			_happiness_color(float(pct) / 100.0))
+		_region_panel_body.add_child(suit_label)
+		var rec: String = suit.get("recommendation", "")
+		if rec != "":
+			var rec_label := Label.new()
+			rec_label.text = "→ %s" % rec
+			rec_label.add_theme_font_size_override("font_size", 11)
+			rec_label.add_theme_color_override("font_color", Color("#c9a4ff"))
+			rec_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_region_panel_body.add_child(rec_label)
+
 	# Donations collected at this exhibit's Donation Box (if any).
 	var donated := ZooBootstrap.donations_for_region(region.region_id)
 	var has_box := false
@@ -1566,6 +1585,80 @@ func _happiness_color(h: float) -> Color:
 	if h < 0.7:
 		return Color("#f4a261")
 	return Color("#83c779")
+
+
+# Exhibit suitability — the single 0–100 read on how well an exhibit suits
+# its animals (adaptation plan §2 item 1). It's the mean happiness across the
+# exhibit's animals, plus an always-on recommendation naming the single
+# most-impactful improvement — even at 99% (§5 divergence #2: never leave the
+# player guessing what to fix next).
+func _exhibit_suitability(region: Region) -> Dictionary:
+	var model := ZooBootstrap.get_happiness_model()
+	var sum_h: float = 0.0
+	var count: int = 0
+	var worst := {"penalty": -1.0}
+	for i in region.placements.size():
+		var def: PlaceableDef = ContentDB.placeable_defs.get(
+			region.placements[i].placeable_def_id)
+		if def == null or def.appeal_contribution.is_empty():
+			continue   # score only animals (appeal-contributing placements)
+		var b: Dictionary = model.compute_breakdown(region, i)
+		if not b.get("valid", false):
+			continue
+		sum_h += float(b["happiness"])
+		count += 1
+		for factor in ["space", "social", "needs"]:
+			if float(b[factor]) > float(worst["penalty"]):
+				worst = {"penalty": float(b[factor]), "factor": factor,
+					"def": def, "b": b}
+		var att_pen: float = 1.0 - float(b["attitude"])
+		if att_pen > float(worst["penalty"]):
+			worst = {"penalty": att_pen, "factor": "attitude", "def": def, "b": b}
+	if count == 0:
+		return {"has_animals": false}
+	return {
+		"has_animals": true,
+		"percent": int(round(sum_h / count * 100.0)),
+		"recommendation": _recommendation_for(worst),
+	}
+
+
+func _recommendation_for(worst: Dictionary) -> String:
+	if not worst.has("def"):
+		return ""
+	var def: PlaceableDef = worst["def"]
+	var name: String = def.display_name
+	# Near-perfect: §5 says still surface the next axis, framed positively.
+	if float(worst["penalty"]) < 0.01:
+		return "Looking great — only marginal gains left."
+	var b: Dictionary = worst["b"]
+	match worst["factor"]:
+		"space":
+			return "Enlarge this exhibit — the %s is cramped." % name
+		"social":
+			if b.get("social_kind", "") == "excess":
+				return "Too many %s — thin the group (max %d)." % [
+					name, int(b["social_max"])]
+			return "Add more %s — it's lonely (wants %d–%d together)." % [
+				name, int(b["social_min"]), int(b["social_max"])]
+		"needs":
+			var missing: Array = b.get("missing_needs", [])
+			var tag: StringName = missing[0] if not missing.is_empty() else &""
+			return "%s for the %s — a need is unmet." % [_need_fix_label(tag), name]
+		"attitude":
+			return "Let the %s rest — show fatigue is lowering its mood." % name
+	return ""
+
+
+# Map a missing needs_provided tag to a plain build suggestion.
+func _need_fix_label(tag: StringName) -> String:
+	match tag:
+		&"provides_food":
+			return "Add a Feeding Trough"
+		&"provides_water":
+			return "Add a Water Trough"
+		_:
+			return "Provide %s" % String(tag).replace("provides_", "")
 
 
 func _begin_move_placement(region_id: int, index: int) -> void:

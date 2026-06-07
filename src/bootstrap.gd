@@ -263,6 +263,12 @@ func get_quality_rating() -> float:
 	return _zoo_quality.compute_rating()
 
 
+# The registered animal-happiness model, typed so game UI can call the
+# zoo-specific compute_breakdown() (the engine only knows compute_happiness).
+func get_happiness_model() -> ZooAnimalHappiness:
+	return _animal_happiness
+
+
 # ---------------------------------------------------------------------------
 # Donations — called by VisitorBehavior when a guest tips at an exhibit's
 # Donation Box. Books the income and tracks a per-exhibit running total.

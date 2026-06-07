@@ -183,6 +183,40 @@ func test_donation_box_collects_tips() -> void:
 		"happy guests tipped at the donation box")
 
 
+func test_happiness_breakdown_identifies_dominant_factor() -> void:
+	# A lone lion in a tiny pen with no troughs should report its missing
+	# needs (provides_food / provides_water) and a social deficit via the
+	# labelled breakdown the suitability panel renders.
+	# Pen of area 6 — room for the lion (space_required 3) plus two troughs
+	# (1 each); can_add_placement sums space_required against area.
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(2, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 1))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 1))
+	EntityRegistry.place(&"rock_patch", Vector2i(2, 1))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(region)
+	var added := RegionRegistry.add_placement(region.region_id, &"lion")
+	assert_not_null(added, "lion fits a 4-cell grass+rock pen")
+	var model := ZooBootstrap.get_happiness_model()
+	var b := model.compute_breakdown(region, 0)
+	assert_true(b["valid"])
+	# Lion needs provides_food + provides_water; neither is present.
+	assert_eq((b["missing_needs"] as Array).size(), 2, "two unmet needs")
+	assert_gt(float(b["needs"]), 0.0, "needs penalty registered")
+	assert_eq(b["social_kind"], "deficit", "lone lion is under social_min")
+	# happiness == compute_happiness (the engine's entry point) — same math.
+	assert_almost_eq(float(b["happiness"]),
+		model.compute_happiness(region, 0), 0.0001,
+		"breakdown happiness matches compute_happiness")
+	# Adding the troughs clears the needs penalty.
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	var b2 := model.compute_breakdown(region, 0)
+	assert_eq((b2["missing_needs"] as Array).size(), 0, "troughs meet the needs")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with
