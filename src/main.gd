@@ -21,7 +21,11 @@ const ENTITY_COLORS := {
 	&"water_patch": Color("#3a7eb2"),
 	&"cage_panel":  Color("#7e8a92"),
 	&"food_stand":  Color("#e27d60"),
+	&"drink_stand": Color("#5aa9e6"),
 	&"restroom":    Color("#41b3a3"),
+	&"bench":       Color("#b08968"),
+	&"compost":     Color("#6b5d4f"),
+	&"restaurant":  Color("#d98c5f"),
 	&"arena":       Color("#a86a32"),
 }
 
@@ -38,6 +42,13 @@ var _fps_label: Label
 var _log_text: RichTextLabel
 var _build_buttons: Dictionary = {}    # StringName -> Button
 var _speed_buttons: Dictionary = {}    # String -> Button
+# Build ids currently locked behind a reputation gate (entity id -> true).
+# Kept in sync by _refresh_build_locks so _refresh_affordability respects it.
+var _locked_build_ids: Dictionary = {}
+# Reputation-gated buildables: entity id -> the unlock node that frees it.
+const REP_GATED_BUILDS := {
+	&"restaurant": &"dining",
+}
 var _region_panel: PanelContainer
 var _region_panel_body: VBoxContainer
 var _reports_modal: Control
@@ -64,7 +75,9 @@ var _endgame_title: Label
 var _endgame_body: VBoxContainer
 var _endgame_resolved: bool = false    # idempotent: only fire end-game once
 var _admin_modal: Control
-var _admin_fee_value: Label
+var _admin_bracket_row: HBoxContainer
+var _admin_bracket_buttons: Dictionary = {}   # bracket id (StringName) -> Button
+var _admin_fee_caption: Label
 var _admin_open_label: Label
 var _arena_modal: Control
 var _arena_body: VBoxContainer
@@ -195,6 +208,43 @@ func _refresh_region_panel() -> void:
 		appeal_label.add_theme_color_override("font_color", Color("#f4d35e"))
 		appeal_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_region_panel_body.add_child(appeal_label)
+
+	# Suitability — single 0–100 read plus an always-on recommendation.
+	var suit := _exhibit_suitability(region)
+	if suit.get("has_animals", false):
+		var pct: int = suit["percent"]
+		var suit_label := Label.new()
+		suit_label.text = "Suitability: %d%%" % pct
+		suit_label.add_theme_font_size_override("font_size", 14)
+		suit_label.add_theme_color_override("font_color",
+			_happiness_color(float(pct) / 100.0))
+		_region_panel_body.add_child(suit_label)
+		var rec: String = suit.get("recommendation", "")
+		if rec != "":
+			var rec_label := Label.new()
+			rec_label.text = "→ %s" % rec
+			rec_label.add_theme_font_size_override("font_size", 11)
+			rec_label.add_theme_color_override("font_color", Color("#c9a4ff"))
+			rec_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_region_panel_body.add_child(rec_label)
+
+	# Donations collected at this exhibit's Donation Box (if any).
+	var donated := ZooBootstrap.donations_for_region(region.region_id)
+	var has_box := false
+	for p in region.placements:
+		var pd: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+		if pd != null and &"donation_box" in pd.own_tags:
+			has_box = true
+			break
+	if has_box or donated > 0:
+		var donate_label := Label.new()
+		if has_box:
+			donate_label.text = "Donations: $%s collected" % _format_thousands(donated)
+		else:
+			donate_label.text = "Donations: $%s  (box removed)" % _format_thousands(donated)
+		donate_label.add_theme_font_size_override("font_size", 11)
+		donate_label.add_theme_color_override("font_color", Color("#83c779"))
+		_region_panel_body.add_child(donate_label)
 
 	_region_panel_body.add_child(HSeparator.new())
 
@@ -862,41 +912,35 @@ func _build_admin_modal(parent: Control) -> void:
 	close_btn.pressed.connect(_close_admin_modal)
 	header.add_child(close_btn)
 
-	# Entry-fee row: label + -/+ buttons.
-	var fee_row := HBoxContainer.new()
-	fee_row.add_theme_constant_override("separation", 10)
-	col.add_child(fee_row)
-	var fee_label := Label.new()
-	fee_label.text = "Entry fee"
-	fee_label.add_theme_font_size_override("font_size", 14)
-	fee_label.add_theme_color_override("font_color", Color("#cdd6cf"))
-	fee_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fee_row.add_child(fee_label)
-	var minus := Button.new()
-	minus.text = "−"
-	minus.custom_minimum_size = Vector2(36, 32)
-	minus.focus_mode = Control.FOCUS_NONE
-	minus.pressed.connect(func(): _bump_entry_fee(-5))
-	fee_row.add_child(minus)
-	_admin_fee_value = Label.new()
-	_admin_fee_value.custom_minimum_size = Vector2(70, 0)
-	_admin_fee_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_admin_fee_value.add_theme_font_size_override("font_size", 16)
-	_admin_fee_value.add_theme_color_override("font_color", Color("#f4d35e"))
-	fee_row.add_child(_admin_fee_value)
-	var plus := Button.new()
-	plus.text = "+"
-	plus.custom_minimum_size = Vector2(36, 32)
-	plus.focus_mode = Control.FOCUS_NONE
-	plus.pressed.connect(func(): _bump_entry_fee(5))
-	fee_row.add_child(plus)
+	# Ticket-bracket selector — a button per bracket from services.md.
+	var ticket_label := Label.new()
+	ticket_label.text = "Ticket price"
+	ticket_label.add_theme_font_size_override("font_size", 14)
+	ticket_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	col.add_child(ticket_label)
 
-	var fee_hint := Label.new()
-	fee_hint.text = "Higher fee = more revenue per guest, but fewer guests if it's too steep."
-	fee_hint.add_theme_font_size_override("font_size", 11)
-	fee_hint.add_theme_color_override("font_color", Color("#7e9286"))
-	fee_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(fee_hint)
+	_admin_bracket_row = HBoxContainer.new()
+	_admin_bracket_row.add_theme_constant_override("separation", 8)
+	col.add_child(_admin_bracket_row)
+	var brackets: Array = ZooBootstrap.services.ticket_brackets \
+		if ZooBootstrap.services != null else []
+	for b in brackets:
+		var id: StringName = b["id"]
+		var btn := Button.new()
+		btn.text = "%s\n$%d" % [b["label"], int(b["price"])]
+		btn.custom_minimum_size = Vector2(0, 46)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.tooltip_text = "Demand ×%.2f vs. Standard" % float(b["demand_multiplier"])
+		btn.pressed.connect(_on_pick_ticket_bracket.bind(id))
+		_admin_bracket_buttons[id] = btn
+		_admin_bracket_row.add_child(btn)
+
+	_admin_fee_caption = Label.new()
+	_admin_fee_caption.add_theme_font_size_override("font_size", 11)
+	_admin_fee_caption.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_fee_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_fee_caption)
 
 	col.add_child(HSeparator.new())
 
@@ -940,9 +984,26 @@ func _close_admin_modal() -> void:
 
 
 func _refresh_admin_modal() -> void:
-	if _admin_fee_value == null:
+	if _admin_bracket_row == null:
 		return
-	_admin_fee_value.text = "$%d" % ZooBootstrap.entry_fee
+	# Highlight the active bracket.
+	for id in _admin_bracket_buttons.keys():
+		var btn: Button = _admin_bracket_buttons[id]
+		var active: bool = id == ZooBootstrap.ticket_bracket
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_left = 4
+		style.corner_radius_bottom_right = 4
+		btn.add_theme_stylebox_override("normal", style)
+		btn.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#e6e6e6"))
+	var mult := ZooBootstrap.current_demand_multiplier()
+	_admin_fee_caption.text = (
+		"Guests pay $%d at the gate. Cheaper tickets pull a bigger crowd " +
+		"(demand ×%.2f) that spends more inside; pricier tickets earn more " +
+		"per head but thin the crowd.") % [ZooBootstrap.entry_fee, mult]
 	if ZooBootstrap.park_open:
 		_admin_open_label.text = "Open"
 		_admin_open_label.add_theme_color_override("font_color", Color("#83c779"))
@@ -951,8 +1012,12 @@ func _refresh_admin_modal() -> void:
 		_admin_open_label.add_theme_color_override("font_color", Color("#e76f51"))
 
 
-func _bump_entry_fee(delta: int) -> void:
-	ZooBootstrap.set_entry_fee(ZooBootstrap.entry_fee + delta)
+func _on_pick_ticket_bracket(id: StringName) -> void:
+	ZooBootstrap.set_ticket_bracket(id)
+	var b: Dictionary = ZooBootstrap.services.bracket(id)
+	if not b.is_empty():
+		_push_log("[color=#f4d35e]Ticket price → %s ($%d).[/color]" %
+			[b["label"], int(b["price"])])
 	_refresh_admin_modal()
 
 
@@ -1531,6 +1596,80 @@ func _happiness_color(h: float) -> Color:
 	return Color("#83c779")
 
 
+# Exhibit suitability — the single 0–100 read on how well an exhibit suits
+# its animals (adaptation plan §2 item 1). It's the mean happiness across the
+# exhibit's animals, plus an always-on recommendation naming the single
+# most-impactful improvement — even at 99% (§5 divergence #2: never leave the
+# player guessing what to fix next).
+func _exhibit_suitability(region: Region) -> Dictionary:
+	var model := ZooBootstrap.get_happiness_model()
+	var sum_h: float = 0.0
+	var count: int = 0
+	var worst := {"penalty": -1.0}
+	for i in region.placements.size():
+		var def: PlaceableDef = ContentDB.placeable_defs.get(
+			region.placements[i].placeable_def_id)
+		if def == null or def.appeal_contribution.is_empty():
+			continue   # score only animals (appeal-contributing placements)
+		var b: Dictionary = model.compute_breakdown(region, i)
+		if not b.get("valid", false):
+			continue
+		sum_h += float(b["happiness"])
+		count += 1
+		for factor in ["space", "social", "needs"]:
+			if float(b[factor]) > float(worst["penalty"]):
+				worst = {"penalty": float(b[factor]), "factor": factor,
+					"def": def, "b": b}
+		var att_pen: float = 1.0 - float(b["attitude"])
+		if att_pen > float(worst["penalty"]):
+			worst = {"penalty": att_pen, "factor": "attitude", "def": def, "b": b}
+	if count == 0:
+		return {"has_animals": false}
+	return {
+		"has_animals": true,
+		"percent": int(round(sum_h / count * 100.0)),
+		"recommendation": _recommendation_for(worst),
+	}
+
+
+func _recommendation_for(worst: Dictionary) -> String:
+	if not worst.has("def"):
+		return ""
+	var def: PlaceableDef = worst["def"]
+	var name: String = def.display_name
+	# Near-perfect: §5 says still surface the next axis, framed positively.
+	if float(worst["penalty"]) < 0.01:
+		return "Looking great — only marginal gains left."
+	var b: Dictionary = worst["b"]
+	match worst["factor"]:
+		"space":
+			return "Enlarge this exhibit — the %s is cramped." % name
+		"social":
+			if b.get("social_kind", "") == "excess":
+				return "Too many %s — thin the group (max %d)." % [
+					name, int(b["social_max"])]
+			return "Add more %s — it's lonely (wants %d–%d together)." % [
+				name, int(b["social_min"]), int(b["social_max"])]
+		"needs":
+			var missing: Array = b.get("missing_needs", [])
+			var tag: StringName = missing[0] if not missing.is_empty() else &""
+			return "%s for the %s — a need is unmet." % [_need_fix_label(tag), name]
+		"attitude":
+			return "Let the %s rest — show fatigue is lowering its mood." % name
+	return ""
+
+
+# Map a missing needs_provided tag to a plain build suggestion.
+func _need_fix_label(tag: StringName) -> String:
+	match tag:
+		&"provides_food":
+			return "Add a Feeding Trough"
+		&"provides_water":
+			return "Add a Water Trough"
+		_:
+			return "Provide %s" % String(tag).replace("provides_", "")
+
+
 func _begin_move_placement(region_id: int, index: int) -> void:
 	var region := RegionRegistry.get_region(region_id)
 	if region == null or index >= region.placements.size():
@@ -2033,6 +2172,9 @@ func _wire_engine_signals() -> void:
 	EventBus.placement_removed.connect(func(rid, _idx):
 		if rid == _selected_region_id:
 			_refresh_region_panel())
+	ZooBootstrap.donation_collected.connect(func(rid, _amt):
+		if rid == _selected_region_id:
+			_refresh_region_panel())
 
 
 func _stage_starter_park() -> void:
@@ -2054,9 +2196,14 @@ func _stage_starter_park() -> void:
 		for y in range(8, 10):
 			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# --- Amenities along the path from entrance to exhibits. ---
-	EntityRegistry.place(&"food_stand", Vector2i(14, 4))
-	EntityRegistry.place(&"restroom",   Vector2i(14, 9))
+	# --- Amenities along the path from entrance to exhibits. The starter
+	# park covers all four guest needs (food / drink / restroom / rest) so a
+	# first-time player sees a contented crowd before they learn to balance
+	# them. ---
+	EntityRegistry.place(&"food_stand",  Vector2i(14, 4))
+	EntityRegistry.place(&"drink_stand", Vector2i(13, 6))
+	EntityRegistry.place(&"restroom",    Vector2i(14, 9))
+	EntityRegistry.place(&"bench",       Vector2i(11, 6))
 
 	# --- Lion + its infrastructure. ---
 	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))
@@ -2111,6 +2258,7 @@ func _refresh_hud() -> void:
 	if _goals_box != null:
 		_evaluate_goals()
 	_refresh_mission()
+	_refresh_build_locks()
 
 
 func _refresh_affordability() -> void:
@@ -2118,11 +2266,40 @@ func _refresh_affordability() -> void:
 	for def_id in _build_buttons.keys():
 		var btn: Button = _build_buttons[def_id]
 		var cost := _build_cost_for(def_id)
-		btn.disabled = balance < cost
+		btn.disabled = balance < cost or _locked_build_ids.has(def_id)
 		if btn.disabled and btn.button_pressed:
 			btn.button_pressed = false
 			if _selected_def_id == def_id:
 				_clear_build_selection()
+
+
+# Keep reputation-gated build buttons locked until the player earns the
+# required reputation, then auto-acquire the unlock (cost 0) and free them.
+# Driven from the periodic HUD refresh so it tracks reputation live.
+func _refresh_build_locks() -> void:
+	for ent_id in REP_GATED_BUILDS.keys():
+		var btn: Button = _build_buttons.get(ent_id)
+		if btn == null:
+			continue
+		var node_id: StringName = REP_GATED_BUILDS[ent_id]
+		if not ProgressionManager.is_unlocked(node_id) \
+				and ProgressionManager.can_unlock(node_id):
+			ProgressionManager.try_unlock(node_id)
+		if ProgressionManager.is_unlocked(node_id):
+			if _locked_build_ids.has(ent_id):
+				_locked_build_ids.erase(ent_id)
+				var def: EntityDef = ContentDB.get_entity_def(ent_id)
+				if def != null:
+					btn.tooltip_text = _build_tooltip_for(def)
+					_push_log("[color=#f4d35e]★ Unlocked: %s[/color] — your reputation opened it up." %
+						def.display_name)
+		else:
+			_locked_build_ids[ent_id] = true
+			var node := ContentDB.get_unlock_node(node_id)
+			var req: int = node.reputation_required if node != null else 0
+			btn.tooltip_text = "Locked — unlocks at Reputation %d (now %d)." % [
+				req, ProgressionManager.reputation]
+	_refresh_affordability()
 
 
 func _build_cost_for(def_id: StringName) -> int:

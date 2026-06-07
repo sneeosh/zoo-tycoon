@@ -40,18 +40,25 @@ economic loop is live and honest:
 - Build regions from zone tiles → drop animals/infrastructure inside →
   appeal is computed from placements → visitors arrive, browse, buy
   food, leave with a satisfaction score → daily settlement closes books.
-- 5 animals, 4 zone kinds, 2 amenities, 1 visitor agent type with
-  hunger + trait-driven variation.
-- HUD covers save/load, financial reports, region management, hover
-  inspector, reputation, goals panel, welcome modal, mood bubbles.
+- 8 animals, 4 zone kinds, 6 amenities (food / drink / restroom / bench /
+  compost / restaurant) plus the arena, 1 visitor agent type with **four
+  needs** (hunger / thirst / restroom / energy, with an eat→restroom
+  spillover) + trait-driven variation.
+- Honest gate economy: **bracketed ticket pricing** with demand
+  elasticity, **per-exhibit donation boxes**, food/drink purchases, arena
+  show revenue, daily settlement.
+- HUD covers save/load, financial reports, region management with a
+  **0–100 suitability rating + always-on recommendation**, hover
+  inspector, reputation, goals panel, welcome modal, win/lose end-game,
+  and **need-aware guest mood bubbles**.
 
 **Strengths:** loop is real, art reads as a tycoon (not a debug
 harness), engine has held under feature pressure with no seam leaks.
 
-**Gaps that block a "real game" feeling:** no sound, no win condition,
-no failure state, no mobile input, no staff, single visitor archetype,
-single visitor need, no welfare/breeding, no time-of-day, no scenarios,
-no public build.
+**Gaps that block a "real game" feeling:** no sound, no mobile input, no
+staff, single visitor archetype, **paths-only guest movement still
+pending engine v0.6.x**, no welfare/breeding, no time-of-day, no
+scenarios.
 
 ---
 
@@ -185,6 +192,21 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Landed the Zoo Tycoon character pack (minus paths).**
+  Shipped adaptation-plan §6 commits 5–10 entirely in zoo code, engine
+  submodule untouched: four guest needs (hunger / thirst / restroom /
+  energy) with the eat→restroom spillover; bracketed ticket pricing with
+  demand elasticity; per-exhibit donation boxes; a 0–100 suitability
+  rating with an always-on "next most impactful" recommendation;
+  need-aware guest mood bubbles; and the Compost Building + reputation-
+  gated Restaurant capstone (which also switches on the engine's dormant
+  unlock machinery in the build UI). New game-side tuning lives in
+  `design/tuning/services.md`. **Paths-only guest movement (commits 1–4)
+  was deliberately not attempted** — it is gated on engine **v0.6.x** per
+  [`design/engine_seam_agent_navigation.md`](./design/engine_seam_agent_navigation.md)
+  and the engine submodule is read-only ([`CLAUDE.md`](./CLAUDE.md) §1);
+  it stays the top Zoo-Tycoon-flavored priority the moment that tag
+  lands. Smoke test 17/17.
 - **2026-06-06** — **Agent navigation on a constrained network is
   engine work, not zoo work.** Every tycoon on this engine needs
   network-walking agents (zoo paths, hospital corridors, mall

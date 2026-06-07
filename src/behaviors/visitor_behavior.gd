@@ -152,16 +152,115 @@ func _step_toward_target(agent: Agent) -> void:
 	var to_target := target_pos - agent.position
 	var dist := to_target.length()
 	if dist <= REACH_DISTANCE:
-		if agent.seeking_need == &"hunger":
-			var price := _value_model.compute_food_purchase(agent)
-			Ledger.post_income(price, "Food", inst.entity_def_id)
-			ZooBootstrap.money_floated.emit(price, agent.position)
-			agent.need_levels[agent.seeking_need] = 1.0
+		_satisfy_need_at(agent, inst)
 		agent.target_entity_id = 0
 		agent.seeking_need = &""
 		agent.behavior_state[STATE] = ST_BROWSING
 		return
 	agent.position += to_target.normalized() * _walking_speed(agent)
+
+
+# Player-facing money-float label per need. Defaults to a capitalized need
+# id so a new need without an entry still reads sensibly.
+const NEED_LABELS := {
+	&"hunger":   "Food",
+	&"thirst":   "Drink",
+	&"restroom": "Restroom",
+	&"energy":   "Rest",
+}
+
+
+# A guest reached a satisfier for `agent.seeking_need`. Charge the service
+# price(s), refill the need(s), and apply the eat→restroom spillover — the
+# original Zoo Tycoon twist where meeting one need worsens another.
+#
+# A single-need stand (food / drink / restroom / bench) refills just its one
+# need. A multi-need building — the Restaurant capstone, which satisfies all
+# four — is a one-stop shop: the guest "has a meal" and every need it serves
+# refills in one visit, charged only for the needs that were actually low.
+# That convenience (vs. four separate trips) is what justifies the
+# restaurant's cost and reputation gate. All pricing/spillover comes from
+# design/tuning/services.md via ServiceConfig.
+func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
+	var sought: StringName = agent.seeking_need
+	if sought == &"":
+		return
+	var def := inst.get_def()
+	if def == null:
+		return
+	var services: ServiceConfig = ZooBootstrap.services
+
+	# Needs this entity serves that the guest actually has. Always include the
+	# sought need even if the entity's `satisfies` list somehow omits it.
+	var to_refill: Array[StringName] = []
+	for need in def.satisfies:
+		if agent.need_levels.has(need) and need not in to_refill:
+			to_refill.append(need)
+	if sought not in to_refill and agent.need_levels.has(sought):
+		to_refill.append(sought)
+
+	var total_charge: int = 0
+	for need in to_refill:
+		var was_low: bool = float(agent.need_levels[need]) < 0.999
+		# Apply this need's spillover before refilling (a refilled spillover
+		# target below is then topped back up — the capstone benefit).
+		if services != null and was_low:
+			var spill: Array = services.spillover_for(need)
+			var spill_need: StringName = spill[0]
+			var spill_amt: float = spill[1]
+			if spill_need != &"" and agent.need_levels.has(spill_need):
+				agent.need_levels[spill_need] = maxf(
+					0.0, float(agent.need_levels[spill_need]) - spill_amt)
+			# Charge only for needs the guest actually needed topping up.
+			total_charge += services.price_for(need)
+
+	for need in to_refill:
+		agent.need_levels[need] = 1.0
+
+	if total_charge > 0:
+		var label: String = NEED_LABELS.get(sought, String(sought).capitalize())
+		if to_refill.size() > 1:
+			label = "Meal"
+		Ledger.post_income(total_charge, label,
+			services.source_for(sought) if services != null else sought)
+		ZooBootstrap.money_floated.emit(total_charge, agent.position)
+
+
+const DONATION_BOX_TAG := &"donation_box"
+
+
+# Roll for a tip when a guest settles in to watch an exhibit that has a
+# Donation Box. Amount scales with the guest's satisfaction and the exhibit's
+# strongest appeal axis — a happy crowd at a great pen tips best. All knobs
+# come from design/tuning/services.md via ServiceConfig.
+func _maybe_donate(agent: Agent, region: Region) -> void:
+	var services: ServiceConfig = ZooBootstrap.services
+	if services == null:
+		return
+	if agent.satisfaction < services.donation_min_satisfaction:
+		return
+	if not _region_has_donation_box(region):
+		return
+	if SimClock.rng.randf() >= services.donation_view_chance:
+		return
+	var appeal: Dictionary = EffectResolver.compute_region_appeal(region)
+	var appeal_max: float = 0.0
+	for v in appeal.values():
+		if v > appeal_max:
+			appeal_max = v
+	var amount: int = int(round(
+		float(services.donation_amount_max) * agent.satisfaction * appeal_max))
+	amount = maxi(1, amount)
+	ZooBootstrap.record_donation(region.region_id, amount)
+	ZooBootstrap.money_floated.emit(amount, agent.position)
+
+
+func _region_has_donation_box(region: Region) -> bool:
+	for placement: Placement in region.placements:
+		var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+		if def != null and DONATION_BOX_TAG in def.own_tags:
+			return true
+	return false
 
 
 func _step_browsing(agent: Agent) -> void:
@@ -189,6 +288,9 @@ func _step_browsing(agent: Agent) -> void:
 		if linger_until == 0:
 			agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
 				_linger_duration_for_region(agent, region)
+			# The guest has just settled in to watch this exhibit — the moment
+			# they might drop a coin in its Donation Box.
+			_maybe_donate(agent, region)
 		elif SimClock.current_tick >= linger_until:
 			_pick_browse_target(agent)
 			agent.behavior_state[LINGER_UNTIL] = 0

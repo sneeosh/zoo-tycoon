@@ -236,19 +236,32 @@ but we knowingly do something different:
 
 A short ordered list of the next ~10 commits, in order:
 
-1. Land **path zone kind** + grid paint + cost model. (Phase 1 / item 0)
-2. Land **path graph + A* visitor nav.** (Phase 1 / item 0)
-3. Land **N=10 viewing distance** rule for exhibit appeal. (Phase 1 /
-   item 0)
-4. Land **disconnected-exhibit warning** in the HUD. (Phase 1 / item 0)
-5. Land **4 guest needs** — extend hunger model to four meters with
-   spillover. (Phase 1 / item 3)
-6. Land **bracketed ticket pricing.** (Phase 1 / item 4)
-7. Land **per-exhibit donation box** + UI. (Phase 1 / item 5)
-8. Land **suitability rating + breakdown panel.** (Phase 1 / item 1)
-9. Land **guest mood bubbles** (extend animal system). (Phase 1 / item 7)
-10. Land **Compost Building + Restaurant capstone.** (Phase 1 / items
-    8, 9)
+1. **[BLOCKED on engine v0.6.x]** Land **path zone kind** + grid paint +
+   cost model. (Phase 1 / item 0)
+2. **[BLOCKED on engine v0.6.x]** Land **path graph + A\* visitor nav.**
+   (Phase 1 / item 0)
+3. **[BLOCKED on engine v0.6.x]** Land **N=10 viewing distance** rule for
+   exhibit appeal. (Phase 1 / item 0)
+4. **[BLOCKED on engine v0.6.x]** Land **disconnected-exhibit warning** in
+   the HUD. (Phase 1 / item 0)
+5. **[DONE 2026-06-07]** Land **4 guest needs** — extend hunger model to
+   four meters with spillover. (Phase 1 / item 3)
+6. **[DONE 2026-06-07]** Land **bracketed ticket pricing.** (Phase 1 / item 4)
+7. **[DONE 2026-06-07]** Land **per-exhibit donation box** + UI. (Phase 1 /
+   item 5)
+8. **[DONE 2026-06-07]** Land **suitability rating + breakdown panel.**
+   (Phase 1 / item 1)
+9. **[DONE 2026-06-07]** Land **guest mood bubbles** (extend animal
+   system). (Phase 1 / item 7)
+10. **[DONE 2026-06-07]** Land **Compost Building + Restaurant capstone.**
+    (Phase 1 / items 8, 9)
+
+> **Status 2026-06-07:** commits 5–10 shipped in zoo code with the engine
+> submodule untouched (see ROADMAP §6 decision log). Commits 1–4
+> (paths-only movement) are hard-gated on engine **v0.6.x** per §4 and
+> [`engine_seam_agent_navigation.md`](./engine_seam_agent_navigation.md);
+> they were deliberately deferred, not skipped. They are the first work to
+> pick up once the engine tag lands.
 
 After commit 10, re-evaluate. Phase 1's existing exit criteria
 (winnable session, ≥5 playtests, smoke test green) become the gate

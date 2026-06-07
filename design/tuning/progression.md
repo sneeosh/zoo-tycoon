@@ -15,3 +15,4 @@ into a region once they've built it.
 | --------- | ------------- | ------------- | ---- | ------------------- | ------------------------------------------------------------------ |
 | start     | Starting Park |               | 0    | 0                   | grass_patch,rock_patch,cage_panel,food_stand,restroom,visitor      |
 | expansion | Expansion     | start         | 0    | 10                  | water_patch                                                        |
+| dining    | Fine Dining   | start         | 0    | 25                  | restaurant                                                         |

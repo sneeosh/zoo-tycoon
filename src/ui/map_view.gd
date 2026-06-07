@@ -418,16 +418,42 @@ func _draw_one_visitor(ag: Agent) -> void:
 	_draw_visitor_mood(ag, pos)
 
 
-# Periodic mood bubble above a visitor's head. Cheap: cycles a glyph per
-# agent_id every ~3 seconds, only when satisfaction is high. This is what
-# makes the crowd feel reactive — a wave of hearts near a popular exhibit
-# tells the player "they like this" without a stats overlay.
+# Per-need mood bubble. An unmet need always wins — a colored chip with a
+# letter (H/T/R/Z) shows what the guest is missing, so a cluster of blue "T"
+# chips reads as "build a drink stand here" at a glance. A content guest with
+# no pressing need shows the old ♥/★/♪ delight. This is the cheapest
+# engagement win in the genre (adaptation plan §2 item 7) — the crowd
+# narrates the simulation without a stats overlay.
+const NEED_SHOW_THRESHOLD: float = 0.4
+const NEED_BUBBLES := {
+	&"hunger":   {"glyph": "H", "color": Color("#e27d60")},
+	&"thirst":   {"glyph": "T", "color": Color("#5aa9e6")},
+	&"restroom": {"glyph": "R", "color": Color("#41b3a3")},
+	&"energy":   {"glyph": "Z", "color": Color("#c9a4ff")},
+}
+
+
 func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
+	# Urgent need = the lowest need below the show threshold.
+	var urgent_id: StringName = &""
+	var lowest: float = NEED_SHOW_THRESHOLD
+	for need_id in ag.need_levels.keys():
+		var lvl: float = ag.need_levels[need_id]
+		if lvl < lowest:
+			lowest = lvl
+			urgent_id = need_id
+
+	var t := Time.get_ticks_msec() / 1000.0
+	if urgent_id != &"" and NEED_BUBBLES.has(urgent_id):
+		# Steady pulse so a needy guest is always legible (no on/off cycle).
+		var pulse: float = 0.6 + 0.4 * sin(t * 3.0 + float(ag.agent_id) * 0.7)
+		var spec: Dictionary = NEED_BUBBLES[urgent_id]
+		_draw_mood_chip(pos, spec["glyph"], spec["color"], pulse)
+		return
+
+	# Content guest: the old delight bubbles, cycling on/off per agent.
 	if ag.satisfaction < 0.75:
 		return
-	var t := Time.get_ticks_msec() / 1000.0
-	# Each agent has its own phase based on id; cycle = 3.0 s, bubble shows
-	# for the first 1.4 s of each cycle.
 	var phase := fmod(t + float(ag.agent_id) * 0.71, 3.0)
 	if phase > 1.4:
 		return
@@ -443,12 +469,27 @@ func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
 	var fs := 14
 	var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 	var origin := pos + Vector2(-sz.x * 0.5, -18.0 - rise)
-	# Subtle dark stroke under the bubble for legibility.
 	draw_string(font, origin + Vector2(1, 1), glyph,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 		Color(0, 0, 0, 0.40 * alpha))
 	draw_string(font, origin, glyph,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, bubble_color)
+
+
+# A small rounded "thought chip" above a visitor: a filled circle in the
+# need's color with a white letter, used for the urgent-need bubble.
+func _draw_mood_chip(pos: Vector2, glyph: String, color: Color, intensity: float) -> void:
+	var center := pos + Vector2(0.0, -20.0)
+	var r := 7.0
+	draw_circle(center + Vector2(0.5, 1.0), r, Color(0, 0, 0, 0.30 * intensity))
+	draw_circle(center, r, Color(color.r, color.g, color.b, 0.92 * intensity))
+	draw_arc(center, r, 0.0, TAU, 18,
+		Color(1, 1, 1, 0.55 * intensity), 1.0)
+	var font := get_theme_default_font()
+	var fs := 11
+	var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	draw_string(font, center - Vector2(sz.x * 0.5, -fs * 0.36), glyph,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, intensity))
 
 
 # ---------------------------------------------------------------------------

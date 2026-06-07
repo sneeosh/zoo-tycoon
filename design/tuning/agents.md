@@ -11,8 +11,11 @@
 ## Need specs
 
 | agent_id | need_id | initial_level | decay_rate_multiplier | threshold |
-| -------- | ------- | ------------- | --------------------- | --------- |
-| visitor  | hunger  | 1.0           | 1.0                   | 0.4       |
+| -------- | -------- | ------------- | --------------------- | --------- |
+| visitor  | hunger   | 1.0           | 1.0                   | 0.40      |
+| visitor  | thirst   | 1.0           | 1.0                   | 0.40      |
+| visitor  | restroom | 1.0           | 1.0                   | 0.45      |
+| visitor  | energy   | 1.0           | 1.0                   | 0.35      |
 
 ## Traits
 
