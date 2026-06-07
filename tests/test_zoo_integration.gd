@@ -59,6 +59,28 @@ func test_visitor_agent_type_loaded() -> void:
 	assert_true(need_ids.has(&"energy"), "energy need present")
 
 
+func test_difficulties_loaded_and_overlay() -> void:
+	var s := Scenario.load_from_tuning()
+	assert_eq(s.difficulties.size(), 3, "three difficulties")
+	assert_true(s.apply_difficulty(&"hard"), "hard overlay applies")
+	assert_eq(s.target_cash, 28000, "hard raises the cash bar")
+	assert_eq(s.days_limit, 24, "hard shortens the window")
+	assert_lt(s.demand_multiplier, 1.0, "hard thins the crowd")
+	assert_true(s.apply_difficulty(&"easy"))
+	assert_eq(s.starting_cash, 14000, "easy starts richer")
+	assert_false(s.apply_difficulty(&"unknown"), "unknown ids are ignored")
+
+
+func test_set_difficulty_resets_cash_and_targets() -> void:
+	ZooBootstrap.set_difficulty(&"easy")
+	assert_eq(ZooBootstrap.scenario.target_cash, 15000, "easy win bar applied")
+	assert_eq(Ledger.get_balance(), 14000, "easy opening cash applied")
+	# Restore Standard so later tests start from the default.
+	ZooBootstrap.set_difficulty(&"standard")
+	assert_eq(ZooBootstrap.scenario.target_cash, 20000)
+	assert_almost_eq(ZooBootstrap.scenario.demand_multiplier, 1.0, 0.001)
+
+
 func test_guest_archetypes_loaded() -> void:
 	# Four guest archetypes, each a full AgentType with the four needs and its
 	# own appeal preferences.

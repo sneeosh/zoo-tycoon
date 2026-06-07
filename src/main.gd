@@ -67,6 +67,10 @@ var _reports_body: VBoxContainer
 var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
 var _welcome_btn_row: HBoxContainer
+var _welcome_difficulty_label: Label
+var _welcome_difficulty_row: HBoxContainer
+var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
+var _selected_difficulty: StringName = &"standard"
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
 var _goals_state: Dictionary = {       # one-way: true once completed
@@ -77,6 +81,8 @@ var _goals_state: Dictionary = {       # one-way: true once completed
 	"day_3":      false,
 }
 # Mission HUD elements (filled in by _build_mission_section).
+var _mission_title: Label
+var _mission_subtitle: Label
 var _mission_cash_label: Label
 var _mission_rep_label: Label
 var _mission_days_label: Label
@@ -501,10 +507,10 @@ func _build_welcome_modal(parent: Control) -> void:
 
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.offset_left = -310
-	card.offset_top = -200
-	card.offset_right = 310
-	card.offset_bottom = 200
+	card.offset_left = -320
+	card.offset_top = -250
+	card.offset_right = 320
+	card.offset_bottom = 250
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_welcome_modal.add_child(card)
@@ -536,6 +542,18 @@ func _build_welcome_modal(parent: Control) -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
 
+	# Difficulty selector (first-launch only; hidden in help mode).
+	_welcome_difficulty_label = Label.new()
+	_welcome_difficulty_label.text = "Difficulty"
+	_welcome_difficulty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_difficulty_label.add_theme_font_size_override("font_size", 12)
+	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#7e9286"))
+	col.add_child(_welcome_difficulty_label)
+	_welcome_difficulty_row = HBoxContainer.new()
+	_welcome_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_welcome_difficulty_row.add_theme_constant_override("separation", 8)
+	col.add_child(_welcome_difficulty_row)
+
 	_welcome_btn_row = HBoxContainer.new()
 	_welcome_btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_welcome_btn_row.add_theme_constant_override("separation", 12)
@@ -544,7 +562,26 @@ func _build_welcome_modal(parent: Control) -> void:
 	# launch — tutorial vs skip) or info-mode (the "?" help button — close).
 
 
+func _on_pick_difficulty(id: StringName) -> void:
+	_selected_difficulty = id
+	_refresh_welcome_difficulty()
+
+
+func _refresh_welcome_difficulty() -> void:
+	for id in _welcome_difficulty_buttons.keys():
+		var btn: Button = _welcome_difficulty_buttons[id]
+		var active: bool = id == _selected_difficulty
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.set_corner_radius_all(4)
+		style.set_content_margin_all(6)
+		btn.add_theme_stylebox_override("normal", style)
+		btn.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#e6e6e6"))
+
+
 func _on_welcome_start_tutorial() -> void:
+	ZooBootstrap.set_difficulty(_selected_difficulty)
 	_welcome_modal.visible = false
 	_start_tutorial()
 	SimClock.play()
@@ -552,6 +589,7 @@ func _on_welcome_start_tutorial() -> void:
 
 
 func _on_welcome_skip_tutorial() -> void:
+	ZooBootstrap.set_difficulty(_selected_difficulty)
 	_welcome_modal.visible = false
 	_stage_starter_park()
 	SimClock.play()
@@ -1322,6 +1360,27 @@ func _close_welcome() -> void:
 func _render_welcome_buttons(initial_launch: bool) -> void:
 	for child in _welcome_btn_row.get_children():
 		child.queue_free()
+	# Difficulty selector — only on first launch (not the "?" help re-open).
+	_welcome_difficulty_label.visible = initial_launch
+	_welcome_difficulty_row.visible = initial_launch
+	for child in _welcome_difficulty_row.get_children():
+		child.queue_free()
+	_welcome_difficulty_buttons.clear()
+	if initial_launch and ZooBootstrap.scenario != null:
+		for d in ZooBootstrap.scenario.difficulties:
+			var id: StringName = d["id"]
+			var btn := Button.new()
+			btn.text = "  %s  " % d["label"]
+			btn.custom_minimum_size = Vector2(0, 34)
+			btn.focus_mode = Control.FOCUS_NONE
+			btn.tooltip_text = "$%s start · reach $%s + %d rep in %d days" % [
+				_format_thousands(int(d["starting_cash"])),
+				_format_thousands(int(d["target_cash"])),
+				int(d["target_reputation"]), int(d["days_limit"])]
+			btn.pressed.connect(_on_pick_difficulty.bind(id))
+			_welcome_difficulty_row.add_child(btn)
+			_welcome_difficulty_buttons[id] = btn
+		_refresh_welcome_difficulty()
 	if initial_launch:
 		var tutorial_btn := Button.new()
 		tutorial_btn.text = "  Start tutorial  "
@@ -1360,25 +1419,38 @@ const GOAL_SPECS: Array = [
 
 func _build_mission_section(col: VBoxContainer) -> void:
 	col.add_child(HSeparator.new())
-	var title := Label.new()
-	title.text = "MISSION"
-	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color("#f4d35e"))
-	col.add_child(title)
+	_mission_title = Label.new()
+	_mission_title.add_theme_font_size_override("font_size", 12)
+	_mission_title.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(_mission_title)
 
-	var s: Scenario = ZooBootstrap.scenario
-	var subtitle := Label.new()
-	subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
-		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
-	subtitle.add_theme_font_size_override("font_size", 11)
-	subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
-	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(subtitle)
+	_mission_subtitle = Label.new()
+	_mission_subtitle.add_theme_font_size_override("font_size", 11)
+	_mission_subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
+	_mission_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_mission_subtitle)
+	_refresh_mission_targets()
 
 	# Three live progress rows. Bound in _refresh_mission.
 	_mission_cash_label = _make_mission_row(col)
 	_mission_rep_label = _make_mission_row(col)
 	_mission_days_label = _make_mission_row(col)
+
+
+# Mission header + target line — refreshed when the difficulty (and thus the
+# win bar) changes.
+func _refresh_mission_targets() -> void:
+	if _mission_title == null:
+		return
+	var s: Scenario = ZooBootstrap.scenario
+	var diff_label := String(s.difficulty).capitalize()
+	for d in s.difficulties:
+		if d["id"] == s.difficulty:
+			diff_label = d["label"]
+			break
+	_mission_title.text = "MISSION  ·  %s" % diff_label
+	_mission_subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
+		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
 
 
 func _make_mission_row(col: VBoxContainer) -> Label:
@@ -2306,6 +2378,9 @@ func _wire_engine_signals() -> void:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
 		else:
 			_push_log("[color=#7e9286]🌙 The park closes for the evening — no new guests until morning.[/color]"))
+	ZooBootstrap.difficulty_changed.connect(func(_id: StringName):
+		_refresh_mission_targets()
+		_refresh_hud())
 	ZooBootstrap.weather_changed.connect(func(wid: StringName, _sid: StringName):
 		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(wid)
 		var verb := "is pulling a crowd" if float(wx.get("mult", 1.0)) >= 1.0 else "is keeping guests home"

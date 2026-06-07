@@ -313,8 +313,23 @@ func current_demand_multiplier() -> float:
 # the engine's per-day satisfaction→spawn multiplier.
 func _apply_spawn_rate() -> void:
 	var open := park_open and is_within_open_hours()
+	var difficulty_demand: float = scenario.demand_multiplier if scenario != null else 1.0
 	AgentPool.base_spawn_rate = (_default_base_spawn_rate
-		* current_demand_multiplier() * environment_multiplier()) if open else 0.0
+		* current_demand_multiplier() * environment_multiplier()
+		* difficulty_demand) if open else 0.0
+
+
+# Apply a difficulty overlay (roadmap 2.6) — overrides the win bar, resets the
+# opening cash, and scales guest demand. Intended for a new game (called from
+# the welcome screen); resetting cash mid-run would wipe the player's money.
+signal difficulty_changed(id: StringName)
+
+func set_difficulty(id: StringName) -> void:
+	if scenario == null or not scenario.apply_difficulty(id):
+		return
+	Ledger.reset(scenario.starting_cash)
+	_apply_spawn_rate()
+	difficulty_changed.emit(id)
 
 
 # Current season's record (id/label/mult) from the day count.
