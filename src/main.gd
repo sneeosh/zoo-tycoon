@@ -30,6 +30,12 @@ const ENTITY_COLORS := {
 	&"arena":       Color("#a86a32"),
 }
 
+const WEATHER_ICONS := {
+	&"sunny":  "☀",
+	&"cloudy": "☁",
+	&"rainy":  "☂",
+}
+
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
 var _map_view: MapView
@@ -41,6 +47,7 @@ var _day_label: Label
 var _quality_label: Label
 var _reputation_label: Label
 var _agents_label: Label
+var _weather_label: Label
 var _yesterday_label: Label
 var _fps_label: Label
 var _log_text: RichTextLabel
@@ -1950,6 +1957,7 @@ func _build_top_bar(parent: Control) -> void:
 	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
 	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
 	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
+	_weather_label = _stat("", 14, Color("#a8c4b0"))
 	_yesterday_label = _stat("", 12, Color("#7e9286"))
 	_fps_label = _stat("", 11, Color("#5b6f63"))
 	row.add_child(_money_label)
@@ -1958,6 +1966,8 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_child(_quality_label)
 	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
+	row.add_child(_v_sep())
+	row.add_child(_weather_label)
 	row.add_child(_v_sep())
 	row.add_child(_yesterday_label)
 	row.add_child(_v_sep())
@@ -2296,6 +2306,10 @@ func _wire_engine_signals() -> void:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
 		else:
 			_push_log("[color=#7e9286]🌙 The park closes for the evening — no new guests until morning.[/color]"))
+	ZooBootstrap.weather_changed.connect(func(wid: StringName, _sid: StringName):
+		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(wid)
+		var verb := "is pulling a crowd" if float(wx.get("mult", 1.0)) >= 1.0 else "is keeping guests home"
+		_push_log("[color=#a8c4b0]%s weather %s today.[/color]" % [wx.get("label", "Mild"), verb]))
 
 
 func _stage_starter_park() -> void:
@@ -2388,6 +2402,12 @@ func _refresh_hud() -> void:
 	_reputation_label.text = "Rep %+d" % rep
 	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	if _weather_label != null and ZooBootstrap.weather_cfg != null:
+		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(ZooBootstrap.current_weather)
+		var season: Dictionary = ZooBootstrap.current_season()
+		_weather_label.text = "%s %s · %s" % [
+			WEATHER_ICONS.get(ZooBootstrap.current_weather, ""),
+			wx.get("label", ""), season.get("label", "")]
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
 		breakdown["income"], breakdown["expense"], breakdown["net"]]
 	_fps_label.text = "%d fps" % Engine.get_frames_per_second()

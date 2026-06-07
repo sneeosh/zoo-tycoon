@@ -127,7 +127,10 @@ func test_ticket_brackets_loaded() -> void:
 
 func test_ticket_bracket_drives_entry_fee_and_demand() -> void:
 	# Switching brackets on the live bootstrap sets the entry fee and scales
-	# the park's base spawn rate by the bracket's demand multiplier.
+	# the park's base spawn rate by the bracket's demand multiplier. Pin a
+	# neutral environment (cloudy × spring = 1.0) so weather doesn't skew it.
+	ZooBootstrap.current_weather = &"cloudy"
+	SimClock.current_day = 0
 	var base := ZooBootstrap._default_base_spawn_rate
 	ZooBootstrap.set_ticket_bracket(&"budget")
 	assert_eq(ZooBootstrap.entry_fee, 5, "budget gate fee is $5")
@@ -501,6 +504,33 @@ func test_keeper_headcount_is_capped() -> void:
 	assert_eq(ZooBootstrap.hired_keepers, ZooBootstrap.staff.max_keepers,
 		"headcount is capped at max_keepers")
 	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_weather_and_seasons_loaded() -> void:
+	var wc := WeatherConfig.load_from_tuning()
+	assert_eq(wc.seasons.size(), 4, "four seasons")
+	assert_eq(wc.weathers.size(), 3, "three weather states")
+	# Seasons cycle by day.
+	assert_eq(wc.season_for_day(0)["id"], &"spring", "day 0 is spring")
+	assert_eq(wc.season_for_day(wc.days_per_season)["id"], &"summer", "next block is summer")
+	# Rainy thins the crowd vs sunny.
+	assert_lt(float(wc.weather_by_id(&"rainy")["mult"]),
+		float(wc.weather_by_id(&"sunny")["mult"]), "rain < sun for demand")
+
+
+func test_environment_multiplier_scales_spawn() -> void:
+	# Weather × season feeds into the gate spawn rate.
+	SimClock.current_tick = 0
+	SimClock.current_day = 0   # spring (1.0)
+	ZooBootstrap.current_weather = &"rainy"   # 0.7
+	ZooBootstrap._apply_spawn_rate()
+	var rainy_rate := AgentPool.base_spawn_rate
+	ZooBootstrap.current_weather = &"sunny"   # 1.15
+	ZooBootstrap._apply_spawn_rate()
+	assert_gt(AgentPool.base_spawn_rate, rainy_rate, "sunny draws more than rainy")
+	# Restore a neutral-ish state for later tests.
+	ZooBootstrap.current_weather = &"cloudy"
+	ZooBootstrap._apply_spawn_rate()
 
 
 func test_full_day_runs_end_to_end() -> void:

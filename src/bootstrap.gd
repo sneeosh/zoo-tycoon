@@ -48,6 +48,11 @@ var staff: StaffConfig
 var hired_keepers: int = 0
 signal staff_changed(hired: int)
 
+# Weather + seasons (roadmap 3.6). Re-rolled each day; scales guest demand.
+var weather_cfg: WeatherConfig
+var current_weather: StringName = &""
+signal weather_changed(weather_id: StringName, season_id: StringName)
+
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
 # Exhibit panel. Not persisted (resets on load — it's a session tally).
@@ -133,8 +138,13 @@ func _ready() -> void:
 	welfare = WelfareConfig.load_from_tuning()
 	breeding = BreedingConfig.load_from_tuning()
 	staff = StaffConfig.load_from_tuning()
+	weather_cfg = WeatherConfig.load_from_tuning()
 	donations_by_region.clear()
 	hired_keepers = 0
+	# Seed today's weather, then re-roll each new day.
+	if weather_cfg != null and not weather_cfg.weathers.is_empty():
+		current_weather = weather_cfg.pick_weather(SimClock.rng)
+	EventBus.day_ended.connect(_roll_weather)
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
 	# then aging/breeding — so the day's survivors age and breed. A death's
@@ -304,7 +314,32 @@ func current_demand_multiplier() -> float:
 func _apply_spawn_rate() -> void:
 	var open := park_open and is_within_open_hours()
 	AgentPool.base_spawn_rate = (_default_base_spawn_rate
-		* current_demand_multiplier()) if open else 0.0
+		* current_demand_multiplier() * environment_multiplier()) if open else 0.0
+
+
+# Current season's record (id/label/mult) from the day count.
+func current_season() -> Dictionary:
+	if weather_cfg == null:
+		return {"id": &"", "label": "", "mult": 1.0}
+	return weather_cfg.season_for_day(SimClock.current_day)
+
+
+# Combined weather × season demand multiplier (1.0 if weather isn't loaded).
+func environment_multiplier() -> float:
+	if weather_cfg == null:
+		return 1.0
+	var wm: float = float(weather_cfg.weather_by_id(current_weather).get("mult", 1.0))
+	var sm: float = float(current_season().get("mult", 1.0))
+	return wm * sm
+
+
+# Re-roll the weather for the day that just started, then re-apply demand.
+func _roll_weather(_day: int) -> void:
+	if weather_cfg == null or weather_cfg.weathers.is_empty():
+		return
+	current_weather = weather_cfg.pick_weather(SimClock.rng)
+	_apply_spawn_rate()
+	weather_changed.emit(current_weather, current_season().get("id", &""))
 
 
 # Fraction of the current day elapsed, in [0,1) — derived from SimClock.
