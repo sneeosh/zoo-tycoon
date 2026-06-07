@@ -664,19 +664,96 @@ func _sprite_anchor(name: String) -> Dictionary:
 	return meta
 
 
+# Per-archetype tint + sprite, mirroring MapView so the iso crowd reads the
+# same way (filled halo = mood, ring = archetype, chip = unmet need).
+const ARCH_COLORS := {
+	&"visitor": Color("#dfe6df"), &"child": Color("#f4a261"),
+	&"family": Color("#83c779"), &"enthusiast": Color("#c9a4ff")}
+const ARCH_SPRITE := {
+	&"visitor": "visitor", &"child": "visitor_child",
+	&"family": "visitor_family", &"enthusiast": "visitor_enthusiast"}
+const NEED_SHOW_THRESHOLD := 0.4
+const NEED_BUBBLES := {
+	&"hunger":   {"glyph": "H", "color": Color("#e27d60")},
+	&"thirst":   {"glyph": "T", "color": Color("#5aa9e6")},
+	&"restroom": {"glyph": "R", "color": Color("#41b3a3")},
+	&"energy":   {"glyph": "Z", "color": Color("#c9a4ff")}}
+
+
 func _draw_guest(ag: Agent) -> void:
 	var base := _tile_center(ag.position.x, ag.position.y)
+	# Ground shadow (squashed; stays put while the body bobs).
 	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1, 0), Vector2(0, 0.5), base))
 	draw_circle(Vector2.ZERO, 6.0, Color(0, 0, 0, 0.25))
 	draw_set_transform_matrix(_view_xf)
-	var palette := {
-		&"child": Color("#f4a261"), &"family": Color("#83c779"),
-		&"enthusiast": Color("#c9a4ff")}
-	var col: Color = palette.get(ag.agent_type_id, Color("#e6ddc8"))
-	# A little capsule body.
-	draw_circle(base + Vector2(0, -10), 5.0, col)
-	draw_rect(Rect2(base + Vector2(-4, -10), Vector2(8, 10)), col, true)
-	draw_circle(base + Vector2(0, -16), 3.5, Color("#e8c9a0"))
+	var bob := sin(_time * 4.2 + float(ag.agent_id) * 0.83) * 1.2
+	var body := base + Vector2(0, -12.0 + bob)
+	var sat := _satisfaction_color(ag.satisfaction)
+	var arch: Color = ARCH_COLORS.get(ag.agent_type_id, Color("#dfe6df"))
+	# Filled halo = mood; crisp ring = archetype.
+	draw_circle(body, 9.0, Color(sat.r, sat.g, sat.b, 0.38))
+	draw_arc(body, 11.0, 0.0, TAU, 24, arch, 2.0)
+	var sprite := _sprite(ARCH_SPRITE.get(ag.agent_type_id, "visitor"))
+	if sprite != null:
+		var ss := Vector2(26, 26)
+		draw_texture_rect(sprite, Rect2(body - ss * 0.5, ss), false)
+	else:
+		draw_circle(body, 6.0, arch)
+		draw_circle(body + Vector2(-2, -2), 2.0, Color(1, 1, 1, 0.5))
+	_draw_visitor_mood(ag, body)
+
+
+func _satisfaction_color(s: float) -> Color:
+	if s < 0.5:
+		return Color("#e76f51").lerp(Color("#f4a261"), s * 2.0)
+	return Color("#f4a261").lerp(Color("#83c779"), (s - 0.5) * 2.0)
+
+
+# Per-need mood bubble: an unmet need wins (colored H/T/R/Z chip); a content
+# guest shows cycling ♥/★/♪ delight. Same model as MapView — the crowd
+# narrates the sim without a stats overlay.
+func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
+	var urgent_id: StringName = &""
+	var lowest := NEED_SHOW_THRESHOLD
+	for need_id in ag.need_levels.keys():
+		var lvl: float = ag.need_levels[need_id]
+		if lvl < lowest:
+			lowest = lvl
+			urgent_id = need_id
+	var t := Time.get_ticks_msec() / 1000.0
+	if urgent_id != &"" and NEED_BUBBLES.has(urgent_id):
+		var pulse := 0.6 + 0.4 * sin(t * 3.0 + float(ag.agent_id) * 0.7)
+		var spec: Dictionary = NEED_BUBBLES[urgent_id]
+		_draw_mood_chip(pos, spec["glyph"], spec["color"], pulse)
+		return
+	if ag.satisfaction < 0.75:
+		return
+	var phase := fmod(t + float(ag.agent_id) * 0.71, 3.0)
+	if phase > 1.4:
+		return
+	var glyphs := ["♥", "★", "♪"]
+	var glyph: String = glyphs[ag.agent_id % glyphs.size()]
+	var alpha: float = sin(phase / 1.4 * PI)
+	var rise: float = lerpf(0.0, 6.0, phase / 1.4)
+	var bubble_color := Color(1.0, 0.55, 0.6, alpha) if glyph == "♥" \
+		else (Color(0.96, 0.83, 0.37, alpha) if glyph == "★" else Color(0.7, 0.85, 0.95, alpha))
+	var font := get_theme_default_font()
+	var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+	var o := pos + Vector2(-sz.x * 0.5, -18.0 - rise)
+	draw_string(font, o + Vector2(1, 1), glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0, 0, 0, 0.40 * alpha))
+	draw_string(font, o, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, bubble_color)
+
+
+func _draw_mood_chip(pos: Vector2, glyph: String, color: Color, intensity: float) -> void:
+	var center := pos + Vector2(0.0, -20.0)
+	var r := 7.0
+	draw_circle(center + Vector2(0.5, 1.0), r, Color(0, 0, 0, 0.30 * intensity))
+	draw_circle(center, r, Color(color.r, color.g, color.b, 0.92 * intensity))
+	draw_arc(center, r, 0.0, TAU, 18, Color(1, 1, 1, 0.55 * intensity), 1.0)
+	var font := get_theme_default_font()
+	var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+	draw_string(font, center - Vector2(sz.x * 0.5, -11 * 0.36), glyph,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, intensity))
 
 
 func _sprite(name: String) -> Texture2D:
