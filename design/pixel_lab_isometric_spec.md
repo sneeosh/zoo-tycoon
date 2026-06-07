@@ -91,15 +91,21 @@ prototype.
       draws footprint diamonds (entities) / region highlight (placeables) + a
       hover outline. Both views now share `BaseMapView`, so `main.gd` drives
       them through one path. (`tests/test_iso_view.gd`.)
-- [x] **Day/night tint** and the **"no path access" ⚠ warning** ported.
-- [ ] **Remaining visual ports:** hover inspector card, water shimmer, guest
-      mood bubbles, money-float toasts, sick ✚ marker, weather overlay, pen
-      ground-cover detailing.
-- [ ] **Camera/zoom:** origin + scale are fixed constants; needs a fit-to-view
-      (and ideally pan/zoom) pass, plus depth-sort tie-break tuning.
+- [x] **Camera:** fit-to-view on resize, mouse-wheel zoom about the cursor,
+      middle-drag pan — one view `Transform2D`, projection math untouched.
+      (Cursor-anchored zoom is tested.)
+- [x] **Visual ports done:** day/night tint, "no path access" ⚠ warning,
+      water shimmer, money-float toasts, sick ✚ marker.
+- [ ] **Visual ports remaining:** guest mood bubbles (the big one — need
+      legibility), hover inspector card, weather overlay.
+- [ ] **Depth-sort tie-breaks** for edge cases (object vs. fence on the same
+      cell) could use tuning.
 - [ ] **Textured ground** stays optional — procedural ground already reads
       cleanly with no grid; only swap in tiles if they're seamless and a clear
       upgrade (drop-in).
+
+Once mood bubbles + the hover inspector land, iso is at functional parity with
+top-down and the `TYCOON_ISO` flag could become a player-facing toggle.
 
 None of this touches the simulation — it's all in the view layer. Estimate:
 the inverse-projection + interaction is the main chunk; the rest is porting
