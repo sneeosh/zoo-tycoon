@@ -56,18 +56,25 @@ func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
 		draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), edge, 1.0)
 
 
+# Draw a 64×32 isometric ground tile texture at cell (gx,gy). Falls back to a
+# flat diamond if the texture is missing.
+func _draw_tile_tex(gx: int, gy: int, tex_name: String) -> void:
+	var tex := _iso_tex(tex_name)
+	if tex == null:
+		_draw_diamond(gx, gy, Color("#3c5e36"), Color(0, 0, 0, 0.07))
+		return
+	draw_texture_rect(tex, Rect2(_project(gx, gy) - Vector2(TW * 0.5, 0),
+		Vector2(TW, TH)), false)
+
+
+func _iso_tex(name: String) -> Texture2D:
+	return _sprite(name)
+
+
 func _draw_ground() -> void:
 	for gx in GROUND_W:
 		for gy in GROUND_H:
-			var checker := (gx + gy) % 2 == 0
-			var base := Color("#3c5e36") if checker else Color("#42683b")
-			# A little hashed tonal noise for texture.
-			var h := _hash2(gx, gy)
-			if h % 7 == 0:
-				base = base.lightened(0.06)
-			elif h % 11 == 0:
-				base = base.darkened(0.06)
-			_draw_diamond(gx, gy, base, Color(0, 0, 0, 0.07))
+			_draw_tile_tex(gx, gy, "iso_grass")
 
 
 func _region_tint(region: Region) -> Color:
@@ -82,11 +89,21 @@ func _region_tint(region: Region) -> Color:
 	return Color("#8a8a8a")
 
 
+func _region_tile(region: Region) -> String:
+	if &"water" in region.provided_zone_tags:
+		return "iso_water"
+	if &"rocks" in region.provided_zone_tags:
+		return "iso_rock"
+	if &"tall_cage" in region.provided_zone_tags:
+		return "iso_dirt"
+	return "iso_dirt"   # enclosure floor reads distinct from parkland grass
+
+
 func _draw_region_fills() -> void:
 	for region: Region in RegionRegistry.all_regions():
-		var tint := _region_tint(region)
+		var tile := _region_tile(region)
 		for c in region.cells:
-			_draw_diamond(c.x, c.y, Color(tint.r, tint.g, tint.b, 0.85), Color(0, 0, 0, 0.10))
+			_draw_tile_tex(c.x, c.y, tile)
 
 
 # Build one depth-sorted list of everything that has height — perimeter fence
@@ -113,8 +130,7 @@ func _draw_sorted_objects() -> void:
 		if def == null:
 			continue
 		if def.walkable:
-			# Render path tiles as a pale ground diamond.
-			_draw_diamond(inst.position.x, inst.position.y, Color("#c4b487"), Color(0, 0, 0, 0.1))
+			_draw_tile_tex(inst.position.x, inst.position.y, "iso_path")
 			continue
 		if def.zone_kind != &"":
 			continue   # zone tiles are GROUND (drawn as region-fill diamonds), not billboards

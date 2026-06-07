@@ -46,6 +46,13 @@ const ARCHETYPE_COLORS := {
 	&"family":     Color("#83c779"),   # Family — green
 	&"enthusiast": Color("#c9a4ff"),   # Enthusiast — purple
 }
+# Dedicated per-archetype sprite (falls back to the generic visitor art).
+const ARCHETYPE_SPRITE := {
+	&"visitor":    "visitor",
+	&"child":      "visitor_child",
+	&"family":     "visitor_family",
+	&"enthusiast": "visitor_enthusiast",
+}
 
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
@@ -532,12 +539,13 @@ func _draw_one_visitor(ag: Agent) -> void:
 	draw_circle(pos, 10.0, Color(sat_color.r, sat_color.g, sat_color.b, 0.40))
 	draw_arc(pos, 12.0, 0.0, TAU, 26, arch_color, 2.2)
 
-	if _visitor_sprite != null:
-		# Bigger sprite so visitors read clearly from across the map; tinted by
-		# archetype so families/children/enthusiasts are distinguishable.
+	var sprite: Texture2D = _load_sprite_optional(
+		ARCHETYPE_SPRITE.get(ag.agent_type_id, "visitor"))
+	if sprite != null:
+		# Dedicated per-archetype art; the ring above still cues the type.
 		var sprite_size := Vector2(28, 28)
 		var sprite_rect := Rect2(pos - sprite_size * 0.5, sprite_size)
-		draw_texture_rect(_visitor_sprite, sprite_rect, false, arch_color)
+		draw_texture_rect(sprite, sprite_rect, false)
 	else:
 		# Fallback: archetype-colored circle visitor.
 		draw_circle(pos, 8.0, arch_color)
