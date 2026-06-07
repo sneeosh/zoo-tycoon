@@ -28,10 +28,12 @@ var scenario: Scenario
 var services: ServiceConfig
 
 # Park-admin state. Editable via the entrance-gate admin modal.
-# entry_fee is what new visitors pay on arrival; park_open gates the
-# AgentPool spawn loop (sets base_spawn_rate to 0 when closed so the
-# engine still runs but doesn't admit guests).
+# entry_fee is what new visitors pay on arrival (derived from the selected
+# ticket bracket); park_open gates the AgentPool spawn loop (sets
+# base_spawn_rate to 0 when closed so the engine still runs but doesn't admit
+# guests).
 var entry_fee: int = 10
+var ticket_bracket: StringName = &"standard"
 var park_open: bool = true
 var _default_base_spawn_rate: float = 0.5
 
@@ -92,9 +94,14 @@ func _ready() -> void:
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
 
-	# Cache the engine's default spawn rate so the open/closed toggle can
-	# restore it later. ContentDB has already applied balance.md by now.
+	# Cache the engine's default spawn rate so the open/closed toggle and
+	# ticket-bracket elasticity can scale from it. ContentDB has already
+	# applied balance.md by now.
 	_default_base_spawn_rate = AgentPool.base_spawn_rate
+
+	# Start on the bracket marked default in services.md (Standard / $10).
+	if services != null and services.default_bracket != &"":
+		set_ticket_bracket(services.default_bracket)
 
 	Accounting.register_category(&"arena_show", Accounting.Category.REVENUE)
 
@@ -208,13 +215,39 @@ func _on_entity_removed_for_arena(instance_id: int) -> void:
 
 func set_park_open(open: bool) -> void:
 	park_open = open
-	AgentPool.base_spawn_rate = _default_base_spawn_rate if open else 0.0
+	_apply_spawn_rate()
 	admin_changed.emit()
 
 
-func set_entry_fee(fee: int) -> void:
-	entry_fee = clampi(fee, 0, 1000)
+# Switch the gate to a named bracket from services.md. Sets the entry fee and
+# re-applies demand elasticity. Unknown ids are ignored (keeps current).
+func set_ticket_bracket(id: StringName) -> void:
+	if services == null:
+		return
+	var b: Dictionary = services.bracket(id)
+	if b.is_empty():
+		push_warning("[zoo] unknown ticket bracket '%s'" % id)
+		return
+	ticket_bracket = id
+	entry_fee = int(b["price"])
+	_apply_spawn_rate()
 	admin_changed.emit()
+
+
+# Demand multiplier of the currently-selected bracket (1.0 if unknown).
+func current_demand_multiplier() -> float:
+	if services == null:
+		return 1.0
+	var b: Dictionary = services.bracket(ticket_bracket)
+	return float(b.get("demand_multiplier", 1.0)) if not b.is_empty() else 1.0
+
+
+# base_spawn_rate = engine default × bracket demand elasticity, gated to 0
+# when the park is closed. Composes with the engine's per-day
+# satisfaction→spawn multiplier (AgentPool.current_spawn_multiplier).
+func _apply_spawn_rate() -> void:
+	AgentPool.base_spawn_rate = (_default_base_spawn_rate
+		* current_demand_multiplier()) if park_open else 0.0
 
 
 # Convenience for game UI to read the zoo's quality rating without

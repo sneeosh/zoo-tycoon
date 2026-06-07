@@ -15,6 +15,12 @@ const TUNING_PATH := "res://design/tuning/services.md"
 #                          spillover_need:StringName, spillover_amount:float}
 var by_need: Dictionary = {}
 
+# Ordered list of ticket brackets, cheapest first. Each entry:
+#   {id:StringName, label:String, price:int, demand_multiplier:float}
+var ticket_brackets: Array = []
+# id of the bracket a new park starts on (the row marked default = true).
+var default_bracket: StringName = &""
+
 
 static func load_from_tuning() -> ServiceConfig:
 	var sc := ServiceConfig.new()
@@ -37,7 +43,40 @@ static func load_from_tuning() -> ServiceConfig:
 			"spillover_need": StringName(String(row.get("spillover_need", "")).strip_edges()),
 			"spillover_amount": _to_float(row.get("spillover_amount", "0")),
 		}
+
+	sc._load_ticket_brackets(parsed)
 	return sc
+
+
+func _load_ticket_brackets(parsed: Dictionary) -> void:
+	var section: Dictionary = parsed["sections"].get("Ticket brackets", {})
+	var tables: Array = section.get("tables", [])
+	if tables.is_empty():
+		push_error("[services] missing ## Ticket brackets table in %s" % TUNING_PATH)
+		return
+	var table: Dictionary = tables[0]
+	for row: Dictionary in table["rows"]:
+		var id := StringName(String(row.get("id", "")).strip_edges())
+		if id == &"":
+			continue
+		ticket_brackets.append({
+			"id": id,
+			"label": String(row.get("label", String(id))).strip_edges(),
+			"price": _to_int(row.get("price", "0")),
+			"demand_multiplier": _to_float(row.get("demand_multiplier", "1")),
+		})
+		if String(row.get("default", "")).strip_edges().to_lower() == "true":
+			default_bracket = id
+	if default_bracket == &"" and not ticket_brackets.is_empty():
+		default_bracket = ticket_brackets[0]["id"]
+
+
+# Look up a bracket dict by id, or {} if absent.
+func bracket(id: StringName) -> Dictionary:
+	for b in ticket_brackets:
+		if b["id"] == id:
+			return b
+	return {}
 
 
 # Cash charged when a guest satisfies `need_id`. Unknown need → 0 (free).

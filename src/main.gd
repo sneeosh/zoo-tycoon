@@ -66,7 +66,9 @@ var _endgame_title: Label
 var _endgame_body: VBoxContainer
 var _endgame_resolved: bool = false    # idempotent: only fire end-game once
 var _admin_modal: Control
-var _admin_fee_value: Label
+var _admin_bracket_row: HBoxContainer
+var _admin_bracket_buttons: Dictionary = {}   # bracket id (StringName) -> Button
+var _admin_fee_caption: Label
 var _admin_open_label: Label
 var _arena_modal: Control
 var _arena_body: VBoxContainer
@@ -864,41 +866,35 @@ func _build_admin_modal(parent: Control) -> void:
 	close_btn.pressed.connect(_close_admin_modal)
 	header.add_child(close_btn)
 
-	# Entry-fee row: label + -/+ buttons.
-	var fee_row := HBoxContainer.new()
-	fee_row.add_theme_constant_override("separation", 10)
-	col.add_child(fee_row)
-	var fee_label := Label.new()
-	fee_label.text = "Entry fee"
-	fee_label.add_theme_font_size_override("font_size", 14)
-	fee_label.add_theme_color_override("font_color", Color("#cdd6cf"))
-	fee_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fee_row.add_child(fee_label)
-	var minus := Button.new()
-	minus.text = "−"
-	minus.custom_minimum_size = Vector2(36, 32)
-	minus.focus_mode = Control.FOCUS_NONE
-	minus.pressed.connect(func(): _bump_entry_fee(-5))
-	fee_row.add_child(minus)
-	_admin_fee_value = Label.new()
-	_admin_fee_value.custom_minimum_size = Vector2(70, 0)
-	_admin_fee_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_admin_fee_value.add_theme_font_size_override("font_size", 16)
-	_admin_fee_value.add_theme_color_override("font_color", Color("#f4d35e"))
-	fee_row.add_child(_admin_fee_value)
-	var plus := Button.new()
-	plus.text = "+"
-	plus.custom_minimum_size = Vector2(36, 32)
-	plus.focus_mode = Control.FOCUS_NONE
-	plus.pressed.connect(func(): _bump_entry_fee(5))
-	fee_row.add_child(plus)
+	# Ticket-bracket selector — a button per bracket from services.md.
+	var ticket_label := Label.new()
+	ticket_label.text = "Ticket price"
+	ticket_label.add_theme_font_size_override("font_size", 14)
+	ticket_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	col.add_child(ticket_label)
 
-	var fee_hint := Label.new()
-	fee_hint.text = "Higher fee = more revenue per guest, but fewer guests if it's too steep."
-	fee_hint.add_theme_font_size_override("font_size", 11)
-	fee_hint.add_theme_color_override("font_color", Color("#7e9286"))
-	fee_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(fee_hint)
+	_admin_bracket_row = HBoxContainer.new()
+	_admin_bracket_row.add_theme_constant_override("separation", 8)
+	col.add_child(_admin_bracket_row)
+	var brackets: Array = ZooBootstrap.services.ticket_brackets \
+		if ZooBootstrap.services != null else []
+	for b in brackets:
+		var id: StringName = b["id"]
+		var btn := Button.new()
+		btn.text = "%s\n$%d" % [b["label"], int(b["price"])]
+		btn.custom_minimum_size = Vector2(0, 46)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.tooltip_text = "Demand ×%.2f vs. Standard" % float(b["demand_multiplier"])
+		btn.pressed.connect(_on_pick_ticket_bracket.bind(id))
+		_admin_bracket_buttons[id] = btn
+		_admin_bracket_row.add_child(btn)
+
+	_admin_fee_caption = Label.new()
+	_admin_fee_caption.add_theme_font_size_override("font_size", 11)
+	_admin_fee_caption.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_fee_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_fee_caption)
 
 	col.add_child(HSeparator.new())
 
@@ -942,9 +938,26 @@ func _close_admin_modal() -> void:
 
 
 func _refresh_admin_modal() -> void:
-	if _admin_fee_value == null:
+	if _admin_bracket_row == null:
 		return
-	_admin_fee_value.text = "$%d" % ZooBootstrap.entry_fee
+	# Highlight the active bracket.
+	for id in _admin_bracket_buttons.keys():
+		var btn: Button = _admin_bracket_buttons[id]
+		var active: bool = id == ZooBootstrap.ticket_bracket
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_left = 4
+		style.corner_radius_bottom_right = 4
+		btn.add_theme_stylebox_override("normal", style)
+		btn.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#e6e6e6"))
+	var mult := ZooBootstrap.current_demand_multiplier()
+	_admin_fee_caption.text = (
+		"Guests pay $%d at the gate. Cheaper tickets pull a bigger crowd " +
+		"(demand ×%.2f) that spends more inside; pricier tickets earn more " +
+		"per head but thin the crowd.") % [ZooBootstrap.entry_fee, mult]
 	if ZooBootstrap.park_open:
 		_admin_open_label.text = "Open"
 		_admin_open_label.add_theme_color_override("font_color", Color("#83c779"))
@@ -953,8 +966,12 @@ func _refresh_admin_modal() -> void:
 		_admin_open_label.add_theme_color_override("font_color", Color("#e76f51"))
 
 
-func _bump_entry_fee(delta: int) -> void:
-	ZooBootstrap.set_entry_fee(ZooBootstrap.entry_fee + delta)
+func _on_pick_ticket_bracket(id: StringName) -> void:
+	ZooBootstrap.set_ticket_bracket(id)
+	var b: Dictionary = ZooBootstrap.services.bracket(id)
+	if not b.is_empty():
+		_push_log("[color=#f4d35e]Ticket price → %s ($%d).[/color]" %
+			[b["label"], int(b["price"])])
 	_refresh_admin_modal()
 
 

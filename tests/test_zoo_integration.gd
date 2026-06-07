@@ -81,6 +81,34 @@ func test_services_config_loads() -> void:
 	assert_gt(float(spill[1]), 0.0, "spillover amount is positive")
 
 
+func test_ticket_brackets_loaded() -> void:
+	var sc := ServiceConfig.load_from_tuning()
+	assert_eq(sc.ticket_brackets.size(), 4, "four ticket brackets")
+	assert_eq(sc.default_bracket, &"standard", "park starts on Standard")
+	var standard := sc.bracket(&"standard")
+	assert_eq(int(standard["price"]), 10, "standard ticket is $10")
+	# Cheaper bracket pulls a bigger crowd; pricier one thins it.
+	assert_gt(float(sc.bracket(&"budget")["demand_multiplier"]),
+		float(sc.bracket(&"premium")["demand_multiplier"]),
+		"budget demand > premium demand")
+
+
+func test_ticket_bracket_drives_entry_fee_and_demand() -> void:
+	# Switching brackets on the live bootstrap sets the entry fee and scales
+	# the park's base spawn rate by the bracket's demand multiplier.
+	var base := ZooBootstrap._default_base_spawn_rate
+	ZooBootstrap.set_ticket_bracket(&"budget")
+	assert_eq(ZooBootstrap.entry_fee, 5, "budget gate fee is $5")
+	assert_almost_eq(AgentPool.base_spawn_rate, base * 1.35, 0.0001,
+		"budget scales demand up")
+	ZooBootstrap.set_ticket_bracket(&"premium")
+	assert_eq(ZooBootstrap.entry_fee, 18, "premium gate fee is $18")
+	assert_almost_eq(AgentPool.base_spawn_rate, base * 0.70, 0.0001,
+		"premium scales demand down")
+	# Restore the default so later tests start from a known gate.
+	ZooBootstrap.set_ticket_bracket(&"standard")
+
+
 # --- Adapter scripts registered with the engine -------------------------
 
 func test_bootstrap_registered_visitor_behavior() -> void:
