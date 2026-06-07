@@ -61,3 +61,23 @@ VisitorValueModel falls back to). Exactly one row should set it.
 | standard  | Standard  | 10    | 1.0               | true    |
 | premium   | Premium   | 18    | 0.70              |         |
 | exclusive | Exclusive | 30    | 0.40              |         |
+
+## Donations
+
+<!--
+Adaptation plan §2 item 5. A Donation Box placed inside an exhibit lets
+happy guests tip while they watch the animals — turning guest enjoyment
+into per-exhibit income instead of only gate take. A guest rolls once per
+exhibit view (when they arrive to linger):
+
+  if satisfaction >= donation_min_satisfaction and rng < donation_view_chance:
+      amount = round(donation_amount_max * satisfaction * exhibit_appeal)
+
+where exhibit_appeal is the exhibit's strongest appeal axis (0..1), so a
+well-built crowd-pleaser earns more tips than a dull pen. Minimum $1 when
+a donation fires at all.
+-->
+
+donation_view_chance      = 0.35
+donation_amount_max       = 6
+donation_min_satisfaction = 0.55

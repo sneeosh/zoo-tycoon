@@ -200,6 +200,24 @@ func _refresh_region_panel() -> void:
 		appeal_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_region_panel_body.add_child(appeal_label)
 
+	# Donations collected at this exhibit's Donation Box (if any).
+	var donated := ZooBootstrap.donations_for_region(region.region_id)
+	var has_box := false
+	for p in region.placements:
+		var pd: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+		if pd != null and &"donation_box" in pd.own_tags:
+			has_box = true
+			break
+	if has_box or donated > 0:
+		var donate_label := Label.new()
+		if has_box:
+			donate_label.text = "Donations: $%s collected" % _format_thousands(donated)
+		else:
+			donate_label.text = "Donations: $%s  (box removed)" % _format_thousands(donated)
+		donate_label.add_theme_font_size_override("font_size", 11)
+		donate_label.add_theme_color_override("font_color", Color("#83c779"))
+		_region_panel_body.add_child(donate_label)
+
 	_region_panel_body.add_child(HSeparator.new())
 
 	# Placements list with remove buttons + happiness bars.
@@ -2050,6 +2068,9 @@ func _wire_engine_signals() -> void:
 		if rid == _selected_region_id:
 			_refresh_region_panel())
 	EventBus.placement_removed.connect(func(rid, _idx):
+		if rid == _selected_region_id:
+			_refresh_region_panel())
+	ZooBootstrap.donation_collected.connect(func(rid, _amt):
 		if rid == _selected_region_id:
 			_refresh_region_panel())
 

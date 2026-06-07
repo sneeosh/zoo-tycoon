@@ -27,6 +27,12 @@ var scenario: Scenario
 # VisitorBehavior when a guest satisfies a need at a satisfier entity.
 var services: ServiceConfig
 
+# Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
+# exhibit's Donation Box. Display-only running stat; surfaced in the Manage
+# Exhibit panel. Not persisted (resets on load — it's a session tally).
+var donations_by_region: Dictionary = {}
+signal donation_collected(region_id: int, amount: int)
+
 # Park-admin state. Editable via the entrance-gate admin modal.
 # entry_fee is what new visitors pay on arrival (derived from the selected
 # ticket bracket); park_open gates the AgentPool spawn loop (sets
@@ -93,6 +99,7 @@ func _ready() -> void:
 
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
+	donations_by_region.clear()
 
 	# Cache the engine's default spawn rate so the open/closed toggle and
 	# ticket-bracket elasticity can scale from it. ContentDB has already
@@ -254,3 +261,20 @@ func _apply_spawn_rate() -> void:
 # instantiating a model itself.
 func get_quality_rating() -> float:
 	return _zoo_quality.compute_rating()
+
+
+# ---------------------------------------------------------------------------
+# Donations — called by VisitorBehavior when a guest tips at an exhibit's
+# Donation Box. Books the income and tracks a per-exhibit running total.
+# ---------------------------------------------------------------------------
+
+func record_donation(region_id: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	Ledger.post_income(amount, "Donation", &"donation")
+	donations_by_region[region_id] = int(donations_by_region.get(region_id, 0)) + amount
+	donation_collected.emit(region_id, amount)
+
+
+func donations_for_region(region_id: int) -> int:
+	return int(donations_by_region.get(region_id, 0))

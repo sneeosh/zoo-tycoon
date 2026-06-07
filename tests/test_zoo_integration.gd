@@ -12,6 +12,7 @@ func before_each() -> void:
 	SaveService.autosave_enabled = false
 	Ledger.reset(5000)
 	EntityRegistry.reset()
+	RegionRegistry.reset()
 	AgentPool.reset()
 	SimClock.current_tick = 0
 	SimClock.current_day = 0
@@ -158,6 +159,28 @@ func test_visitor_seeks_and_buys_food_when_hungry() -> void:
 			break
 	assert_true(has_food_purchase, "visitor reached food stand and posted a food purchase")
 	assert_gt(Ledger.get_balance(), post_entry, "food purchase added income")
+
+
+func test_donation_box_collects_tips() -> void:
+	# A Donation Box inside a populated exhibit earns tips from happy guests
+	# who stop to watch — per-exhibit income beyond the gate take.
+	for x in range(0, 3):
+		for y in range(0, 3):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 3))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(region)
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	RegionRegistry.add_placement(region.region_id, &"donation_box")
+	ZooBootstrap.donations_by_region.clear()
+	for i in range(6):
+		AgentPool.spawn(&"visitor", Vector2(5, 5))
+	for i in range(SimClock.ticks_per_day):
+		SimClock.advance_tick()
+	assert_gt(ZooBootstrap.donations_for_region(region.region_id), 0,
+		"happy guests tipped at the donation box")
 
 
 func test_full_day_runs_end_to_end() -> void:

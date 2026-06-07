@@ -194,6 +194,43 @@ func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
 	agent.need_levels[need] = 1.0
 
 
+const DONATION_BOX_TAG := &"donation_box"
+
+
+# Roll for a tip when a guest settles in to watch an exhibit that has a
+# Donation Box. Amount scales with the guest's satisfaction and the exhibit's
+# strongest appeal axis — a happy crowd at a great pen tips best. All knobs
+# come from design/tuning/services.md via ServiceConfig.
+func _maybe_donate(agent: Agent, region: Region) -> void:
+	var services: ServiceConfig = ZooBootstrap.services
+	if services == null:
+		return
+	if agent.satisfaction < services.donation_min_satisfaction:
+		return
+	if not _region_has_donation_box(region):
+		return
+	if SimClock.rng.randf() >= services.donation_view_chance:
+		return
+	var appeal: Dictionary = EffectResolver.compute_region_appeal(region)
+	var appeal_max: float = 0.0
+	for v in appeal.values():
+		if v > appeal_max:
+			appeal_max = v
+	var amount: int = int(round(
+		float(services.donation_amount_max) * agent.satisfaction * appeal_max))
+	amount = maxi(1, amount)
+	ZooBootstrap.record_donation(region.region_id, amount)
+	ZooBootstrap.money_floated.emit(amount, agent.position)
+
+
+func _region_has_donation_box(region: Region) -> bool:
+	for placement: Placement in region.placements:
+		var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
+		if def != null and DONATION_BOX_TAG in def.own_tags:
+			return true
+	return false
+
+
 func _step_browsing(agent: Agent) -> void:
 	# Visitors walk to a *viewing cell* adjacent to the region (outside it),
 	# not the region's centroid. Standing inside the exhibit on top of the
@@ -219,6 +256,9 @@ func _step_browsing(agent: Agent) -> void:
 		if linger_until == 0:
 			agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
 				_linger_duration_for_region(agent, region)
+			# The guest has just settled in to watch this exhibit — the moment
+			# they might drop a coin in its Donation Box.
+			_maybe_donate(agent, region)
 		elif SimClock.current_tick >= linger_until:
 			_pick_browse_target(agent)
 			agent.behavior_state[LINGER_UNTIL] = 0

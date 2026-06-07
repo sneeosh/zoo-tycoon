@@ -21,6 +21,11 @@ var ticket_brackets: Array = []
 # id of the bracket a new park starts on (the row marked default = true).
 var default_bracket: StringName = &""
 
+# Donation parameters (## Donations scalar section).
+var donation_view_chance: float = 0.35
+var donation_amount_max: int = 6
+var donation_min_satisfaction: float = 0.55
+
 
 static func load_from_tuning() -> ServiceConfig:
 	var sc := ServiceConfig.new()
@@ -45,7 +50,27 @@ static func load_from_tuning() -> ServiceConfig:
 		}
 
 	sc._load_ticket_brackets(parsed)
+	sc._load_donations(parsed)
 	return sc
+
+
+func _load_donations(parsed: Dictionary) -> void:
+	var section: Dictionary = parsed["sections"].get("Donations", {})
+	var scalars: Dictionary = section.get("scalars", {})
+	if scalars.is_empty():
+		push_error("[services] missing ## Donations scalars in %s" % TUNING_PATH)
+		return
+	donation_view_chance = _scalar_float(scalars, "donation_view_chance", donation_view_chance)
+	donation_amount_max = int(_scalar_float(scalars, "donation_amount_max", donation_amount_max))
+	donation_min_satisfaction = _scalar_float(
+		scalars, "donation_min_satisfaction", donation_min_satisfaction)
+
+
+static func _scalar_float(scalars: Dictionary, key: String, fallback: float) -> float:
+	var entry: Dictionary = scalars.get(key, {})
+	if entry.is_empty():
+		return fallback
+	return _to_float(entry.get("raw", ""))
 
 
 func _load_ticket_brackets(parsed: Dictionary) -> void:
