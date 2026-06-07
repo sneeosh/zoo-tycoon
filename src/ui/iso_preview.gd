@@ -92,7 +92,53 @@ func _draw() -> void:
 	_draw_region_fills()
 	_draw_ground_scatter()
 	_draw_sorted_objects()
+	_draw_day_night()
+	_draw_path_warnings()
 	_draw_preview()
+
+
+# Dusk/night tint — same model as the top-down view: dim toward the edges of
+# the open day, darker once the park has closed.
+func _draw_day_night() -> void:
+	if ZooBootstrap.services == null:
+		return
+	var f := ZooBootstrap.time_of_day_fraction()
+	var open_end: float = ZooBootstrap.services.open_end
+	var darkness: float
+	if f >= open_end or open_end <= 0.0:
+		darkness = 0.45
+	else:
+		var p := f / open_end
+		darkness = 0.30 * (1.0 - sin(p * PI))
+	if darkness <= 0.01:
+		return
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.10, 0.28, darkness), true)
+
+
+# Pulsing ⚠ over any exhibit guests can't path to (set by main from the
+# reachability check), floated above the pen so it reads at a glance.
+func _draw_path_warnings() -> void:
+	if disconnected_regions.is_empty():
+		return
+	var font := get_theme_default_font()
+	var t := Time.get_ticks_msec() / 1000.0
+	var pulse: float = 0.55 + 0.45 * sin(t * 3.5)
+	for region: Region in RegionRegistry.all_regions():
+		if not disconnected_regions.has(region.region_id) or region.cells.is_empty():
+			continue
+		var sum := Vector2.ZERO
+		for c in region.cells:
+			sum += Vector2(c)
+		var center_cell := sum / float(region.cells.size())
+		var screen := _tile_center(center_cell.x, center_cell.y) - Vector2(0, FENCE_H + 14)
+		var glyph := "⚠"
+		var fs := 22
+		var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		var pos := screen - Vector2(sz.x * 0.5, sz.y * 0.5)
+		draw_string(font, pos + Vector2(1, 1), glyph,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.5 * pulse))
+		draw_string(font, pos, glyph,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.90, 0.43, 0.31, pulse))
 
 
 # A filled + outlined diamond on cell (gx,gy), used for hover + build feedback.
