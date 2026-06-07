@@ -299,6 +299,30 @@ func test_guest_walks_only_on_paths_to_reach_food() -> void:
 	assert_true(bought, "guest reached the food stand along the path and ate")
 
 
+func test_disconnected_exhibit_detection() -> void:
+	# The HUD flags a populated exhibit when no gate-reachable path cell can
+	# see it. This exercises that exact query (NavigationRegistry.nearest with
+	# the engagement-distance predicate).
+	for y in range(0, 4):
+		EntityRegistry.place(&"path", Vector2i(0, y))
+	var net := NavigationRegistry.get_network()
+	# Exhibit beside the path → within viewing distance → connected.
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 1))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 2))
+	var near := RegionRegistry.region_at_cell(Vector2i(1, 1))
+	# Exhibit far from any path → no path access.
+	EntityRegistry.place(&"grass_patch", Vector2i(25, 25))
+	EntityRegistry.place(&"grass_patch", Vector2i(25, 26))
+	var far := RegionRegistry.region_at_cell(Vector2i(25, 25))
+	var d := 10
+	var near_cell := NavigationRegistry.nearest(Vector2i(0, 0), func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, near.cells, d))
+	var far_cell := NavigationRegistry.nearest(Vector2i(0, 0), func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, far.cells, d))
+	assert_ne(near_cell, INetworkNavigator.NO_STEP, "exhibit beside the path is reachable")
+	assert_eq(far_cell, INetworkNavigator.NO_STEP, "far exhibit has no path access")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with

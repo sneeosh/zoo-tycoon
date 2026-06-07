@@ -33,6 +33,9 @@ const ENTITY_COLORS := {
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
 var _map_view: MapView
+# region_id -> true for populated exhibits with no gate-reachable path cell
+# within viewing distance (guests can't reach them). Recomputed each HUD tick.
+var _disconnected_regions: Dictionary = {}
 var _money_label: Label
 var _day_label: Label
 var _quality_label: Label
@@ -228,6 +231,15 @@ func _refresh_region_panel() -> void:
 			rec_label.add_theme_color_override("font_color", Color("#c9a4ff"))
 			rec_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			_region_panel_body.add_child(rec_label)
+
+	# Path-access warning — guests can't reach an exhibit with no path nearby.
+	if _disconnected_regions.has(region.region_id):
+		var warn := Label.new()
+		warn.text = "⚠ No path access — lay a path within view so guests can reach it."
+		warn.add_theme_font_size_override("font_size", 11)
+		warn.add_theme_color_override("font_color", Color("#e76f51"))
+		warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_region_panel_body.add_child(warn)
 
 	# Donations collected at this exhibit's Donation Box (if any).
 	var donated := ZooBootstrap.donations_for_region(region.region_id)
@@ -2278,6 +2290,37 @@ func _refresh_hud() -> void:
 		_evaluate_goals()
 	_refresh_mission()
 	_refresh_build_locks()
+	_recompute_path_access()
+
+
+# Find populated exhibits that no gate-reachable path cell can see. Only
+# meaningful once a path network exists — with zero paths the game is in
+# free-roam mode and every exhibit is reachable, so we stay quiet. Surfaced
+# as a map warning + a Manage Exhibit panel line so the player knows to
+# connect a path.
+func _recompute_path_access() -> void:
+	_disconnected_regions.clear()
+	var net: WalkableNetwork = NavigationRegistry.get_network()
+	if net != null and net.cell_count() > 0:
+		var d := _view_engage_d()
+		for region in RegionRegistry.all_regions():
+			if region.placements.is_empty():
+				continue
+			if not _region_path_connected(net, region, d):
+				_disconnected_regions[region.region_id] = true
+	if _map_view != null:
+		_map_view.disconnected_regions = _disconnected_regions
+
+
+func _region_path_connected(net: WalkableNetwork, region: Region, d: int) -> bool:
+	var viewing := NavigationRegistry.nearest(GATE_TILE, func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, region.cells, d))
+	return viewing != INetworkNavigator.NO_STEP
+
+
+func _view_engage_d() -> int:
+	var bc: BalanceConfig = ContentDB.balance_config
+	return bc.nav_default_engagement_distance if bc != null else 10
 
 
 func _refresh_affordability() -> void:

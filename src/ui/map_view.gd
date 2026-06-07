@@ -25,6 +25,9 @@ const GATE_POST_COLOR: Color = Color("#e6b32f")
 var entity_colors: Dictionary = {}
 # Set by main when a build button is toggled on; empty string = none.
 var preview_def_id: StringName = &""
+# region_id -> true for exhibits guests can't path to. Set by main; drawn as
+# a ⚠ badge so the disconnect is visible without opening the manage panel.
+var disconnected_regions: Dictionary = {}
 
 # Pixel-art sprites generated via Pixel Lab. Loaded lazily so the game
 # doesn't crash if a sprite is missing — we fall back to the colored
@@ -179,6 +182,7 @@ func _draw() -> void:
 	# world events, not every frame.
 	_draw_entities()
 	_draw_placements()
+	_draw_path_warnings()
 	_draw_entrance_gate()
 	_draw_visitors()
 	_draw_money_floats()
@@ -240,6 +244,34 @@ func _draw_placements() -> void:
 				draw_circle(
 					rect.position + rect.size * 0.5,
 					sprite_size * 0.45, Color("#c89465"))
+
+
+# A pulsing ⚠ badge over each exhibit guests can't path to (set by main via
+# disconnected_regions). Drawn above the region centroid.
+func _draw_path_warnings() -> void:
+	if disconnected_regions.is_empty():
+		return
+	var font := get_theme_default_font()
+	var t := Time.get_ticks_msec() / 1000.0
+	var pulse: float = 0.55 + 0.45 * sin(t * 3.5)
+	for region: Region in RegionRegistry.all_regions():
+		if not disconnected_regions.has(region.region_id):
+			continue
+		if region.cells.is_empty():
+			continue
+		var sum := Vector2.ZERO
+		for c in region.cells:
+			sum += Vector2(c)
+		var center_cell := sum / float(region.cells.size())
+		var screen := GRID_ORIGIN + (center_cell + Vector2(0.5, 0.5)) * TILE_SIZE
+		var glyph := "⚠"
+		var fs := 22
+		var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		var origin := screen - Vector2(sz.x * 0.5, sz.y * 0.5)
+		draw_string(font, origin + Vector2(1, 1), glyph,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.5 * pulse))
+		draw_string(font, origin, glyph,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.90, 0.43, 0.31, pulse))
 
 
 # ---------------------------------------------------------------------------
