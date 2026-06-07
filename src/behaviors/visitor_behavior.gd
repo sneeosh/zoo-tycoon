@@ -63,6 +63,23 @@ const ST_LEAVING := &"leaving"
 # this at it. Top-left of the grid for now — matches the MapView gate.
 const EXIT_POSITION := Vector2(0.0, 0.0)
 
+# --- Path navigation (engine v0.6.1 WalkableNetwork) ------------------------
+# Guests prefer to walk the player-built path network. When a usable route
+# exists they stick to paths and "view" exhibits / use amenities from a path
+# cell; when there's no network, the guest is off-network, or the goal isn't
+# reachable by path, they fall back to the legacy free-roam movement so the
+# game still works with zero paths (and the existing economic-loop tests stay
+# green). This is the sanctioned rollout step — free-roam is the fallback
+# until paths are proven, not a parallel system.
+const GATE_CELL := Vector2i(0, 0)         # network root / exit (entrance gate)
+const AMENITY_ENGAGE_D := 1               # must stand next to a stand to use it
+# _path_move outcomes.
+const PATH_MOVING := 0                     # stepping along the network
+const PATH_ARRIVED := 1                    # within engagement distance of goal
+const PATH_NONE := 2                       # no usable route → caller free-roams
+# behavior_state key the engine navigator reads (plain String, not StringName).
+const NAV_TARGET := "nav_target"
+
 var _value_model := VisitorValueModel.new()
 
 
@@ -85,13 +102,14 @@ func on_need_threshold_crossed(agent: Agent, need_id: StringName) -> void:
 	agent.target_entity_id = best_id
 	agent.seeking_need = need_id
 	agent.behavior_state[STATE] = ST_SEEKING
+	_clear_nav(agent)   # new intent → re-plan the route on the next tick
 
 
 func on_tick(agent: Agent) -> void:
 	var state: StringName = agent.behavior_state.get(STATE, ST_BROWSING)
 
 	if state == ST_LEAVING:
-		_step_toward_exit(agent)
+		_nav_leave(agent)
 		return
 
 	# Time-to-leave checks (don't interrupt an active food-seek mid-trip).
@@ -101,19 +119,21 @@ func on_tick(agent: Agent) -> void:
 		if ticks_alive >= stay_duration:
 			agent.behavior_state[DEPARTURE_SATISFACTION] = agent.satisfaction
 			agent.behavior_state[STATE] = ST_LEAVING
+			_clear_nav(agent)
 			return
 		var impatience: float = agent.traits.get(TRAIT_IMPATIENCE, FALLBACK_IMPATIENCE)
 		if agent.satisfaction <= impatience:
 			# Frustrated departure — visitor gives up on the zoo.
 			agent.behavior_state[DEPARTURE_SATISFACTION] = agent.satisfaction
 			agent.behavior_state[STATE] = ST_LEAVING
+			_clear_nav(agent)
 			return
 
 	if state == ST_SEEKING and agent.target_entity_id != 0:
-		_step_toward_target(agent)
+		_nav_seek(agent)
 		return
 
-	_step_browsing(agent)
+	_nav_browse(agent)
 
 
 func on_despawn(agent: Agent) -> void:
@@ -132,7 +152,139 @@ func on_despawn(agent: Agent) -> void:
 
 
 # ---------------------------------------------------------------------------
-# Movement helpers
+# Path navigation — walk the network when one is usable, else free-roam.
+# ---------------------------------------------------------------------------
+
+# Leaving: head for the entrance gate on the path, then despawn.
+func _nav_leave(agent: Agent) -> void:
+	var anchors: Array[Vector2i] = [GATE_CELL]
+	match _path_move(agent, anchors, 0):
+		PATH_ARRIVED:
+			AgentPool.despawn(agent.agent_id)
+		PATH_MOVING:
+			pass
+		_:
+			_step_toward_exit(agent)   # legacy free-roam to the exit
+
+
+# Seeking a need-satisfier: walk to a path cell beside it, then transact.
+func _nav_seek(agent: Agent) -> void:
+	var inst: EntityInstance = EntityRegistry.get_instance(agent.target_entity_id)
+	if inst == null:
+		agent.target_entity_id = 0
+		agent.seeking_need = &""
+		agent.behavior_state[STATE] = ST_BROWSING
+		_clear_nav(agent)
+		return
+	match _path_move(agent, _amenity_anchors(inst), AMENITY_ENGAGE_D):
+		PATH_MOVING:
+			return
+		PATH_ARRIVED:
+			_satisfy_need_at(agent, inst)
+			agent.target_entity_id = 0
+			agent.seeking_need = &""
+			agent.behavior_state[STATE] = ST_BROWSING
+			_clear_nav(agent)
+		_:
+			_step_toward_target(agent)   # legacy free-roam (satisfies on reach)
+
+
+# Browsing: walk to a path cell within viewing distance of the target exhibit,
+# then linger and maybe tip.
+func _nav_browse(agent: Agent) -> void:
+	var rid: int = agent.behavior_state.get(BROWSE_TARGET, 0)
+	var region: Region = RegionRegistry.get_region(rid) if rid > 0 else null
+	if region == null or region.cells.is_empty() or region.placements.is_empty():
+		_pick_browse_target(agent)
+		return
+	match _path_move(agent, region.cells, _view_engage_d()):
+		PATH_MOVING:
+			return
+		PATH_ARRIVED:
+			_linger_and_donate(agent, region)
+		_:
+			_step_browsing(agent)   # legacy free-roam fallback
+
+
+# Once parked within viewing distance of an exhibit: tip on arrival, hold for
+# the linger duration, then pick the next exhibit.
+func _linger_and_donate(agent: Agent, region: Region) -> void:
+	var linger_until: int = agent.behavior_state.get(LINGER_UNTIL, 0)
+	if linger_until == 0:
+		agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
+			_linger_duration_for_region(agent, region)
+		_maybe_donate(agent, region)
+	elif SimClock.current_tick >= linger_until:
+		agent.behavior_state[LINGER_UNTIL] = 0
+		_pick_browse_target(agent)
+
+
+# Core network step. Returns PATH_MOVING / PATH_ARRIVED / PATH_NONE. The
+# caller free-roams on PATH_NONE (no network, off-network, or unreachable).
+func _path_move(agent: Agent, anchors: Array[Vector2i], engage_d: int) -> int:
+	var net: WalkableNetwork = NavigationRegistry.get_network()
+	if net == null or net.cell_count() == 0:
+		return PATH_NONE
+	var cur := Vector2i(agent.position.round())
+	if not net.has_cell(cur):
+		return PATH_NONE
+	if net.within_engagement_distance(cur, anchors, engage_d):
+		return PATH_ARRIVED
+	if not agent.behavior_state.has(NAV_TARGET):
+		var t := _nearest_viewing_cell(net, cur, anchors, engage_d)
+		if t == INetworkNavigator.NO_STEP:
+			return PATH_NONE
+		agent.behavior_state[NAV_TARGET] = t
+	var nxt: Vector2i = NavigationRegistry.navigator.step(agent, net)
+	if nxt == INetworkNavigator.NO_STEP:
+		return PATH_NONE   # route lost (e.g. path removed under us)
+	_move_position_toward(agent, Vector2(nxt))
+	return PATH_MOVING
+
+
+# Nearest path cell from which `anchors` are within engagement distance.
+func _nearest_viewing_cell(net: WalkableNetwork, origin: Vector2i,
+		anchors: Array[Vector2i], engage_d: int) -> Vector2i:
+	var pred := func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, anchors, engage_d)
+	return NavigationRegistry.nearest(origin, pred)
+
+
+func _move_position_toward(agent: Agent, dest: Vector2) -> void:
+	var to := dest - agent.position
+	var d := to.length()
+	var step := _walking_speed(agent)
+	if d <= step or d == 0.0:
+		agent.position = dest
+	else:
+		agent.position += to / d * step
+
+
+func _amenity_anchors(inst: EntityInstance) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var def := inst.get_def()
+	if def == null:
+		out.append(inst.position)
+		return out
+	for dx in def.footprint.x:
+		for dy in def.footprint.y:
+			out.append(inst.position + Vector2i(dx, dy))
+	return out
+
+
+func _view_engage_d() -> int:
+	var bc: BalanceConfig = ContentDB.balance_config
+	return bc.nav_default_engagement_distance if bc != null else 10
+
+
+func _clear_nav(agent: Agent) -> void:
+	agent.behavior_state.erase(NAV_TARGET)
+	agent.behavior_state.erase("nav_route")
+
+
+# ---------------------------------------------------------------------------
+# Movement helpers (legacy free-roam — used as the fallback when no usable
+# path route exists; see the path-navigation section above).
 # ---------------------------------------------------------------------------
 
 func _walking_speed(agent: Agent) -> float:
@@ -459,6 +611,7 @@ func _linger_duration_for_region(_agent: Agent, region: Region) -> int:
 # roulette pick — higher-match regions are more likely but not
 # certain, so the same agent visits varied regions over its stay.
 func _pick_browse_target(agent: Agent) -> void:
+	_clear_nav(agent)   # new exhibit → re-plan the path route next tick
 	var agent_type: AgentType = ContentDB.get_agent_type(agent.agent_type_id)
 	if agent_type == null:
 		agent.behavior_state[BROWSE_TARGET] = 0

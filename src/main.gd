@@ -2239,12 +2239,12 @@ func _stage_starter_park() -> void:
 			RegionRegistry.add_placement(penguin_region.region_id, &"penguin")
 		RegionRegistry.add_placement(penguin_region.region_id, &"feeding_trough")
 
-	# Visitors spawn near the entrance gate at (0,0). Spread them along
-	# the path so they don't pile up in one spot at t=0.
+	# Visitors enter at the gate and walk in along the path. Spawn them on the
+	# entrance path column (x=0, y 0..6) so they start on the network and
+	# route immediately; auto-spawned guests enter at the gate cell (0,0).
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
-			SimClock.rng.randf_range(0.0, 3.0),
-			SimClock.rng.randf_range(0.0, 6.0)))
+			0.0, SimClock.rng.randf_range(0.0, 6.0)))
 
 
 # ============================================================================

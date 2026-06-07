@@ -272,6 +272,33 @@ func test_path_tiles_build_a_walkable_network() -> void:
 	assert_false(net.has_cell(Vector2i(0, 1)), "non-path cell is not walkable")
 
 
+func test_guest_walks_only_on_paths_to_reach_food() -> void:
+	# With a path network present, a guest sticks to it: lay a straight path
+	# from the gate to a food stand and assert the guest's cell is ALWAYS a
+	# path cell across its whole visit, and that it still reaches and buys food.
+	for x in range(0, 9):
+		EntityRegistry.place(&"path", Vector2i(x, 0))
+	EntityRegistry.place(&"food_stand", Vector2i(4, 1))   # path (4,0) sits beside it
+	var net := NavigationRegistry.get_network()
+	assert_not_null(net)
+	var aid := AgentPool.spawn(&"visitor", Vector2(0, 0))
+	var off_path_ticks := 0
+	for i in range(700):
+		SimClock.advance_tick()
+		var a := AgentPool.get_agent(aid)
+		if a == null:
+			break   # left the park (still left via the path)
+		if not net.has_cell(Vector2i(a.position.round())):
+			off_path_ticks += 1
+	assert_eq(off_path_ticks, 0, "guest never stepped off the path network")
+	var bought := false
+	for tx: Dictionary in Ledger.transactions:
+		if tx["label"] == "Food":
+			bought = true
+			break
+	assert_true(bought, "guest reached the food stand along the path and ate")
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with
