@@ -52,9 +52,63 @@ func _draw_region_auras() -> void:
 			var rect := Rect2(_cell_to_screen(c),
 				Vector2(TILE_SIZE, TILE_SIZE))
 			draw_rect(rect, fill_color, true)
+		# Scatter ground cover inside the pen (under the fence + animals) so it
+		# looks lived-in, then fence the perimeter.
+		_draw_region_decor(region)
 		# A real fence around the perimeter — a rail with posts — so a pen
 		# reads as an enclosure (Zoo-Tycoon style) instead of a tinted square.
 		_draw_region_fence(region, cell_set)
+
+
+# Sparse ground cover inside an enclosure — grass tufts, small shrubs, and
+# pebbles, picked deterministically per cell. Drawn beneath the fence and the
+# animals (which are foreground), so it reads as terrain, not clutter.
+func _draw_region_decor(region: Region) -> void:
+	var is_water := &"water" in region.provided_zone_tags
+	if is_water:
+		return   # water exhibits get an animated shimmer instead
+	var rocky := &"rocks" in region.provided_zone_tags
+	for c in region.cells:
+		var s := _cell_to_screen(c)
+		var h := _hash2(c.x * 3 + 7, c.y * 5 + 11)
+		for k in 3:
+			var hk := h ^ (k * 149)
+			if (hk % 3) != 0:
+				continue
+			var p := s + Vector2(
+				6.0 + float((hk / 7) % (TILE_SIZE - 12)),
+				6.0 + float((hk / 13) % (TILE_SIZE - 12)))
+			var kind := hk % 5
+			if rocky and kind < 2:
+				_draw_pebble(p, hk)
+			elif kind == 0:
+				_draw_pebble(p, hk)
+			elif kind <= 2:
+				_draw_tuft(p, hk)
+			else:
+				_draw_small_shrub(p, hk)
+
+
+func _draw_tuft(p: Vector2, h: int) -> void:
+	var col := Color("#4f7a34") if (h % 2) == 0 else Color("#5e8a3c")
+	for i in 3:
+		var lean := float((i - 1)) * 1.6
+		draw_line(p + Vector2(float(i - 1) * 1.6, 1.0),
+			p + Vector2(lean, -3.0 - float(h % 2)), col, 1.0)
+
+
+func _draw_small_shrub(p: Vector2, h: int) -> void:
+	var r := 2.6 + float(h % 2)
+	draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.22))
+	draw_circle(p, r, Color("#3f6428"))
+	draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#5d8a39"))
+
+
+func _draw_pebble(p: Vector2, h: int) -> void:
+	var r := 1.8 + float(h % 2)
+	draw_circle(p + Vector2(0, 1), r, Color(0, 0, 0, 0.20))
+	draw_circle(p, r, Color("#8b8478"))
+	draw_circle(p + Vector2(-0.6, -0.6), r * 0.45, Color("#aaa294"))
 
 
 # Perimeter fence: a shaded rail along each boundary edge plus square posts at
