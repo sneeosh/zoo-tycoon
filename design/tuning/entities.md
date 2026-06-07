@@ -15,19 +15,20 @@ in placeables.md — they go inside regions, not on the grid directly.
 
 ## Entities
 
-| id          | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key   | satisfies | appeal_profile | zone_kind | zone_tags    |
-| ----------- | --------------- | ---------- | ---------------- | ----------- | ----------- | ------------ | --------- | -------------- | --------- | ------------ |
-| grass_patch | Grass Enclosure | 60         | 1                | 1           | 1           | grass_patch  |           |                | pen       | grass        |
-| rock_patch  | Rocky Enclosure | 90         | 1                | 1           | 1           | rock_patch   |           |                | pen       | grass,rocks  |
-| water_patch | Water Enclosure | 140        | 2                | 1           | 1           | water_patch  |           |                | pen       | water,grass  |
-| cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |
-| food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |
-| drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | drink_stand  | thirst    |                |           |              |
-| restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     | restroom  |                |           |              |
-| bench       | Bench           | 80         | 1                | 1           | 1           | bench        | energy    |                |           |              |
-| compost     | Compost Building| 400        | 0                | 2           | 2           | compost      |           |                |           |              |
-| restaurant  | Restaurant      | 1200       | 8                | 2           | 2           | restaurant   | hunger,thirst,restroom,energy |  |           |              |
-| arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |
+| id          | display_name    | build_cost | maintenance_cost | footprint_x | footprint_y | sprite_key   | satisfies | appeal_profile | zone_kind | zone_tags    | walkable |
+| ----------- | --------------- | ---------- | ---------------- | ----------- | ----------- | ------------ | --------- | -------------- | --------- | ------------ | -------- |
+| grass_patch | Grass Enclosure | 60         | 1                | 1           | 1           | grass_patch  |           |                | pen       | grass        |          |
+| rock_patch  | Rocky Enclosure | 90         | 1                | 1           | 1           | rock_patch   |           |                | pen       | grass,rocks  |          |
+| water_patch | Water Enclosure | 140        | 2                | 1           | 1           | water_patch  |           |                | pen       | water,grass  |          |
+| cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |       |
+| path        | Path            | 15         | 0                | 1           | 1           | path         |           |                |           |              | true     |
+| food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |          |
+| drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | drink_stand  | thirst    |                |           |              |          |
+| restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     | restroom  |                |           |              |          |
+| bench       | Bench           | 80         | 1                | 1           | 1           | bench        | energy    |                |           |              |          |
+| compost     | Compost Building| 400        | 0                | 2           | 2           | compost      |           |                |           |              |          |
+| restaurant  | Restaurant      | 1200       | 8                | 2           | 2           | restaurant   | hunger,thirst,restroom,energy |  |           |              |          |
+| arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |          |
 
 ## Effects
 

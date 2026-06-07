@@ -20,6 +20,7 @@ const ENTITY_COLORS := {
 	&"rock_patch":  Color("#65726f"),
 	&"water_patch": Color("#3a7eb2"),
 	&"cage_panel":  Color("#7e8a92"),
+	&"path":        Color("#9a8f7d"),
 	&"food_stand":  Color("#e27d60"),
 	&"drink_stand": Color("#5aa9e6"),
 	&"restroom":    Color("#41b3a3"),
@@ -2038,14 +2039,18 @@ func _build_left_panel(parent: Control) -> void:
 	# group placeables by has-appeal (animals) vs not (infrastructure).
 	# Stable order inside each group: alphabetical by def_id.
 	var zone_ids: Array[StringName] = []
+	var path_ids: Array[StringName] = []
 	var amenity_ids: Array[StringName] = []
 	for def_id in ContentDB.entity_defs.keys():
 		var d: EntityDef = ContentDB.entity_defs[def_id]
-		if d.zone_kind != &"":
+		if d.walkable:
+			path_ids.append(def_id)
+		elif d.zone_kind != &"":
 			zone_ids.append(def_id)
 		else:
 			amenity_ids.append(def_id)
 	zone_ids.sort_custom(func(a, b): return String(a) < String(b))
+	path_ids.sort_custom(func(a, b): return String(a) < String(b))
 	amenity_ids.sort_custom(func(a, b): return String(a) < String(b))
 
 	var animal_ids: Array[StringName] = []
@@ -2064,6 +2069,9 @@ func _build_left_panel(parent: Control) -> void:
 
 	_add_build_subhead(col, "Exhibit tiles")
 	for def_id in zone_ids:
+		_add_build_button(col, def_id)
+	_add_build_subhead(col, "Paths")
+	for def_id in path_ids:
 		_add_build_button(col, def_id)
 	_add_build_subhead(col, "Amenities")
 	for def_id in amenity_ids:
@@ -2196,14 +2204,25 @@ func _stage_starter_park() -> void:
 		for y in range(8, 10):
 			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# --- Amenities along the path from entrance to exhibits. The starter
-	# park covers all four guest needs (food / drink / restroom / rest) so a
-	# first-time player sees a contented crowd before they learn to balance
-	# them. ---
-	EntityRegistry.place(&"food_stand",  Vector2i(14, 4))
-	EntityRegistry.place(&"drink_stand", Vector2i(13, 6))
-	EntityRegistry.place(&"restroom",    Vector2i(14, 9))
-	EntityRegistry.place(&"bench",       Vector2i(11, 6))
+	# --- Path network: a spine from the entrance gate (0,0) down to a main
+	# concourse that runs past both exhibits. Guests spawn at the gate and
+	# walk the path; they view an exhibit from any path cell within the
+	# engagement distance (navigation.md), so the concourse alone lets them
+	# see the lion and the penguins. Lay paths BEFORE amenities so the
+	# amenities can sit adjacent to the concourse without colliding. ---
+	for y in range(0, 7):
+		EntityRegistry.place(&"path", Vector2i(0, y))   # gate → concourse
+	for x in range(1, 16):
+		EntityRegistry.place(&"path", Vector2i(x, 6))   # concourse
+
+	# --- Amenities, each adjacent to the concourse so guests reach them.
+	# The starter park covers all four guest needs (food / drink / restroom /
+	# rest) so a first-time player sees a contented crowd before they learn
+	# to balance them. ---
+	EntityRegistry.place(&"food_stand",  Vector2i(13, 4))  # touches (13,6)/(14,6)
+	EntityRegistry.place(&"drink_stand", Vector2i(11, 5))  # touches (11,6)
+	EntityRegistry.place(&"restroom",    Vector2i(4, 5))   # touches (4,6)
+	EntityRegistry.place(&"bench",       Vector2i(2, 5))   # touches (2,6)
 
 	# --- Lion + its infrastructure. ---
 	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))

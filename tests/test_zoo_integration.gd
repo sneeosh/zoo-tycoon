@@ -13,6 +13,7 @@ func before_each() -> void:
 	Ledger.reset(5000)
 	EntityRegistry.reset()
 	RegionRegistry.reset()
+	NavigationRegistry.reset()
 	AgentPool.reset()
 	SimClock.current_tick = 0
 	SimClock.current_day = 0
@@ -253,6 +254,22 @@ func test_compost_has_revenue_and_stink_effects() -> void:
 			has_stink = true
 	assert_true(has_revenue, "compost earns revenue from the crowd")
 	assert_true(has_stink, "compost carries a stink satisfaction penalty")
+
+
+func test_path_tiles_build_a_walkable_network() -> void:
+	# Placing `path` tiles must reactively build a WalkableNetwork (proves the
+	# engine bump is wired: walkable column parsed, NavigationRegistry autoload
+	# live, routing works).
+	for x in range(0, 5):
+		EntityRegistry.place(&"path", Vector2i(x, 0))
+	var net := NavigationRegistry.get_network()
+	assert_not_null(net, "a default network exists once path tiles are placed")
+	assert_eq(net.cell_count(), 5, "five path cells in the network")
+	assert_true(net.has_cell(Vector2i(0, 0)), "gate-end path cell present")
+	var route := NavigationRegistry.path(Vector2i(0, 0), Vector2i(4, 0))
+	assert_eq(route.size(), 5, "straight 5-cell route end to end")
+	# A non-path cell is off-network.
+	assert_false(net.has_cell(Vector2i(0, 1)), "non-path cell is not walkable")
 
 
 func test_full_day_runs_end_to_end() -> void:
