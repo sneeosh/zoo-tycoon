@@ -81,6 +81,18 @@ func test_set_difficulty_resets_cash_and_targets() -> void:
 	assert_almost_eq(ZooBootstrap.scenario.demand_multiplier, 1.0, 0.001)
 
 
+func test_marketing_campaign_boosts_then_expires() -> void:
+	var fam: AgentType = ContentDB.get_agent_type(&"family")
+	var base := fam.spawn_weight
+	assert_true(ZooBootstrap.start_campaign(&"family"), "campaign launches when affordable")
+	assert_gt(fam.spawn_weight, base, "family arrivals are boosted during the campaign")
+	assert_false(ZooBootstrap.start_campaign(&"child"), "only one campaign at a time")
+	for d in range(ZooBootstrap.marketing.campaign_days):
+		ZooBootstrap._tick_campaign(d)
+	assert_eq(ZooBootstrap.campaign_days_left, 0, "campaign ends after its run")
+	assert_almost_eq(fam.spawn_weight, base, 0.001, "spawn weight restored when it ends")
+
+
 func test_guest_archetypes_loaded() -> void:
 	# Four guest archetypes, each a full AgentType with the four needs and its
 	# own appeal preferences.

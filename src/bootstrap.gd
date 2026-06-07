@@ -53,6 +53,14 @@ var weather_cfg: WeatherConfig
 var current_weather: StringName = &""
 signal weather_changed(weather_id: StringName, season_id: StringName)
 
+# Marketing campaigns (roadmap 4.2). Spend cash to bias arrivals toward an
+# archetype for a few days by boosting its spawn weight. One at a time.
+var marketing: MarketingConfig
+var campaign_target: StringName = &""
+var campaign_days_left: int = 0
+var _base_spawn_weights: Dictionary = {}   # agent_type id -> base spawn_weight
+signal campaign_changed(target: StringName, days_left: int)
+
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
 # Exhibit panel. Not persisted (resets on load — it's a session tally).
@@ -139,8 +147,16 @@ func _ready() -> void:
 	breeding = BreedingConfig.load_from_tuning()
 	staff = StaffConfig.load_from_tuning()
 	weather_cfg = WeatherConfig.load_from_tuning()
+	marketing = MarketingConfig.load_from_tuning()
 	donations_by_region.clear()
 	hired_keepers = 0
+	# Snapshot each archetype's base spawn weight so a campaign boost can be
+	# applied and cleanly restored.
+	_base_spawn_weights.clear()
+	for at_id in ContentDB.agent_types.keys():
+		_base_spawn_weights[at_id] = (ContentDB.agent_types[at_id] as AgentType).spawn_weight
+	Accounting.register_category(&"marketing", Accounting.Category.OPERATING_EXPENSE)
+	EventBus.day_ended.connect(_tick_campaign)
 	# Seed today's weather, then re-roll each new day.
 	if weather_cfg != null and not weather_cfg.weathers.is_empty():
 		current_weather = weather_cfg.pick_weather(SimClock.rng)
@@ -500,6 +516,55 @@ func _populated_exhibit_count() -> int:
 	return n
 
 
+# ---------------------------------------------------------------------------
+# Marketing campaigns
+# ---------------------------------------------------------------------------
+
+# Launch a campaign promoting `target` archetype. Charges the cost, boosts that
+# archetype's spawn weight for campaign_days. Returns false if one is already
+# running, the archetype is unknown, or there isn't enough cash.
+func start_campaign(target: StringName) -> bool:
+	if marketing == null or campaign_days_left > 0:
+		return false
+	if not _base_spawn_weights.has(target):
+		return false
+	if Ledger.get_balance() < marketing.campaign_cost:
+		return false
+	Ledger.post_expense(marketing.campaign_cost,
+		"Marketing campaign", &"marketing")
+	campaign_target = target
+	campaign_days_left = marketing.campaign_days
+	_apply_campaign_weights()
+	campaign_changed.emit(campaign_target, campaign_days_left)
+	return true
+
+
+func _apply_campaign_weights() -> void:
+	for at_id in _base_spawn_weights.keys():
+		var at: AgentType = ContentDB.agent_types.get(at_id)
+		if at == null:
+			continue
+		var boost: float = marketing.campaign_boost if at_id == campaign_target else 1.0
+		at.spawn_weight = float(_base_spawn_weights[at_id]) * boost
+
+
+func _restore_campaign_weights() -> void:
+	for at_id in _base_spawn_weights.keys():
+		var at: AgentType = ContentDB.agent_types.get(at_id)
+		if at != null:
+			at.spawn_weight = float(_base_spawn_weights[at_id])
+
+
+func _tick_campaign(_day: int) -> void:
+	if campaign_days_left <= 0:
+		return
+	campaign_days_left -= 1
+	if campaign_days_left <= 0:
+		campaign_target = &""
+		_restore_campaign_weights()
+	campaign_changed.emit(campaign_target, campaign_days_left)
+
+
 # Daily keeper wage bill at the current headcount.
 func keeper_wage_bill() -> int:
 	if staff == null:
@@ -617,6 +682,8 @@ func _save_game_state() -> Dictionary:
 		"hired_keepers": hired_keepers,
 		"current_weather": String(current_weather),
 		"difficulty": String(scenario.difficulty) if scenario != null else "standard",
+		"campaign_target": String(campaign_target),
+		"campaign_days_left": campaign_days_left,
 		"exhibits": exhibits,
 	}
 
@@ -638,6 +705,14 @@ func _load_game_state(data: Dictionary) -> void:
 	hired_keepers = int(data.get("hired_keepers", 0))
 	current_weather = StringName(data.get("current_weather", current_weather))
 	set_ticket_bracket(StringName(data.get("ticket_bracket", "standard")))
+	# Marketing campaign — re-apply (or clear) the spawn-weight boost to match.
+	campaign_target = StringName(data.get("campaign_target", ""))
+	campaign_days_left = int(data.get("campaign_days_left", 0))
+	if campaign_days_left > 0:
+		_apply_campaign_weights()
+	else:
+		campaign_target = &""
+		_restore_campaign_weights()
 
 	# Rebuild placements directly (NOT via add_placement — that would charge
 	# the build cost again and double-register maintenance, which Ledger

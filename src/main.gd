@@ -97,6 +97,8 @@ var _admin_bracket_buttons: Dictionary = {}   # bracket id (StringName) -> Butto
 var _admin_fee_caption: Label
 var _admin_open_label: Label
 var _admin_staff_value: Label
+var _admin_campaign_label: Label
+var _admin_campaign_buttons: Dictionary = {}   # archetype id -> Button
 var _arena_modal: Control
 var _arena_body: VBoxContainer
 var _arena_subject_id: int = 0   # entity_instance_id of the open arena
@@ -966,10 +968,10 @@ func _build_admin_modal(parent: Control) -> void:
 
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.offset_left = -260
-	card.offset_top = -180
-	card.offset_right = 260
-	card.offset_bottom = 180
+	card.offset_left = -280
+	card.offset_top = -250
+	card.offset_right = 280
+	card.offset_bottom = 250
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_admin_modal.add_child(card)
@@ -981,9 +983,16 @@ func _build_admin_modal(parent: Control) -> void:
 	margin.add_theme_constant_override("margin_bottom", 18)
 	card.add_child(margin)
 
+	# Scroll so the admin sections (pricing, hours, staff, marketing) never
+	# clip on short windows.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	margin.add_child(scroll)
+
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 14)
-	margin.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
 
 	var header := HBoxContainer.new()
 	col.add_child(header)
@@ -1098,6 +1107,35 @@ func _build_admin_modal(parent: Control) -> void:
 	staff_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(staff_hint)
 
+	col.add_child(HSeparator.new())
+
+	# Marketing campaigns — promote a guest archetype for a few days.
+	var mkt_label := Label.new()
+	mkt_label.text = "Marketing"
+	mkt_label.add_theme_font_size_override("font_size", 14)
+	mkt_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	col.add_child(mkt_label)
+	var mkt_row := HBoxContainer.new()
+	mkt_row.add_theme_constant_override("separation", 8)
+	col.add_child(mkt_row)
+	for target in [&"family", &"child", &"enthusiast"]:
+		var at: AgentType = ContentDB.get_agent_type(target)
+		if at == null:
+			continue
+		var b := Button.new()
+		b.text = "Promote\n%s" % at.display_name
+		b.custom_minimum_size = Vector2(0, 44)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.focus_mode = Control.FOCUS_NONE
+		b.pressed.connect(_on_run_campaign.bind(target))
+		mkt_row.add_child(b)
+		_admin_campaign_buttons[target] = b
+	_admin_campaign_label = Label.new()
+	_admin_campaign_label.add_theme_font_size_override("font_size", 11)
+	_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_campaign_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_campaign_label)
+
 
 func _open_admin_modal() -> void:
 	_refresh_admin_modal()
@@ -1138,6 +1176,7 @@ func _refresh_admin_modal() -> void:
 	if _admin_staff_value != null:
 		_admin_staff_value.text = "%d  ·  $%d/day" % [
 			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
+	_refresh_campaign_controls()
 
 
 func _on_pick_ticket_bracket(id: StringName) -> void:
@@ -1147,6 +1186,39 @@ func _on_pick_ticket_bracket(id: StringName) -> void:
 		_push_log("[color=#f4d35e]Ticket price → %s ($%d).[/color]" %
 			[b["label"], int(b["price"])])
 	_refresh_admin_modal()
+
+
+func _on_run_campaign(target: StringName) -> void:
+	var at: AgentType = ContentDB.get_agent_type(target)
+	var label: String = at.display_name if at != null else String(target)
+	if ZooBootstrap.start_campaign(target):
+		_push_log("[color=#f4d35e]📣 Campaign launched:[/color] promoting %s for %d days." %
+			[label, ZooBootstrap.marketing.campaign_days])
+	elif ZooBootstrap.campaign_days_left > 0:
+		_push_log("[color=#e76f51]A campaign is already running.[/color]")
+	else:
+		_push_log("[color=#e76f51]Not enough cash for a campaign ($%d).[/color]" %
+			ZooBootstrap.marketing.campaign_cost)
+	_refresh_admin_modal()
+
+
+func _refresh_campaign_controls() -> void:
+	if _admin_campaign_label == null:
+		return
+	var active: bool = ZooBootstrap.campaign_days_left > 0
+	var can_afford: bool = Ledger.get_balance() >= ZooBootstrap.marketing.campaign_cost
+	for id in _admin_campaign_buttons.keys():
+		(_admin_campaign_buttons[id] as Button).disabled = active or not can_afford
+	if active:
+		var at: AgentType = ContentDB.get_agent_type(ZooBootstrap.campaign_target)
+		var label: String = at.display_name if at != null else String(ZooBootstrap.campaign_target)
+		_admin_campaign_label.text = "Promoting %s — %d day(s) left." % [
+			label, ZooBootstrap.campaign_days_left]
+		_admin_campaign_label.add_theme_color_override("font_color", Color("#f4d35e"))
+	else:
+		_admin_campaign_label.text = "Spend $%d to pull more of a guest type for %d days." % [
+			ZooBootstrap.marketing.campaign_cost, ZooBootstrap.marketing.campaign_days]
+		_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
 
 
 func _bump_keepers(delta: int) -> void:
