@@ -28,8 +28,8 @@ base decay (needs.md) is slow.
 
 | need_id  | price | revenue_source | spillover_need | spillover_amount |
 | -------- | ----- | -------------- | -------------- | ---------------- |
-| hunger   | 5     | food_stand     | restroom       | 0.30             |
-| thirst   | 3     | drink_stand    | restroom       | 0.40             |
+| hunger   | 5     | food_stand     | restroom       | 0.15             |
+| thirst   | 3     | drink_stand    | restroom       | 0.20             |
 | restroom | 0     | restroom       |                | 0.0              |
 | energy   | 0     | bench          |                | 0.0              |
 

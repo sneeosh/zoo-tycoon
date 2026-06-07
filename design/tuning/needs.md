@@ -11,19 +11,23 @@ decay is deliberately slow; eating and drinking are what fill the
 bladder, not the passage of time.
 
 Decay rates are tuned against balance.md ticks_per_day = 800 and visitor
-stay_duration 730–1530 ticks (≈1–2 in-park days):
+stay_duration 730–1530 ticks (≈1–2 in-park days). They were HALVED after
+playtesting: with four needs plus the eat→restroom spillover, the original
+rates starved guests faster than a small park's amenities could serve them
+(min-need hovered near 0), which tanked satisfaction and reputation. Gentler
+decay lets a modest set of amenities keep guests content:
 
-  - hunger   0.0015/tick → full→threshold(0.40) in ~400 ticks (≈twice/day)
-  - thirst   0.0018/tick → faster than hunger; guests drink more often
-  - restroom 0.0008/tick → slow base; spillover from eating/drinking dominates
-  - energy   0.0011/tick → full→threshold(0.35) in ~590 ticks (≈once/stay)
+  - hunger   0.0008/tick → full→threshold(0.40) in ~750 ticks (≈once/visit)
+  - thirst   0.0010/tick → a little faster than hunger
+  - restroom 0.0005/tick → slow base; spillover from eating/drinking dominates
+  - energy   0.0006/tick → slowest; guests tire late in a visit
 -->
 
 ## Needs
 
 | id       | display_name | base_decay_per_tick |
 | -------- | ------------ | ------------------- |
-| hunger   | Hunger       | 0.0015              |
-| thirst   | Thirst       | 0.0018              |
-| restroom | Restroom     | 0.0008              |
-| energy   | Energy       | 0.0011              |
+| hunger   | Hunger       | 0.0008              |
+| thirst   | Thirst       | 0.0010              |
+| restroom | Restroom     | 0.0005              |
+| energy   | Energy       | 0.0006              |

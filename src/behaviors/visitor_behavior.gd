@@ -54,6 +54,24 @@ const LINGER_UNTIL := &"linger_until"     # 0 = not currently lingering
 # during the walk to the exit, which would penalize otherwise-happy
 # visitors. This captures the "review" they'd write on the way out.
 const DEPARTURE_SATISFACTION := &"departure_satisfaction"
+# Running mean of satisfaction across the whole visit — the visitor's overall
+# "review", used for the reputation swing on despawn. Averaging beats a single
+# end-of-visit snapshot, which was noisy (one decaying need at the exit tick
+# could turn a great visit into a bad review).
+# Recency-weighted mood (exponential moving average of satisfaction). It's the
+# guest's "review" on the way out: it tracks how they felt *recently*, so a
+# visit that ended badly (needs collapsed, couldn't be served) leaves a poor
+# review even if it started fine — while smoothing the per-tick noise that a
+# single end-of-visit snapshot suffered from.
+const MOOD := &"mood"
+const MOOD_RATE: float = 0.012
+# Enjoyment — the "saw amazing animals" half of satisfaction. Decays slowly and
+# is topped up each time the guest views an exhibit, by how good that exhibit
+# is. This is what ties reputation to building great exhibits (the genre's
+# core loop), not just to keeping the restrooms stocked.
+const ENJOYMENT := &"enjoyment"
+const ENJOY_DECAY: float = 0.0013     # per tick; a boring park bores guests
+const VIEW_BOOST: float = 0.22        # added per exhibit view, scaled by appeal
 
 const ST_BROWSING := &"browsing"
 const ST_SEEKING := &"seeking"
@@ -90,6 +108,8 @@ func on_spawn(agent: Agent) -> void:
 	agent.behavior_state[SPAWN_TICK] = SimClock.current_tick
 	agent.behavior_state[STATE] = ST_BROWSING
 	agent.behavior_state[BROWSE_TARGET] = 0
+	agent.behavior_state[MOOD] = 0.6
+	agent.behavior_state[ENJOYMENT] = 0.5
 	_pick_browse_target(agent)
 
 
@@ -107,6 +127,15 @@ func on_need_threshold_crossed(agent: Agent, need_id: StringName) -> void:
 
 func on_tick(agent: Agent) -> void:
 	var state: StringName = agent.behavior_state.get(STATE, ST_BROWSING)
+	# Enjoyment ebbs over time (so a dull park bores guests); views top it up.
+	agent.behavior_state[ENJOYMENT] = maxf(0.0,
+		float(agent.behavior_state.get(ENJOYMENT, 0.5)) - ENJOY_DECAY)
+	# Track the recency-weighted mood (the despawn review) only DURING the
+	# visit — not on the long walk to the exit, where needs decay with no
+	# refills and would poison an otherwise-good review.
+	if state != ST_LEAVING:
+		agent.behavior_state[MOOD] = float(agent.behavior_state.get(MOOD, 0.6)) * (1.0 - MOOD_RATE) \
+			+ agent.satisfaction * MOOD_RATE
 
 	if state == ST_LEAVING:
 		_nav_leave(agent)
@@ -143,11 +172,11 @@ func on_despawn(agent: Agent) -> void:
 	# departure-decision time, not the moment of despawn, because hunger
 	# decay during the walk to the exit would unfairly penalize visitors
 	# who had a great visit but got peckish on the way home.
-	var rating: float = agent.behavior_state.get(
-		DEPARTURE_SATISFACTION, agent.satisfaction)
-	if rating >= 0.7:
+	# The guest's review is their recency-weighted mood on the way out.
+	var rating: float = float(agent.behavior_state.get(MOOD, agent.satisfaction))
+	if rating >= 0.68:
 		ProgressionManager.add_reputation(1)
-	elif rating < 0.35:
+	elif rating < 0.42:
 		ProgressionManager.add_reputation(-1)
 
 
@@ -213,6 +242,7 @@ func _linger_and_donate(agent: Agent, region: Region) -> void:
 	if linger_until == 0:
 		agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
 			_linger_duration_for_region(agent, region)
+		_apply_view_enjoyment(agent, region)
 		_maybe_donate(agent, region)
 	elif SimClock.current_tick >= linger_until:
 		agent.behavior_state[LINGER_UNTIL] = 0
@@ -382,6 +412,18 @@ func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
 		ZooBootstrap.money_floated.emit(total_charge, agent.position)
 
 
+# A guest views an exhibit: top up enjoyment by how good the exhibit is (its
+# strongest appeal axis). Great exhibits delight; dull ones barely register.
+func _apply_view_enjoyment(agent: Agent, region: Region) -> void:
+	var appeal: Dictionary = EffectResolver.compute_region_appeal(region)
+	var q: float = 0.0
+	for v in appeal.values():
+		if v > q:
+			q = v
+	var e: float = float(agent.behavior_state.get(ENJOYMENT, 0.5))
+	agent.behavior_state[ENJOYMENT] = minf(1.0, e + VIEW_BOOST * q)
+
+
 const DONATION_BOX_TAG := &"donation_box"
 
 
@@ -445,8 +487,8 @@ func _step_browsing(agent: Agent) -> void:
 		if linger_until == 0:
 			agent.behavior_state[LINGER_UNTIL] = SimClock.current_tick + \
 				_linger_duration_for_region(agent, region)
-			# The guest has just settled in to watch this exhibit — the moment
-			# they might drop a coin in its Donation Box.
+			# Settled in to watch — enjoy it, and maybe tip the box.
+			_apply_view_enjoyment(agent, region)
 			_maybe_donate(agent, region)
 		elif SimClock.current_tick >= linger_until:
 			_pick_browse_target(agent)

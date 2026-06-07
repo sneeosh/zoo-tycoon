@@ -217,7 +217,7 @@ func test_visitor_seeks_and_buys_food_when_hungry() -> void:
 	# away, walking speed ~0.18/tick → ~30 ticks). After eating, hunger
 	# decays again. We can't snapshot hunger==1.0 at an arbitrary
 	# end-tick — check the transaction log for the food purchase.
-	for i in range(600):
+	for i in range(1000):
 		SimClock.advance_tick()
 
 	var has_food_purchase := false
@@ -298,7 +298,7 @@ func test_restaurant_is_a_one_stop_meal() -> void:
 	# and buys a "Meal" — the multi-need one-stop refill, not a single "Food".
 	EntityRegistry.place(&"restaurant", Vector2i(3, 3))
 	AgentPool.spawn(&"visitor", Vector2(0, 0))
-	for i in range(600):
+	for i in range(1000):
 		SimClock.advance_tick()
 	var has_meal := false
 	for tx: Dictionary in Ledger.transactions:
@@ -350,7 +350,7 @@ func test_guest_walks_only_on_paths_to_reach_food() -> void:
 	assert_not_null(net)
 	var aid := AgentPool.spawn(&"visitor", Vector2(0, 0))
 	var off_path_ticks := 0
-	for i in range(700):
+	for i in range(1000):
 		SimClock.advance_tick()
 		var a := AgentPool.get_agent(aid)
 		if a == null:
