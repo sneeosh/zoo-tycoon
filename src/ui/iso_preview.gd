@@ -747,14 +747,28 @@ func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 		"br": a = right; b = bottom
 		"bl": a = left;  b = bottom
 	var up := Vector2(0, -FENCE_H)
-	var post := Color("#3f372d")
-	var rail := Color("#7a6c58")
-	# Posts with a touch of shadow.
-	draw_line(a + Vector2(1, 1), b + Vector2(1, 1), Color(0, 0, 0, 0.25), 2.0)
-	draw_line(a, a + up, post, 2.5)
-	draw_line(b, b + up, post, 2.5)
-	draw_line(a + up, b + up, rail, 2.0)
-	draw_line(a + up * 0.5, b + up * 0.5, rail.darkened(0.1), 1.5)
+	var post := Color("#4a3f30")
+	var post_hi := Color("#6f5c45")
+	var rail := Color("#8a7456")
+	var rail_hi := Color("#a88e69")
+	var rail_lo := Color("#5d4d39")
+	# Ground shadow.
+	draw_line(a + Vector2(1.5, 2.0), b + Vector2(1.5, 2.0), Color(0, 0, 0, 0.28), 3.0)
+	# Two horizontal rails drawn as thick bars (top + middle) so the fence has
+	# heft instead of reading as wireframe lines.
+	var th := Vector2(0, 3.0)
+	for frac: float in [1.0, 0.5]:
+		var ra := a + up * frac
+		var rb := b + up * frac
+		draw_colored_polygon(PackedVector2Array([ra, rb, rb + th, ra + th]), rail)
+		draw_line(ra, rb, rail_hi, 1.0)
+		draw_line(ra + th, rb + th, rail_lo, 1.0)
+	# Chunky end posts (a vertical bar with a lit front edge and a rounded cap).
+	for p: Vector2 in [a, b]:
+		var pw := Vector2(2.0, 0)
+		draw_colored_polygon(PackedVector2Array([p - pw, p + pw, p + pw + up, p - pw + up]), post)
+		draw_line(p + up, p, post_hi, 1.5)
+		draw_circle(p + up, 2.2, post_hi)
 
 
 # Bounding box of a region in grid space — centre cell and half-extent, used to
