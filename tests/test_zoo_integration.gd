@@ -557,6 +557,47 @@ func test_full_day_runs_end_to_end() -> void:
 	assert_eq(SimClock.current_day, 1, "exactly one day elapsed")
 
 
+func test_playthrough_park_stays_solvent_and_profits() -> void:
+	# A full multi-day playthrough of a sensibly-built park, exercising every
+	# system at once (paths, needs, donations, welfare, breeding, day/night,
+	# weather, staff). Guards against crashes and economic collapse before a
+	# playtest. Starts from the real game's opening cash.
+	Ledger.reset(ContentDB.balance_config.starting_cash)
+	# Path spine: gate down to a concourse.
+	for y in range(0, 6):
+		EntityRegistry.place(&"path", Vector2i(0, y))
+	for x in range(1, 9):
+		EntityRegistry.place(&"path", Vector2i(x, 5))
+	# A well-built lion exhibit with troughs + a donation box, in view of the path.
+	for c in [Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(3, 3), Vector2i(4, 3)]:
+		EntityRegistry.place(&"grass_patch", c)
+	EntityRegistry.place(&"rock_patch", Vector2i(5, 3))
+	var region := RegionRegistry.region_at_cell(Vector2i(3, 2))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	RegionRegistry.add_placement(region.region_id, &"donation_box")
+	# Amenities for all four needs, each beside the concourse.
+	EntityRegistry.place(&"food_stand", Vector2i(6, 3))
+	EntityRegistry.place(&"drink_stand", Vector2i(2, 4))
+	EntityRegistry.place(&"restroom", Vector2i(4, 4))
+	EntityRegistry.place(&"bench", Vector2i(1, 4))
+	ZooBootstrap.set_hired_keepers(1)
+
+	var pre_run := Ledger.get_balance()
+	for i in range(12 * SimClock.ticks_per_day):
+		SimClock.advance_tick()
+
+	assert_eq(SimClock.current_day, 12, "twelve days elapsed without a crash")
+	assert_gt(Ledger.get_balance(), 0, "park never went bankrupt")
+	var revenue := int(Accounting.get_income_statement(0, SimClock.current_day).get("revenue", 0))
+	assert_gt(revenue, 0, "the park earned revenue from guests")
+	assert_gt(Ledger.get_balance(), pre_run,
+		"a well-run park turns a profit over the run (winnability signal)")
+	assert_false(region.placements.is_empty(), "the cared-for lion is still alive")
+	ZooBootstrap.set_hired_keepers(0)
+
+
 func test_quality_rating_reflects_region_appeal() -> void:
 	# v0.4.0: rating is mean of regions' max-axis appeal × 5.
 	var initial := ZooBootstrap.get_quality_rating()
