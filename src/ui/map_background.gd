@@ -47,27 +47,52 @@ func _draw_region_auras() -> void:
 		var cell_set := {}
 		for c in region.cells:
 			cell_set[c] = true
-		var fill_color := Color(color.r, color.g, color.b, 0.38)
+		var fill_color := Color(color.r, color.g, color.b, 0.30)
 		for c in region.cells:
 			var rect := Rect2(_cell_to_screen(c),
 				Vector2(TILE_SIZE, TILE_SIZE))
 			draw_rect(rect, fill_color, true)
-		var stroke := Color(color.r, color.g, color.b, 0.85)
-		var w: float = 2.5
-		for c in region.cells:
-			var screen := _cell_to_screen(c)
-			var p0 := screen
-			var p1 := screen + Vector2(TILE_SIZE, 0)
-			var p2 := screen + Vector2(TILE_SIZE, TILE_SIZE)
-			var p3 := screen + Vector2(0, TILE_SIZE)
-			if not cell_set.has(c + Vector2i(0, -1)):
-				draw_line(p0, p1, stroke, w)
-			if not cell_set.has(c + Vector2i(1, 0)):
-				draw_line(p1, p2, stroke, w)
-			if not cell_set.has(c + Vector2i(0, 1)):
-				draw_line(p2, p3, stroke, w)
-			if not cell_set.has(c + Vector2i(-1, 0)):
-				draw_line(p3, p0, stroke, w)
+		# A real fence around the perimeter — a rail with posts — so a pen
+		# reads as an enclosure (Zoo-Tycoon style) instead of a tinted square.
+		_draw_region_fence(region, cell_set)
+
+
+# Perimeter fence: a shaded rail along each boundary edge plus square posts at
+# the corners. Drawn slightly proud of the ground with a drop shadow for a
+# hint of height even in the top-down view.
+func _draw_region_fence(region: Region, cell_set: Dictionary) -> void:
+	var rail := Color("#6f6356")
+	var rail_hi := Color("#8a7c6b")
+	var shadow := Color(0, 0, 0, 0.28)
+	var post := Color("#3f372d")
+	var post_hi := Color("#5b5142")
+	var posts := {}   # corner (Vector2i) -> true, to dedupe shared corners
+	for c in region.cells:
+		var s := _cell_to_screen(c)
+		var corners := [s, s + Vector2(TILE_SIZE, 0),
+			s + Vector2(TILE_SIZE, TILE_SIZE), s + Vector2(0, TILE_SIZE)]
+		var edges := [
+			[Vector2i(0, -1), 0, 1],   # top
+			[Vector2i(1, 0), 1, 2],    # right
+			[Vector2i(0, 1), 2, 3],    # bottom
+			[Vector2i(-1, 0), 3, 0],   # left
+		]
+		for e in edges:
+			if cell_set.has(c + e[0]):
+				continue
+			var a: Vector2 = corners[e[1]]
+			var b: Vector2 = corners[e[2]]
+			draw_line(a + Vector2(1, 2), b + Vector2(1, 2), shadow, 4.0)
+			draw_line(a, b, rail, 3.0)
+			draw_line(a, b, rail_hi, 1.0)
+			# Mark the two endpoints as posts.
+			posts[Vector2i(roundi(a.x), roundi(a.y))] = a
+			posts[Vector2i(roundi(b.x), roundi(b.y))] = b
+	for key in posts.keys():
+		var p: Vector2 = posts[key]
+		draw_rect(Rect2(p - Vector2(2, 3), Vector2(5, 7)), shadow, true)
+		draw_rect(Rect2(p - Vector2(3, 4), Vector2(6, 8)), post, true)
+		draw_rect(Rect2(p - Vector2(3, 4), Vector2(6, 2)), post_hi, true)
 
 
 func _region_tint(region: Region) -> Color:
