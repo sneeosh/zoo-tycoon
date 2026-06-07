@@ -22,7 +22,9 @@ in placeables.md — they go inside regions, not on the grid directly.
 | water_patch | Water Enclosure | 140        | 2                | 1           | 1           | water_patch  |           |                | pen       | water,grass  |
 | cage_panel  | Aviary Cage     | 120        | 2                | 1           | 1           | cage_panel   |           |                | aviary    | tall_cage,grass |
 | food_stand  | Food Stand      | 200        | 3                | 2           | 2           | food_stand   | hunger    |                |           |              |
-| restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     |           |                |           |              |
+| drink_stand | Drink Stand     | 160        | 2                | 1           | 1           | drink_stand  | thirst    |                |           |              |
+| restroom    | Restroom        | 150        | 2                | 1           | 1           | restroom     | restroom  |                |           |              |
+| bench       | Bench           | 80         | 1                | 1           | 1           | bench        | energy    |                |           |              |
 | arena       | Arena           | 1500       | 15               | 3           | 3           | arena        |           |                |           |              |
 
 ## Effects

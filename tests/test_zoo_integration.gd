@@ -43,10 +43,42 @@ func test_zoo_entities_loaded() -> void:
 
 
 func test_visitor_agent_type_loaded() -> void:
+	# v0.5.x — four-need guest model (hunger / thirst / restroom / energy).
 	var visitor: AgentType = ContentDB.get_agent_type(&"visitor")
 	assert_not_null(visitor)
-	assert_eq(visitor.needs.size(), 1, "trivial: one hunger need")
-	assert_eq(visitor.needs[0].need.id, &"hunger")
+	assert_eq(visitor.needs.size(), 4, "four guest needs")
+	var need_ids := {}
+	for ns: NeedSpec in visitor.needs:
+		need_ids[ns.need.id] = true
+	assert_true(need_ids.has(&"hunger"), "hunger need present")
+	assert_true(need_ids.has(&"thirst"), "thirst need present")
+	assert_true(need_ids.has(&"restroom"), "restroom need present")
+	assert_true(need_ids.has(&"energy"), "energy need present")
+
+
+func test_amenities_satisfy_each_need() -> void:
+	# Every guest need must have at least one satisfier entity, or the need
+	# is unmeetable and the four-need model just punishes the player.
+	var satisfied := {}
+	for def_id in ContentDB.entity_defs.keys():
+		var ed: EntityDef = ContentDB.entity_defs[def_id]
+		for need_id in ed.satisfies:
+			satisfied[need_id] = true
+	for need_id in [&"hunger", &"thirst", &"restroom", &"energy"]:
+		assert_true(satisfied.has(need_id),
+			"need '%s' has a satisfier entity" % need_id)
+
+
+func test_services_config_loads() -> void:
+	# ServiceConfig compiles design/tuning/services.md (game-side tuning).
+	var sc := ServiceConfig.load_from_tuning()
+	assert_eq(sc.price_for(&"hunger"), 5, "food costs $5")
+	assert_eq(sc.price_for(&"thirst"), 3, "a drink costs $3")
+	assert_eq(sc.price_for(&"restroom"), 0, "restrooms are free")
+	# Eating fills the bladder — the original game's spillover twist.
+	var spill := sc.spillover_for(&"hunger")
+	assert_eq(spill[0], &"restroom", "eating spills into the restroom need")
+	assert_gt(float(spill[1]), 0.0, "spillover amount is positive")
 
 
 # --- Adapter scripts registered with the engine -------------------------

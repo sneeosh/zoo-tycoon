@@ -21,7 +21,9 @@ const ENTITY_COLORS := {
 	&"water_patch": Color("#3a7eb2"),
 	&"cage_panel":  Color("#7e8a92"),
 	&"food_stand":  Color("#e27d60"),
+	&"drink_stand": Color("#5aa9e6"),
 	&"restroom":    Color("#41b3a3"),
+	&"bench":       Color("#b08968"),
 	&"arena":       Color("#a86a32"),
 }
 
@@ -2054,9 +2056,14 @@ func _stage_starter_park() -> void:
 		for y in range(8, 10):
 			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# --- Amenities along the path from entrance to exhibits. ---
-	EntityRegistry.place(&"food_stand", Vector2i(14, 4))
-	EntityRegistry.place(&"restroom",   Vector2i(14, 9))
+	# --- Amenities along the path from entrance to exhibits. The starter
+	# park covers all four guest needs (food / drink / restroom / rest) so a
+	# first-time player sees a contented crowd before they learn to balance
+	# them. ---
+	EntityRegistry.place(&"food_stand",  Vector2i(14, 4))
+	EntityRegistry.place(&"drink_stand", Vector2i(13, 6))
+	EntityRegistry.place(&"restroom",    Vector2i(14, 9))
+	EntityRegistry.place(&"bench",       Vector2i(11, 6))
 
 	# --- Lion + its infrastructure. ---
 	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))

@@ -152,16 +152,46 @@ func _step_toward_target(agent: Agent) -> void:
 	var to_target := target_pos - agent.position
 	var dist := to_target.length()
 	if dist <= REACH_DISTANCE:
-		if agent.seeking_need == &"hunger":
-			var price := _value_model.compute_food_purchase(agent)
-			Ledger.post_income(price, "Food", inst.entity_def_id)
-			ZooBootstrap.money_floated.emit(price, agent.position)
-			agent.need_levels[agent.seeking_need] = 1.0
+		_satisfy_need_at(agent, inst)
 		agent.target_entity_id = 0
 		agent.seeking_need = &""
 		agent.behavior_state[STATE] = ST_BROWSING
 		return
 	agent.position += to_target.normalized() * _walking_speed(agent)
+
+
+# Player-facing money-float label per need. Defaults to a capitalized need
+# id so a new need without an entry still reads sensibly.
+const NEED_LABELS := {
+	&"hunger":   "Food",
+	&"thirst":   "Drink",
+	&"restroom": "Restroom",
+	&"energy":   "Rest",
+}
+
+
+# A guest reached a satisfier for `agent.seeking_need`. Charge the service
+# price (if any), refill the need, and apply the eat→restroom spillover —
+# the original Zoo Tycoon twist where meeting one need worsens another.
+# All pricing/spillover comes from design/tuning/services.md via ServiceConfig.
+func _satisfy_need_at(agent: Agent, inst: EntityInstance) -> void:
+	var need: StringName = agent.seeking_need
+	if need == &"":
+		return
+	var services: ServiceConfig = ZooBootstrap.services
+	if services != null:
+		var price := services.price_for(need)
+		if price > 0:
+			var label: String = NEED_LABELS.get(need, String(need).capitalize())
+			Ledger.post_income(price, label, services.source_for(need))
+			ZooBootstrap.money_floated.emit(price, agent.position)
+		var spill: Array = services.spillover_for(need)
+		var spill_need: StringName = spill[0]
+		var spill_amt: float = spill[1]
+		if spill_need != &"" and agent.need_levels.has(spill_need):
+			agent.need_levels[spill_need] = maxf(
+				0.0, float(agent.need_levels[spill_need]) - spill_amt)
+	agent.need_levels[need] = 1.0
 
 
 func _step_browsing(agent: Agent) -> void:

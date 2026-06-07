@@ -23,6 +23,10 @@ var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 # Exposed so the UI can show targets, evaluate end-game, etc.
 var scenario: Scenario
 
+# Per-need service pricing + spillover (design/tuning/services.md). Read by
+# VisitorBehavior when a guest satisfies a need at a satisfier entity.
+var services: ServiceConfig
+
 # Park-admin state. Editable via the entrance-gate admin modal.
 # entry_fee is what new visitors pay on arrival; park_open gates the
 # AgentPool spawn loop (sets base_spawn_rate to 0 when closed so the
@@ -76,6 +80,8 @@ func _ready() -> void:
 	# explicit categorization gives a cleaner Income Statement.
 	Accounting.register_category(&"entry",       Accounting.Category.REVENUE)
 	Accounting.register_category(&"food_stand",  Accounting.Category.REVENUE)
+	Accounting.register_category(&"drink_stand", Accounting.Category.REVENUE)
+	Accounting.register_category(&"donation",    Accounting.Category.REVENUE)
 	Accounting.register_category(&"zoo_utilities", Accounting.Category.OPERATING_EXPENSE)
 	Accounting.register_category(&"zoo_staff",     Accounting.Category.OPERATING_EXPENSE)
 
@@ -84,6 +90,7 @@ func _ready() -> void:
 	ProgressionManager.force_unlock(&"start")
 
 	scenario = Scenario.load_from_tuning()
+	services = ServiceConfig.load_from_tuning()
 
 	# Cache the engine's default spawn rate so the open/closed toggle can
 	# restore it later. ContentDB has already applied balance.md by now.
