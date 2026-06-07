@@ -27,7 +27,10 @@ func _ready() -> void:
 	set_process(true)
 
 
-func _process(_d: float) -> void:
+var _time := 0.0
+
+func _process(d: float) -> void:
+	_time += d
 	queue_redraw()
 
 
@@ -189,18 +192,32 @@ func _draw_sorted_objects() -> void:
 			"d": float(inst.position.x + inst.position.y) + float(fp.x + fp.y) * 0.5,
 			"sprite": String(def.sprite_key), "fp": fp, "cell": inst.position, "label": def.display_name})
 
-	# Animals inside exhibits.
+	# Animals inside exhibits. Animals amble around their enclosure (a purely
+	# presentational wander — the sim still treats them as fixed placements);
+	# infrastructure (troughs, donation boxes) stays put.
 	for region: Region in RegionRegistry.all_regions():
+		if region.cells.is_empty():
+			continue
+		var bb := _region_bounds(region)
 		for i in region.placements.size():
 			var p: Placement = region.placements[i]
 			var pdef: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
 			if pdef == null:
 				continue
-			var anchor: Vector2i = p.state.get("primary_cell",
-				region.cells[i % region.cells.size()] if not region.cells.is_empty() else Vector2i.ZERO)
-			draws.append({"d": float(anchor.x + anchor.y) + 0.5,
-				"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": anchor,
-				"label": pdef.display_name, "small": pdef.appeal_contribution.is_empty()})
+			var home: Vector2i = region.cells[i % region.cells.size()]
+			var is_animal := not pdef.appeal_contribution.is_empty()
+			if is_animal:
+				var seed := _hash2(home.x + i * 97 + 5, home.y + i * 53 + 3)
+				var speed: float = 0.8 if (&"bird" in pdef.own_tags) else 0.45
+				var pos := _wander_in(region, bb, seed, _time * speed)
+				var bob := sin(_time * speed * 2.3 + float(seed % 17)) * 1.4
+				draws.append({"d": pos.x + pos.y + 0.5,
+					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "pos": pos,
+					"bob": bob, "label": pdef.display_name, "small": false})
+			else:
+				draws.append({"d": float(home.x + home.y) + 0.4,
+					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
+					"label": pdef.display_name, "small": true})
 
 	# Guests.
 	for aid in AgentPool.get_agents_by_type(&"visitor"):
@@ -247,13 +264,60 @@ func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 	draw_line(a + up * 0.5, b + up * 0.5, rail.darkened(0.1), 1.5)
 
 
+# Bounding box of a region in grid space — centre cell and half-extent, used to
+# keep the animal wander inside the enclosure.
+func _region_bounds(region: Region) -> Dictionary:
+	var mn := Vector2(INF, INF)
+	var mx := Vector2(-INF, -INF)
+	for c in region.cells:
+		mn.x = minf(mn.x, c.x); mn.y = minf(mn.y, c.y)
+		mx.x = maxf(mx.x, c.x); mx.y = maxf(mx.y, c.y)
+	return {"center": (mn + mx) * 0.5, "half": (mx - mn) * 0.5}
+
+
+# A smooth, slow, per-animal wander offset in roughly [-1, 1]^2 — summed sines
+# at incommensurate frequencies so the path never visibly repeats.
+func _wander_offset(seed: int, t: float) -> Vector2:
+	var pa := float(seed % 619) * 0.01015
+	var pb := float((seed / 3) % 631) * 0.00996
+	var fa := 0.7 + float(seed % 5) * 0.06
+	var fb := 0.6 + float((seed / 7) % 5) * 0.07
+	var ox := 0.66 * sin(t * fa + pa) + 0.34 * sin(t * fa * 1.9 + pa * 2.3)
+	var oy := 0.66 * sin(t * fb + pb) + 0.34 * sin(t * fb * 2.1 + pb * 1.7)
+	return Vector2(ox, oy)
+
+
+# Wandered float-grid position, kept inside the enclosure: drift within the
+# bounding box, then snap to the nearest real cell if the shape is non-convex.
+func _wander_in(region: Region, bb: Dictionary, seed: int, t: float) -> Vector2:
+	var off := _wander_offset(seed, t)
+	var half: Vector2 = bb["half"]
+	var hx := maxf(0.0, half.x - 0.35)
+	var hy := maxf(0.0, half.y - 0.35)
+	var pos: Vector2 = bb["center"] + Vector2(off.x * hx, off.y * hy)
+	if not (Vector2i(roundi(pos.x), roundi(pos.y)) in region.cells):
+		var best := pos
+		var bestd := INF
+		for c in region.cells:
+			var dd := Vector2(c).distance_squared_to(pos)
+			if dd < bestd:
+				bestd = dd; best = Vector2(c)
+		pos = best
+	return pos
+
+
 func _draw_billboard(dr: Dictionary) -> void:
 	var fp: Vector2i = dr["fp"]
-	var cell: Vector2i = dr["cell"]
-	# Anchor at the footprint's centre tile.
-	var cx := cell.x + float(fp.x) * 0.5 - 0.5
-	var cy := cell.y + float(fp.y) * 0.5 - 0.5
-	var base := _tile_center(cx, cy)
+	var base: Vector2
+	if dr.has("pos"):
+		var pos: Vector2 = dr["pos"]
+		base = _tile_center(pos.x, pos.y)
+	else:
+		var cell: Vector2i = dr["cell"]
+		# Anchor at the footprint's centre tile.
+		var cx := cell.x + float(fp.x) * 0.5 - 0.5
+		var cy := cell.y + float(fp.y) * 0.5 - 0.5
+		base = _tile_center(cx, cy)
 	var w: float = maxf(fp.x, fp.y) * TW * (0.45 if dr.get("small", false) else 0.78)
 	var sprite := _sprite(dr["sprite"])
 	# Seat the sprite by its actual opaque pixels rather than a fixed lift, so
@@ -264,7 +328,9 @@ func _draw_billboard(dr: Dictionary) -> void:
 	var foot: float = meta["foot"]
 	var cxf: float = meta["cx"]
 	var sink := 2.0   # let the contact point dip just under the tile centre
-	var rect := Rect2(base - Vector2(cxf * w, foot * w - sink), Vector2(w, w))
+	# A walking bob lifts the sprite only; the shadow stays on the ground.
+	var bob: float = dr.get("bob", 0.0)
+	var rect := Rect2(base - Vector2(cxf * w, foot * w - sink - bob), Vector2(w, w))
 	# Ground shadow (an ellipse) under the opaque footprint's contact point.
 	var shadow_w: float = w * meta["wfrac"]
 	draw_set_transform(base, 0.0, Vector2(1.0, 0.5))
