@@ -43,6 +43,12 @@ var _pan := Vector2.ZERO
 var _last_size := Vector2.ZERO
 var _panning := false
 
+# Floating "+$N" toasts (ZooBootstrap.money_floated), same model as MapView.
+const FLOAT_LIFETIME := 1.4
+const FLOAT_RISE := 1.0       # model-space rise (scales with zoom)
+const FLOAT_LIMIT := 40
+var _money_floats: Array = []
+
 
 func _ready() -> void:
 	# STOP so we receive _gui_input — this is an interactive view now, not a
@@ -50,13 +56,32 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
 	resized.connect(_rebuild_view)
+	ZooBootstrap.money_floated.connect(_on_money_floated)
 
 
 var _time := 0.0
 
 func _process(d: float) -> void:
 	_time += d
+	_tick_money_floats()
 	queue_redraw()
+
+
+func _on_money_floated(amount: int, world_pos: Vector2) -> void:
+	if _money_floats.size() >= FLOAT_LIMIT:
+		_money_floats.pop_front()
+	_money_floats.append({"amount": amount, "world_pos": world_pos,
+		"born_at": Time.get_ticks_msec() / 1000.0})
+
+
+func _tick_money_floats() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	var i := 0
+	while i < _money_floats.size():
+		if now - _money_floats[i]["born_at"] >= FLOAT_LIFETIME:
+			_money_floats.remove_at(i)
+		else:
+			i += 1
 
 
 # Model-space bounding rect of the drawn ground (its four diamond corners).
@@ -154,13 +179,54 @@ func _draw() -> void:
 	draw_set_transform_matrix(_view_xf)
 	_draw_ground()
 	_draw_region_fills()
+	_draw_water_shimmer()
 	_draw_ground_scatter()
 	_draw_sorted_objects()
+	_draw_money_floats()
 	_draw_path_warnings()
 	_draw_preview()
 	# Back to screen space for the full-screen dusk overlay.
 	draw_set_transform_matrix(Transform2D())
 	_draw_day_night()
+
+
+# Animated glints on water-exhibit cells so pools read as water, not flat blue.
+func _draw_water_shimmer() -> void:
+	for region: Region in RegionRegistry.all_regions():
+		if not (&"water" in region.provided_zone_tags):
+			continue
+		for c in region.cells:
+			var ctr := _tile_center(c.x, c.y)
+			var hsh := _hash2(c.x, c.y)
+			for k in 2:
+				var phase: float = _time * 0.7 + float(hsh ^ (k * 53)) * 0.001
+				var yy: float = ctr.y + (float(k) - 0.5) * TH * 0.35 + sin(phase) * 1.5
+				var xoff: float = sin(phase * 1.3) * TW * 0.12
+				var x0: float = ctr.x - TW * 0.16 + xoff
+				draw_line(Vector2(x0, yy), Vector2(x0 + TW * 0.24, yy),
+					Color(1, 1, 1, 0.16), 1.5)
+
+
+# "+$N" toasts rising from where a guest paid. world_pos is in cell coords, so
+# project through _tile_center; drawn under the view transform (scales with
+# zoom along with everything else).
+func _draw_money_floats() -> void:
+	if _money_floats.is_empty():
+		return
+	var font := get_theme_default_font()
+	var now := Time.get_ticks_msec() / 1000.0
+	for entry in _money_floats:
+		var t: float = clampf((now - entry["born_at"]) / FLOAT_LIFETIME, 0.0, 1.0)
+		var alpha := 1.0 - t
+		var base := _tile_center(entry["world_pos"].x, entry["world_pos"].y)
+		var p := Vector2(base.x, base.y - TH - lerpf(0.0, FLOAT_RISE * TH, t))
+		var text := "+$%d" % int(entry["amount"])
+		var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+		var o := p - Vector2(sz.x * 0.5, 0)
+		draw_string(font, o + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+			Color(0, 0, 0, 0.55 * alpha))
+		draw_string(font, o, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+			Color(0.96, 0.83, 0.37, alpha))
 
 
 # Dusk/night tint — same model as the top-down view: dim toward the edges of
@@ -432,7 +498,8 @@ func _draw_sorted_objects() -> void:
 				var bob := sin(_time * speed * 2.3 + float(seed % 17)) * 1.4
 				draws.append({"d": pos.x + pos.y + 0.5,
 					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "pos": pos,
-					"bob": bob, "label": pdef.display_name, "small": false})
+					"bob": bob, "label": pdef.display_name, "small": false,
+					"sick": bool(p.state.get("sick", false))})
 			else:
 				draws.append({"d": float(home.x + home.y) + 0.4,
 					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
@@ -563,6 +630,13 @@ func _draw_billboard(dr: Dictionary) -> void:
 		var col := Color("#9a8f7d")
 		draw_rect(rect, col, true)
 		draw_rect(rect, Color(0, 0, 0, 0.3), false, 1.0)
+	# Sick animals (welfare below the illness threshold) get a red medical
+	# cross, same legibility cue as the top-down view.
+	if dr.get("sick", false):
+		var font := get_theme_default_font()
+		var badge := Vector2(rect.position.x + rect.size.x - 8, rect.position.y + 2)
+		draw_string(font, badge + Vector2(1, 1), "✚", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0, 0, 0, 0.5))
+		draw_string(font, badge, "✚", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("#e76f51"))
 
 
 # Per-sprite anchoring metadata, computed once from the opaque bounding box:
