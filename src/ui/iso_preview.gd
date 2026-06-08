@@ -916,12 +916,15 @@ func _draw_billboard(dr: Dictionary) -> void:
 	# A walking bob lifts the sprite only; the shadow stays on the ground.
 	var bob: float = dr.get("bob", 0.0)
 	var rect := Rect2(base - Vector2(cxf * w, foot * w - sink - bob), Vector2(w, w))
-	# Ground shadow (an ellipse) under the opaque footprint's contact point.
-	# Compose the squash with the view transform, then restore to the view
-	# (not identity) so following draws stay in model space.
+	# Grounding: a directional cast shadow (sheared down-right, consistent sun
+	# from the upper-left) plus a tight contact-AO blob right at the base, so the
+	# object sits in the world instead of on it. Compose the squash with the view
+	# transform, then restore to the view (not identity).
 	var shadow_w: float = w * meta["wfrac"]
-	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1, 0), Vector2(0, 0.5), base))
-	draw_circle(Vector2.ZERO, shadow_w * 0.42, Color(0, 0, 0, 0.28))
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.55, 0.42), base))
+	draw_circle(Vector2.ZERO, shadow_w * 0.44, Color(0, 0, 0, 0.20))
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 0.42), base))
+	draw_circle(Vector2.ZERO, shadow_w * 0.32, Color(0, 0, 0, 0.24))
 	draw_set_transform_matrix(_view_xf)
 	if sprite != null:
 		draw_texture_rect(sprite, rect, false)
@@ -981,9 +984,12 @@ const NEED_BUBBLES := {
 
 func _draw_guest(ag: Agent) -> void:
 	var base := _tile_center(ag.position.x, ag.position.y)
-	# Ground shadow (squashed; stays put while the body bobs).
-	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1, 0), Vector2(0, 0.5), base))
-	draw_circle(Vector2.ZERO, 6.0, Color(0, 0, 0, 0.25))
+	# Directional cast shadow + tight contact AO (sun from upper-left), stays put
+	# while the body bobs.
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.55, 0.42), base))
+	draw_circle(Vector2.ZERO, 6.5, Color(0, 0, 0, 0.18))
+	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 0.42), base))
+	draw_circle(Vector2.ZERO, 4.5, Color(0, 0, 0, 0.22))
 	draw_set_transform_matrix(_view_xf)
 	var bob := sin(_time * 4.2 + float(ag.agent_id) * 0.83) * 1.2
 	var body := base + Vector2(0, -12.0 + bob)
