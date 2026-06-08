@@ -20,6 +20,9 @@ func before_each() -> void:
 	SimClock.current_period = 0
 	SimClock.set_seed(1234)
 	ZooBootstrap.set_hired_keepers(0)
+	# Game default is now closed-on-start (player opens after first exhibit);
+	# tests presume an open park unless they explicitly close it.
+	ZooBootstrap.set_park_open(true)
 
 
 # --- Content loaded from zoo/design/tuning/ -----------------------------
@@ -343,12 +346,14 @@ func test_guest_walks_only_on_paths_to_reach_food() -> void:
 	# With a path network present, a guest sticks to it: lay a straight path
 	# from the gate to a food stand and assert the guest's cell is ALWAYS a
 	# path cell across its whole visit, and that it still reaches and buys food.
+	# Gate now lives at (0,17) (see GATE_TILE in main.gd); the path runs east
+	# from there and the food stand sits one cell north of it.
 	for x in range(0, 9):
-		EntityRegistry.place(&"path", Vector2i(x, 0))
-	EntityRegistry.place(&"food_stand", Vector2i(4, 1))   # path (4,0) sits beside it
+		EntityRegistry.place(&"path", Vector2i(x, 17))
+	EntityRegistry.place(&"food_stand", Vector2i(4, 15))   # path (4,17) sits beside it
 	var net := NavigationRegistry.get_network()
 	assert_not_null(net)
-	var aid := AgentPool.spawn(&"visitor", Vector2(0, 0))
+	var aid := AgentPool.spawn(&"visitor", Vector2(0, 17))
 	var off_path_ticks := 0
 	for i in range(1000):
 		SimClock.advance_tick()

@@ -1,67 +1,36 @@
 # Pixel Lab generation briefs — closing the isometric look
 
 The iso view (`TYCOON_ISO` / the in-game **View** toggle) is code-complete for
-the visual push — every code-only "tell" is fixed (directional animals,
-scenery, gate, lamp-lit paths, chunky fences). Two art passes remain, and the
-renderer is already wired (or one-line ready) to consume them. Generate, drop
-the PNGs at the exact paths below, commit them (+ the `.import` files Godot
-makes), and they appear with **no further code** unless noted.
+the visual push. One art pass remains: **directional animal sprites**. The
+renderer is already wired to consume them — drop the PNGs at the exact paths
+below, commit them (+ the `.import` files Godot makes), flip one flag, and
+they appear with no further code.
 
 Two non-negotiables across everything here:
 - **Crisp pixel art** — no anti-aliased edges, no baked drop-shadow (the game
   adds its own soft shadow), transparent background.
-- **Match the existing set** — open `assets/sprites/lion_4dir/south.png` and
-  `assets/sprites/food_stand.png` for palette (warm, saturated), outline weight
-  (dark, ~1px), and the ¾ angle. New pieces must sit in the same world.
+- **Match the existing set** — open `assets/sprites/lion.png` (the *billboard*,
+  not the broken `_4dir` one) for palette (warm, saturated), outline weight
+  (dark, ~1 px), and chunky-quadruped proportions. New pieces must sit in the
+  same world.
 
 ---
 
-## Brief 1 — Seamless isometric ground tiles  ⭐ biggest remaining jump
+## Brief 1 — Seamless isometric ground tiles  *(superseded — skip)*
 
-**Goal:** replace the flat-color diamonds with textured terrain. This is the
-single largest step toward the Zoo Tycoon look.
-
-**The hard requirement (this is why the first batch failed):** each tile is a
-**2:1 diamond** that **tiles seamlessly** with copies of itself on all four
-diagonal edges. The texture must bleed all the way to every edge with **NO
-border, rim, frame, or outline**. Test by laying the PNG out **3×3** — you must
-not be able to see where one diamond ends and the next begins. If you can see a
-diamond grid, it's wrong.
-
-**Format:** 64×32 px canvas. The diamond's four points touch the **midpoints of
-the canvas edges** (top-center, right-center, bottom-center, left-center).
-Everything outside the diamond is transparent.
-
-**Keep contrast low.** These tile hundreds of times; high-contrast detail
-repeats badly. Subtle tonal variation only.
-
-| File | Surface | Notes |
-|---|---|---|
-| `assets/sprites/iso_grass.png` | Parkland / grass enclosure | mowed-grass texture, faint blade detail |
-| `assets/sprites/iso_dirt.png` | Bare-earth enclosure floor | packed dirt, a few specks |
-| `assets/sprites/iso_rock.png` | Rocky enclosure floor | gravel + scattered small stones |
-| `assets/sprites/iso_water.png` | Water enclosure | calm water; the game adds an animated shimmer, so keep it still and mid-blue |
-| `assets/sprites/iso_sand.png` | Aviary / beach floor | pale sand |
-| `assets/sprites/iso_path.png` | Path / promenade | groomed sand or pale cobble; must also tile seamlessly |
-
-**Optional but nice:** 2–3 variants each (`iso_grass_a/b/c.png`) so large fields
-don't visibly repeat. Same seamless rule applies to every variant.
-
-**Acceptance test:** open any tile, duplicate it into a 3×3 grid offset by
-(±32, ±16) px per neighbor (the iso step) — the result must look like one
-continuous surface with no visible tile boundary.
-
-**Code note (mine):** the renderer currently draws ground as solid diamonds. When
-these land I re-add a one-tile textured-diamond draw path (a few lines) — the
-art is the long pole, the wire is trivial.
+Ground is now drawn **procedurally** in the iso renderer (seamless noise
+× terrain tint), so we no longer need Pixel Lab tiles for `iso_grass`,
+`iso_dirt`, `iso_rock`, `iso_water`, `iso_sand`, `iso_path`. If we ever want
+to swap procedural for hand-pixeled tiles, the old brief is in git history
+(commit before this rewrite).
 
 ---
 
-## Brief 2 — Directional animal sprites (`_4dir`)
+## Brief 2 — Directional animal sprites (`_4dir`)  ⭐ the only outstanding ask
 
-**Goal:** every animal faces where it walks, in true ¾ iso art — like
-`lion_4dir` and `zebra_4dir` already do. The renderer **already** picks the
-right one per heading; new species need **no code**, just the files.
+**Goal:** every animal faces where it walks, in true ¾ iso art. The renderer
+already picks the right file per heading — new species need **no code**, just
+the four PNGs.
 
 **Files:** one folder per species, four PNGs:
 ```
@@ -71,55 +40,115 @@ assets/sprites/<species>_4dir/east.png
 assets/sprites/<species>_4dir/west.png
 ```
 
-> ⚠️ **The current `lion_4dir` and `zebra_4dir` art is WRONG** — both came out
-> **anthropomorphic** (the animal stands upright on two legs like a person in a
-> costume). The directional renderer is therefore **disabled** (`_directional_enabled
-> = false` in `iso_preview.gd`) and animals fall back to the billboard sprites
-> until corrected art lands. When regenerating, the **#1 requirement** is:
+### Why this brief exists — the anthropomorphic failure
 
-**Anatomy — non-negotiable:** the animal is a **real four-legged quadruped on
-all fours**, in profile/¾, **NOT** standing upright, **NOT** bipedal, **NOT**
-humanoid, **no costume**. A lion looks like a lion walking; a zebra like a zebra
-grazing. Reference a real animal silhouette, not a mascot.
+> ⚠️ The current `lion_4dir/` and `zebra_4dir/` art is **WRONG** — both came
+> out **anthropomorphic**: a bipedal humanoid standing upright on two legs
+> like a person wearing a lion/zebra costume. The directional renderer is
+> therefore **disabled** (`_directional_enabled = false` in
+> `src/ui/iso_preview.gd` ~line 1148) and animals fall back to the
+> (correct) quadruped billboard sprites. The whole point of this brief is
+> to get art that does **not** repeat that mistake.
 
-**Size & pivot:** **92×92** px (match the *intended* `lion_4dir` size),
-transparent, object **centered horizontally**, with the **feet near the bottom
-of the opaque area** (the game seats the sprite by its lowest opaque pixels, so a
-floating animal will float). Generous transparent margin.
+### Anatomy — non-negotiable
 
-**Facing convention — match `lion_4dir` exactly (the renderer depends on it):**
+The animal is a **real four-legged quadruped on all fours**, in profile/¾,
+**all four feet on the ground**. Look at `assets/sprites/lion.png` — that
+chunky on-all-fours pose is what we want, just rendered four times for the
+four facings.
+
+The art is **NOT**:
+- standing upright on two legs
+- bipedal, humanoid, or person-shaped
+- wearing a costume / mascot suit
+- a cartoon character with human posture
+
+A lion looks like a lion walking. A zebra like a zebra grazing. A penguin is
+the one exception — penguins really are bipedal, so a waddling upright
+penguin is correct (just not a *humanoid* one).
+
+### Size, canvas, pivot
+
+- **92×92 px** canvas, transparent background.
+- Object **centered horizontally**.
+- **Feet near the bottom** of the opaque area — the renderer seats the
+  sprite by its lowest opaque pixels, so floating space below the feet will
+  make the animal float above the ground.
+- Generous transparent margin on top/sides for tails, heads, ears.
+
+### Facing convention — match exactly (the renderer depends on it)
+
 | File | The animal faces… | i.e. moving toward screen… |
 |---|---|---|
-| `south.png` | **toward the viewer** (front view, ¾) | down |
-| `north.png` | **away** (back view, ¾) | up |
-| `east.png`  | **screen-right** (profile, ¾) | right |
-| `west.png`  | **screen-left** (mirror of east) | left |
+| `south.png` | **toward the viewer** (front ¾) | down-and-right on screen |
+| `north.png` | **away from the viewer** (back ¾) | up-and-left on screen |
+| `east.png`  | **screen-right** (right profile, ¾) | right-and-down |
+| `west.png`  | **screen-left** (mirror of east) | left-and-up |
 
-(If unsure, open `lion_4dir/south.png` vs `lion_4dir/east.png` — `south` is the
-face-on pose, `east` is the right-facing profile. Copy that exact orientation
-logic.)
+`west.png` may be a horizontal flip of `east.png` if that reads cleanly.
 
-**Species still needing a set** (lion + zebra are done), in priority order —
-do the most-seen first:
+### Per-species prompts (paste into Pixel Lab one at a time)
 
-1. `penguin` — in the starter park, always on screen.
-2. `elephant`, `tiger`, `polar_bear` — big hero animals; the ¾ art reads most.
-3. `giraffe`, `seal`, `monkey` — the new species from the last art drop.
-4. `flamingo`, `peacock`, `toucan`, `parrot` — birds; smaller, lower priority.
+Same template for every species — only the species name and one descriptor
+line change. The shared rules are baked in so Pixel Lab can't drift.
 
-**Acceptance test:** drop a folder in, run with the **View** toggle on iso, and
-watch one of that species wander its pen — it should turn to face its direction
-of travel with no popping or wrong-way frames.
+**Shared preamble (prepend to every prompt):**
 
----
+> Pixel art, 92×92 px, transparent background, crisp pixels (no
+> anti-aliasing), dark ~1 px outline, warm saturated palette matching a
+> classic zoo-tycoon style. The subject is a **real four-legged quadruped
+> on all fours, all four feet on the ground, in a ¾ isometric view**.
+> Absolutely **not** bipedal, **not** humanoid, **not** standing upright,
+> **not** in a costume. Reference a real animal's silhouette. Feet at the
+> bottom of the opaque area, generous transparent margin above.
 
-## Sequencing
+Then per species, four generations (one per facing). Append exactly one of:
+- *"Front ¾ view — animal faces the viewer."* → save as `south.png`
+- *"Back ¾ view — animal faces away from the viewer."* → save as `north.png`
+- *"Right-side profile, ¾ — animal faces screen-right."* → save as `east.png`
+- *"Left-side profile, ¾ — animal faces screen-left."* (or flip `east.png`) → save as `west.png`
 
-1. **Ground tiles first** (Brief 1) — biggest single visual jump, and it lifts
-   *every* exhibit and path at once.
-2. **Penguin `_4dir`** — the one animal always on screen in the starter park.
-3. The rest of the directional sets as you have cycles.
+**Species descriptors** (append after the shared preamble, before the facing line):
 
-Hand me whatever lands and I'll wire/verify it the same day. After Brief 1 +
-the priority directional sets, the iso view is at the Zoo-Tycoon bar and
-`TYCOON_ISO` can graduate from a flag to the default.
+| Species | Descriptor | Folder |
+|---|---|---|
+| Lion | Adult male lion, tawny coat, full dark mane around the head, long tail with tuft. Chunky, stocky body. | `lion_4dir/` *(REDO — currently anthropomorphic)* |
+| Zebra | Adult zebra, black-and-white vertical stripes, short upright mane, horse-like body. | `zebra_4dir/` *(REDO — currently anthropomorphic)* |
+| Penguin | Emperor-style penguin, **upright bipedal is correct here** — black back, white belly, orange beak. Short waddling pose. (Override the quadruped rule for this one species only.) | `penguin_4dir/` |
+| Elephant | Large gray elephant, big ears, long trunk curled slightly, short tusks, thick legs. | `elephant_4dir/` |
+| Tiger | Orange tiger with bold black stripes and white belly, long tail. Same chunky proportions as the lion. | `tiger_4dir/` |
+| Polar bear | Large white/cream polar bear, small ears, low head carriage, heavy paws. | `polar_bear_4dir/` |
+| Giraffe | Tall giraffe with reticulated brown patches on cream coat, very long neck, small ossicone horns. Neck angled forward for the side views. | `giraffe_4dir/` |
+| Seal | Plump gray harbor seal, short flippers, lying/shuffling pose on land (no upright "circus seal" pose). | `seal_4dir/` |
+| Monkey | Small brown monkey on all fours, long tail curled up behind, alert expression. Not a chimp standing upright. | `monkey_4dir/` |
+| Flamingo | Pink flamingo — bipedal is correct (real bird anatomy), long thin legs, curved S-neck, hooked beak. Override quadruped rule. | `flamingo_4dir/` |
+| Peacock | Male peacock — bipedal is correct, iridescent blue body, fanned blue-green tail visible in `south.png`, tail trailing behind in profile views. Override quadruped rule. | `peacock_4dir/` |
+| Toucan | Black toucan with white throat and big orange beak — bipedal is correct, perched/standing pose. Override quadruped rule. | `toucan_4dir/` |
+| Parrot | Bright green-and-red parrot — bipedal is correct, hooked beak, short tail. Override quadruped rule. | `parrot_4dir/` |
+
+### Priority order
+
+Most-seen first — the ¾ art reads most on the animals that fill the screen:
+
+1. **Lion + Zebra REDO** (currently broken — fixing these unblocks the renderer)
+2. **Penguin** — in the starter park, always on screen
+3. Elephant, Tiger, Polar Bear — big hero animals
+4. Giraffe, Seal, Monkey — newer species from the last drop
+5. Flamingo, Peacock, Toucan, Parrot — birds; smaller, lower priority
+
+### When art lands — flip the flag
+
+Once at least one corrected set exists (lion redo is enough to verify):
+
+1. Drop the four PNGs into `assets/sprites/<species>_4dir/`.
+2. Open Godot once so it generates the `.import` files; commit those too.
+3. In `src/ui/iso_preview.gd`, change `_directional_enabled = false` (~line 1148)
+   to `true`. The mapping logic above it is already unit-tested and stays as-is.
+4. Run with **View** toggled to iso — pick that species, watch one wander its
+   pen. It should turn to face its direction of travel with no popping, no
+   wrong-way frames, and crucially **not be standing on two legs**.
+
+If any species' set looks off, the renderer per-species check
+(`ResourceLoader.exists("res://assets/sprites/<species>_4dir/south.png")`)
+means deleting that folder cleanly reverts that species to billboard while
+leaving the others on the directional path.

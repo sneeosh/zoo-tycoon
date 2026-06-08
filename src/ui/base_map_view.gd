@@ -8,6 +8,11 @@ class_name BaseMapView
 
 signal placement_requested(grid_cell: Vector2i)
 signal remove_requested(grid_cell: Vector2i)
+# Drag-paint signals: emitted while the mouse button is held and the hovered
+# cell changes. main treats these like placement/remove but silent on failure
+# (so dragging across occupied tiles doesn't spam the log).
+signal placement_drag_requested(grid_cell: Vector2i)
+signal remove_drag_requested(grid_cell: Vector2i)
 
 # Set by main when a build button is toggled on; empty string = none.
 var preview_def_id: StringName = &""

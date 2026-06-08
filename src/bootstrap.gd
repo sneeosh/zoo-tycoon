@@ -74,7 +74,7 @@ signal donation_collected(region_id: int, amount: int)
 # guests).
 var entry_fee: int = 10
 var ticket_bracket: StringName = &"standard"
-var park_open: bool = true
+var park_open: bool = false
 var _default_base_spawn_rate: float = 0.5
 
 # Day cycle (roadmap 3.4). Guests only arrive during opening hours; the gate

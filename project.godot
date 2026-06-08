@@ -31,19 +31,26 @@ ProgressionManager="*res://addons/tycoon_core/autoload/progression_manager.gd"
 Accounting="*res://addons/tycoon_core/autoload/accounting.gd"
 SaveService="*res://addons/tycoon_core/autoload/save_service.gd"
 ZooBootstrap="*res://src/bootstrap.gd"
+MCPGameBridge="res://addons/godot_mcp/game_bridge/mcp_game_bridge.gd"
 
 [display]
 
 window/size/viewport_width=1600
 window/size/viewport_height=1000
 window/size/mode=2
-window/size/resizable=true
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
 [editor_plugins]
 
-enabled=PackedStringArray()
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
+
+[godot_mcp]
+
+bind_mode=0
+custom_bind_ip=""
+port_override_enabled=false
+port_override=6550
 
 [rendering]
 

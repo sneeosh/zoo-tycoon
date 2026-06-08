@@ -11,8 +11,8 @@ NavigationRegistry / default A* navigator fall back to.
 
   - default_engagement_distance: a guest standing on a path cell can "view"
     an exhibit (and tip / browse it) when any of the exhibit's tiles is
-    within this many tiles, measured Manhattan. 10 mirrors the original
-    Zoo Tycoon viewing distance.
+    within this many tiles, measured Manhattan. Tight on purpose — guests
+    walk up to the fence to see, not stand half a map away.
   - max_path_expansions: fail-soft A* budget; a route needing more nodes than
     this returns empty and the guest re-plans / falls back.
 -->
@@ -20,5 +20,5 @@ NavigationRegistry / default A* navigator fall back to.
 ## Defaults
 
 default_traversal_cost      = 1.0
-default_engagement_distance = 10
+default_engagement_distance = 5
 max_path_expansions         = 4096

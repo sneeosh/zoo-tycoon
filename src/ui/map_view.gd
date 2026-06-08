@@ -18,7 +18,7 @@ const MIN_TILES_FOR_LABEL: int = 3
 
 # The entrance gate visually anchors visitor spawn/exit at world (0,0).
 # Without it, visitors clustering at one corner reads as a bug.
-const GATE_TILE: Vector2i = Vector2i(0, 0)
+const GATE_TILE: Vector2i = Vector2i(0, 17)
 const GATE_COLOR: Color = Color("#f4d35e")
 const GATE_POST_COLOR: Color = Color("#e6b32f")
 
@@ -40,16 +40,20 @@ const ARCHETYPE_COLORS := {
 	&"enthusiast": Color("#c9a4ff"),   # Enthusiast — purple
 }
 # Dedicated per-archetype sprite (falls back to the generic visitor art).
+# Top-down mirrors iso: one body sprite for everyone, archetype ring carries
+# the demographic. Restore per-archetype art once the pack is uniform.
 const ARCHETYPE_SPRITE := {
 	&"visitor":    "visitor",
-	&"child":      "visitor_child",
-	&"family":     "visitor_family",
-	&"enthusiast": "visitor_enthusiast",
+	&"child":      "visitor",
+	&"family":     "visitor",
+	&"enthusiast": "visitor",
 }
 
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
 var _hovering: bool = false
+# Mouse button currently held for drag-paint (LEFT/RIGHT); 0 = nothing held.
+var _drag_button: int = 0
 
 # Floating "+$N" toasts spawned by ZooBootstrap.money_floated. Each entry is
 # {amount: int, world_pos: Vector2, born_at: float}. We tick them in _process
@@ -80,6 +84,9 @@ const VISITOR_HIT_RADIUS_PX: float = 14.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# Match the iso view: clip anything that lands outside the play area so
+	# stray draws can't spill onto the BUILD panel or the event log.
+	clip_contents = true
 	_visitor_sprite = _load_sprite_optional("visitor")
 	ZooBootstrap.money_floated.connect(_on_money_floated)
 	# Static layers (ground, lawn texture, parkland foliage, grid, vignette)
@@ -170,14 +177,30 @@ func _draw_money_floats() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_hover_pos = event.position
+		var prev_cell := _hover_cell
 		_hover_cell = _to_grid(event.position)
 		_hovering = true
-	elif event is InputEventMouseButton and event.pressed:
+		# Drag-paint: while a mouse button is held, fire a drag signal each
+		# time the hovered cell changes so main can paint without per-cell clicks.
+		if _drag_button != 0 and _hover_cell != prev_cell:
+			if _drag_button == MOUSE_BUTTON_LEFT:
+				placement_drag_requested.emit(_hover_cell)
+			elif _drag_button == MOUSE_BUTTON_RIGHT:
+				remove_drag_requested.emit(_hover_cell)
+	elif event is InputEventMouseButton:
 		var cell := _to_grid(event.position)
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			placement_requested.emit(cell)
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			remove_requested.emit(cell)
+		if event.pressed:
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				placement_requested.emit(cell)
+				_drag_button = MOUSE_BUTTON_LEFT
+				_hover_cell = cell
+			elif event.button_index == MOUSE_BUTTON_RIGHT:
+				remove_requested.emit(cell)
+				_drag_button = MOUSE_BUTTON_RIGHT
+				_hover_cell = cell
+		else:
+			if event.button_index == _drag_button:
+				_drag_button = 0
 
 
 func _notification(what: int) -> void:

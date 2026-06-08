@@ -9,7 +9,8 @@ extends Node
 # satisfaction, etc.; this just stages content and observes/dispatches input.
 
 const STARTER_VISITOR_COUNT: int = 6
-const GATE_TILE: Vector2i = Vector2i(0, 0)
+const GATE_TILE: Vector2i = Vector2i(0, 17)
+const REGION_PANEL_W: int = 300   # width of the right-side Manage Exhibit panel
 const HUD_REFRESH_SECONDS: float = 0.2
 const LOG_MAX_LINES: int = 60
 const MAP_VIEW_SCRIPT := preload("res://src/ui/map_view.gd")
@@ -114,6 +115,12 @@ var _arena_subject_id: int = 0   # entity_instance_id of the open arena
 var _moving_region_id: int = -1
 var _moving_index: int = -1
 
+# One-shot: have we asked the player whether to open the park? Fires after
+# the first time they add an animal/placement to an exhibit. Set true once
+# answered (Open or Not Yet) so we never nag again.
+var _park_open_prompted: bool = false
+var _open_park_dialog: ConfirmationDialog
+
 # Tutorial state — set by _start_tutorial. The overlay's only visible while
 # active. Each step has its own advance condition checked via engine signals.
 var _tutorial_active: bool = false
@@ -191,20 +198,28 @@ func _build_region_panel(parent: Control) -> void:
 	scroll.add_child(_region_panel_body)
 
 
+func _set_region_panel_visible(show: bool) -> void:
+	# The panel overlays the map (it's anchored to the right edge with its own
+	# absolute offsets), so showing/hiding doesn't resize the play area — no
+	# jarring zoom-out/in when the player clicks an exhibit.
+	if _region_panel != null:
+		_region_panel.visible = show
+
+
 func _refresh_region_panel() -> void:
 	# Clear current body.
 	for child in _region_panel_body.get_children():
 		child.queue_free()
 
 	if _selected_region_id < 0:
-		_region_panel.visible = false
+		_set_region_panel_visible(false)
 		return
 	var region := RegionRegistry.get_region(_selected_region_id)
 	if region == null:
-		_region_panel.visible = false
+		_set_region_panel_visible(false)
 		_selected_region_id = -1
 		return
-	_region_panel.visible = true
+	_set_region_panel_visible(true)
 
 	# Header
 	var title := _stat("Exhibit #%d" % region.region_id, 18, Color("#e6e6e6"))
@@ -599,6 +614,10 @@ func _on_welcome_skip_tutorial() -> void:
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	_welcome_modal.visible = false
 	_stage_starter_park()
+	# Starter park ships with populated exhibits, so open the gates immediately
+	# — the player asked for a working zoo, not a build sandbox.
+	ZooBootstrap.set_park_open(true)
+	_park_open_prompted = true
 	SimClock.play()
 	_refresh_speed_buttons()
 
@@ -1239,10 +1258,31 @@ func _bump_keepers(delta: int) -> void:
 	_refresh_admin_modal()
 
 
+func _build_open_park_dialog(parent: Control) -> void:
+	_open_park_dialog = ConfirmationDialog.new()
+	_open_park_dialog.title = "Open the park?"
+	_open_park_dialog.dialog_text = "Your first exhibit is ready. Open the gates so guests can start arriving?"
+	_open_park_dialog.ok_button_text = "Open Park"
+	_open_park_dialog.cancel_button_text = "Not Yet"
+	_open_park_dialog.confirmed.connect(func() -> void:
+		ZooBootstrap.set_park_open(true)
+		_push_log("[color=#83c779]Park opened — guests will start arriving.[/color]"))
+	parent.add_child(_open_park_dialog)
+
+
+func _maybe_prompt_open_park() -> void:
+	if _park_open_prompted or ZooBootstrap.park_open:
+		return
+	_park_open_prompted = true
+	if _open_park_dialog != null:
+		_open_park_dialog.popup_centered()
+
+
 func _toggle_park_open() -> void:
 	ZooBootstrap.set_park_open(not ZooBootstrap.park_open)
 	_refresh_admin_modal()
 	if ZooBootstrap.park_open:
+		_park_open_prompted = true
 		_push_log("[color=#83c779]Park reopened.[/color]")
 	else:
 		_push_log("[color=#e76f51]Park closed — no new guests will arrive.[/color]")
@@ -1338,12 +1378,17 @@ func _start_tutorial() -> void:
 	if _tutorial_overlay != null:
 		_tutorial_overlay.visible = true
 	_show_tutorial_step()
-	# Don't auto-stage the starter park — the tutorial IS the starter.
-	# A handful of starter guests so step 3 has someone to pay quickly.
-	for i in range(3):
-		AgentPool.spawn(&"visitor", Vector2(
-			SimClock.rng.randf_range(0.0, 3.0),
-			SimClock.rng.randf_range(0.0, 4.0)))
+	# Tutorial starts empty — the player will populate it, then accept the
+	# "open the park?" prompt after step 2 (add an animal). No starter guests.
+	_lay_starter_gate_paths()
+
+
+# Place the first two path tiles right off the entrance gate so guests have
+# somewhere to step onto the moment the park opens. Used by every fresh start;
+# the skip-tutorial starter park already lays its full spine and ignores this.
+func _lay_starter_gate_paths() -> void:
+	EntityRegistry.place(&"path", GATE_TILE)                          # gate cell
+	EntityRegistry.place(&"path", GATE_TILE + Vector2i(0, -1))        # one step in
 
 
 func _show_tutorial_step() -> void:
@@ -2376,7 +2421,9 @@ func _build_right_column(parent: Control) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.offset_left = 220
 	center.offset_top = 56
-	center.offset_right = -300   # leave room for the region panel
+	# offset_right is toggled by _set_region_panel_visible: 0 when the panel is
+	# hidden (map uses the full width) and -REGION_PANEL_W when it's open.
+	center.offset_right = 0
 	center.add_theme_constant_override("separation", 0)
 	parent.add_child(center)
 
@@ -2394,6 +2441,7 @@ func _build_right_column(parent: Control) -> void:
 	_build_endgame_modal(parent)
 	_build_admin_modal(parent)
 	_build_arena_modal(parent)
+	_build_open_park_dialog(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -2478,42 +2526,45 @@ func _stage_starter_park() -> void:
 	# the entrance and the exhibits. Tuned so a non-technical first-time
 	# player can run the sim and immediately see activity.
 
+	# Gate is at the bottom-left corner (see GATE_TILE). The starter park lays
+	# a path spine UP from the gate to a concourse, with exhibits above it.
+
 	# --- Lion savanna: grass with rocks at one end. ---
 	for x in range(5, 9):
-		for y in range(3, 5):
+		for y in range(7, 9):
 			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
-	EntityRegistry.place(&"rock_patch", Vector2i(9, 3))
-	EntityRegistry.place(&"rock_patch", Vector2i(9, 4))
+	EntityRegistry.place(&"rock_patch", Vector2i(9, 7))
+	EntityRegistry.place(&"rock_patch", Vector2i(9, 8))
 
 	# --- Penguin pool: pure water tiles, separated from the lion region
 	# by a one-tile gap so they don't merge into one big Region. ---
 	for x in range(5, 9):
-		for y in range(8, 10):
+		for y in range(12, 14):
 			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# --- Path network: a spine from the entrance gate (0,0) down to a main
-	# concourse that runs past both exhibits. Guests spawn at the gate and
-	# walk the path; they view an exhibit from any path cell within the
+	# --- Path network: a spine from the entrance gate (0,17) up to a main
+	# concourse at y=10 that runs past both exhibits. Guests spawn at the gate
+	# and walk the path; they view an exhibit from any path cell within the
 	# engagement distance (navigation.md), so the concourse alone lets them
 	# see the lion and the penguins. Lay paths BEFORE amenities so the
 	# amenities can sit adjacent to the concourse without colliding. ---
-	for y in range(0, 7):
+	for y in range(10, 18):
 		EntityRegistry.place(&"path", Vector2i(0, y))   # gate → concourse
 	for x in range(1, 16):
-		EntityRegistry.place(&"path", Vector2i(x, 6))   # concourse
+		EntityRegistry.place(&"path", Vector2i(x, 10))  # concourse
 
 	# --- Amenities, each adjacent to the concourse so guests reach them.
 	# The starter park covers all four guest needs (food / drink / restroom /
 	# rest) so a first-time player sees a contented crowd before they learn
 	# to balance them. ---
-	EntityRegistry.place(&"food_stand",  Vector2i(13, 4))  # touches (13,6)/(14,6)
-	EntityRegistry.place(&"drink_stand", Vector2i(11, 5))  # touches (11,6)
-	EntityRegistry.place(&"restroom",    Vector2i(4, 5))   # touches (4,6)
-	EntityRegistry.place(&"restroom",    Vector2i(8, 5))   # 2nd restroom (spillover bottleneck)
-	EntityRegistry.place(&"bench",       Vector2i(2, 5))   # touches (2,6)
+	EntityRegistry.place(&"food_stand",  Vector2i(13, 11))  # touches (13,10)/(14,10)
+	EntityRegistry.place(&"drink_stand", Vector2i(11, 11))  # touches (11,10)
+	EntityRegistry.place(&"restroom",    Vector2i(4, 11))   # touches (4,10)
+	EntityRegistry.place(&"restroom",    Vector2i(8, 11))   # 2nd restroom (spillover bottleneck)
+	EntityRegistry.place(&"bench",       Vector2i(2, 11))   # touches (2,10)
 
 	# --- Lion + its infrastructure. ---
-	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))
+	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 7))
 	if lion_region != null:
 		RegionRegistry.add_placement(lion_region.region_id, &"lion")
 		RegionRegistry.add_placement(lion_region.region_id, &"feeding_trough")
@@ -2521,18 +2572,18 @@ func _stage_starter_park() -> void:
 
 	# --- Penguin colony — they're social, start with 4 so the herd
 	# requirement is met (social_min=4). ---
-	var penguin_region := RegionRegistry.region_at_cell(Vector2i(5, 8))
+	var penguin_region := RegionRegistry.region_at_cell(Vector2i(5, 12))
 	if penguin_region != null:
 		for _i in 4:
 			RegionRegistry.add_placement(penguin_region.region_id, &"penguin")
 		RegionRegistry.add_placement(penguin_region.region_id, &"feeding_trough")
 
 	# Visitors enter at the gate and walk in along the path. Spawn them on the
-	# entrance path column (x=0, y 0..6) so they start on the network and
-	# route immediately; auto-spawned guests enter at the gate cell (0,0).
+	# entrance path column (x=0, y 10..17) so they start on the network and
+	# route immediately; auto-spawned guests enter at the gate cell.
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
-			0.0, SimClock.rng.randf_range(0.0, 6.0)))
+			0.0, SimClock.rng.randf_range(10.0, 17.0)))
 
 
 # ============================================================================
@@ -2711,7 +2762,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_SPACE:
 			AgentPool.spawn(&"visitor", Vector2(
 				SimClock.rng.randf_range(0, 6),
-				SimClock.rng.randf_range(0, 6)))
+				SimClock.rng.randf_range(11, 17)))
 			_push_log("[color=#7e9286]+1 visitor (manual)[/color]")
 		KEY_P:
 			if SimClock.is_paused():
@@ -2719,13 +2770,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				SimClock.pause()
 			_refresh_speed_buttons()
-		KEY_S:
+		KEY_X:
 			# Stress test: spawn 20 visitors at once so we can profile the
 			# crowd. Doesn't change spawn rate — these are just one-off pops.
+			# (Was KEY_S — moved when WASD became camera-pan controls.)
 			for i in range(20):
 				AgentPool.spawn(&"visitor", Vector2(
 					SimClock.rng.randf_range(0.0, 4.0),
-					SimClock.rng.randf_range(0.0, 6.0)))
+					SimClock.rng.randf_range(11.0, 17.0)))
 			_push_log("[color=#7e9286]+20 visitors (stress)[/color]")
 
 
@@ -2794,11 +2846,38 @@ func _on_speed_pressed(key: String) -> void:
 	_refresh_speed_buttons()
 
 
+# Return the first region whose cells include any 4-neighbor of `cell`, or
+# null if none of the neighbors are inside an exhibit. Used to associate
+# outside-the-fence placeables (donation boxes) with the adjacent exhibit.
+func _adjacent_region(cell: Vector2i) -> Region:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var r := RegionRegistry.region_at_cell(cell + d)
+		if r != null:
+			return r
+	return null
+
+
 func _place_placeable_at(cell: Vector2i) -> void:
 	var def: PlaceableDef = ContentDB.placeable_defs[_selected_def_id]
 	var region := RegionRegistry.region_at_cell(cell)
+	# Donation boxes live *outside* the fence — the player clicks a tile next
+	# to an exhibit and the box is owned by that exhibit. If the clicked tile
+	# isn't in any region, look at its four neighbors for one.
+	var outside_placeable := &"donation_box" in def.own_tags
+	if region == null and outside_placeable:
+		region = _adjacent_region(cell)
 	if region == null:
-		_push_log("[color=#e76f51]Click an exhibit tile to add a %s.[/color]" %
+		if outside_placeable:
+			_push_log("[color=#e76f51]Place a %s next to an exhibit (not inside it).[/color]" %
+				def.display_name)
+		else:
+			_push_log("[color=#e76f51]Click an exhibit tile to add a %s.[/color]" %
+				def.display_name)
+		return
+	# Conversely, a donation box clicked *inside* an exhibit feels wrong —
+	# nudge the player to the outside.
+	if outside_placeable and RegionRegistry.region_at_cell(cell) != null:
+		_push_log("[color=#e76f51]Place the %s on a path tile beside the exhibit, not inside it.[/color]" %
 			def.display_name)
 		return
 	if Ledger.get_balance() < def.build_cost:
@@ -2815,7 +2894,15 @@ func _place_placeable_at(cell: Vector2i) -> void:
 		_push_log("[color=#e76f51]Failed to add %s to Exhibit #%d.[/color]" %
 			[def.display_name, region.region_id])
 		return
+	# Engine anchors a new placement at region.cells[0] for determinism; here we
+	# override it to the cell the player actually clicked so the animal/trough
+	# lands where they aimed. The engine reads state["primary_cell"] as the
+	# documented override (region_registry.gd).
+	placement.state["primary_cell"] = cell
+	placement.primary_cell = cell
 	_push_log("Added [b]%s[/b] to Exhibit #%d" % [def.display_name, region.region_id])
+	# First populated exhibit? Offer to open the park (one-shot).
+	_maybe_prompt_open_park()
 	# Stay in place mode so the player can quickly add more of the same.
 
 
@@ -2827,6 +2914,8 @@ func _make_view() -> BaseMapView:
 	v.entity_colors = ENTITY_COLORS
 	v.placement_requested.connect(_on_placement_requested)
 	v.remove_requested.connect(_on_remove_requested)
+	v.placement_drag_requested.connect(_on_placement_drag_requested)
+	v.remove_drag_requested.connect(_on_remove_drag_requested)
 	return v
 
 
@@ -2918,6 +3007,43 @@ func _on_remove_requested(cell: Vector2i) -> void:
 		if cell.x >= inst.position.x and cell.x < inst.position.x + def.footprint.x \
 		and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
 			EntityRegistry.remove(inst_id)
+			return
+
+
+# Drag-paint: same as placement_requested but only handles 1x1 zone/amenity
+# entities (paths, grass/rock/water patches, etc.), and stays silent on failure
+# so dragging across blocked cells or with insufficient funds doesn't spam the
+# event log. The initial click already went through _on_placement_requested.
+func _on_placement_drag_requested(cell: Vector2i) -> void:
+	if _selected_def_id == &"":
+		return
+	# Placeable defs go through region clicks, not drag — they're discrete
+	# additions (an animal, a trough). Drag is for grid-painting tiles.
+	if ContentDB.placeable_defs.has(_selected_def_id):
+		return
+	var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
+	if def == null:
+		return
+	if def.footprint.x != 1 or def.footprint.y != 1:
+		return   # multi-tile builds don't drag-paint cleanly; click each one
+	EntityRegistry.place(_selected_def_id, cell)
+	# Ignore return value: cell may be occupied or unaffordable mid-drag;
+	# user can see the result and lift the button.
+
+
+func _on_remove_drag_requested(cell: Vector2i) -> void:
+	# Silent equivalent of _on_remove_requested for drag-erasing tiles.
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null:
+			continue
+		if cell.x >= inst.position.x and cell.x < inst.position.x + def.footprint.x \
+		and cell.y >= inst.position.y and cell.y < inst.position.y + def.footprint.y:
+			# Only erase 1x1 entities on drag — a stray swipe shouldn't nuke a
+			# whole 3x3 arena.
+			if def.footprint.x == 1 and def.footprint.y == 1:
+				EntityRegistry.remove(inst_id)
 			return
 
 

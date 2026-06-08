@@ -11,7 +11,7 @@ class_name MapBackground
 const TILE_SIZE: int = 36
 const GRID_ORIGIN: Vector2 = Vector2(28, 28)
 const BUILDABLE_TILES: Vector2i = Vector2i(32, 18)
-const GATE_TILE: Vector2i = Vector2i(0, 0)
+const GATE_TILE: Vector2i = Vector2i(0, 17)
 
 
 func _ready() -> void:
@@ -40,18 +40,27 @@ func _draw() -> void:
 # ---------------------------------------------------------------------------
 
 func _draw_region_auras() -> void:
+	# Build a per-cell zone-tile lookup so each tile is tinted by its own type
+	# (grass vs rock vs water vs cage), not the region's aggregate tags.
+	var tile_at_cell := {}
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var d := inst.get_def()
+		if d != null and d.zone_kind != &"":
+			tile_at_cell[inst.position] = d
 	for region: Region in RegionRegistry.all_regions():
 		if region.cells.is_empty():
 			continue
-		var color := _region_tint(region)
+		var region_color := _region_tint(region)
 		var cell_set := {}
 		for c in region.cells:
 			cell_set[c] = true
-		var fill_color := Color(color.r, color.g, color.b, 0.30)
 		for c in region.cells:
 			var rect := Rect2(_cell_to_screen(c),
 				Vector2(TILE_SIZE, TILE_SIZE))
-			draw_rect(rect, fill_color, true)
+			var cell_def: EntityDef = tile_at_cell.get(c, null)
+			var col := _zone_tile_tint(cell_def) if cell_def != null else region_color
+			draw_rect(rect, Color(col.r, col.g, col.b, 0.30), true)
 		# Scatter ground cover inside the pen (under the fence + animals) so it
 		# looks lived-in, then fence the perimeter.
 		_draw_region_decor(region)
@@ -158,6 +167,17 @@ func _region_tint(region: Region) -> Color:
 		return Color("#d49a5a")
 	if &"grass" in region.provided_zone_tags:
 		return Color("#9bc26a")
+	return Color("#a0a0a0")
+
+
+# Per-tile tint: pick by the tile's own zone_tags so a mixed enclosure shows
+# each cell as its own surface (grass green, water blue, etc.).
+func _zone_tile_tint(def: EntityDef) -> Color:
+	var tags := def.zone_tags
+	if &"water" in tags: return Color("#5fa8d4")
+	if &"tall_cage" in tags: return Color("#6fc2a0")
+	if &"rocks" in tags: return Color("#d49a5a")
+	if &"grass" in tags: return Color("#9bc26a")
 	return Color("#a0a0a0")
 
 

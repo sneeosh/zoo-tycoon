@@ -47,7 +47,12 @@ const TRAIT_FUDGE := &"distance_fudge"
 const STATE := &"state"
 const SPAWN_TICK := &"spawn_tick"
 const BROWSE_TARGET := &"browse_target"
-const BROWSE_VIEW_POS := &"browse_view_pos"  # Vector2 view-cell center
+const BROWSE_VIEW_POS := &"browse_view_pos"  # Vector2 view-cell center (free-roam)
+# Path cell this visitor is walking toward to view the current exhibit. Picked
+# once per browse target so the visitor commits to a specific viewing spot
+# instead of stopping at the first cell within engagement distance — that
+# spread is what stops the whole crowd from clumping at one path tile.
+const BROWSE_PATH_CELL := &"browse_path_cell"
 const LINGER_UNTIL := &"linger_until"     # 0 = not currently lingering
 # Satisfaction at the moment the visitor decided to leave. Reading
 # agent.satisfaction in on_despawn isn't right — hunger keeps decaying
@@ -78,8 +83,8 @@ const ST_SEEKING := &"seeking"
 const ST_LEAVING := &"leaving"
 
 # Exit point. When zoo design grows a proper entrance/exit tile, point
-# this at it. Top-left of the grid for now — matches the MapView gate.
-const EXIT_POSITION := Vector2(0.0, 0.0)
+# this at it. Bottom-left of the grid — matches the MapView gate.
+const EXIT_POSITION := Vector2(0.0, 17.0)
 
 # --- Path navigation (engine v0.6.1 WalkableNetwork) ------------------------
 # Guests prefer to walk the player-built path network. When a usable route
@@ -89,7 +94,7 @@ const EXIT_POSITION := Vector2(0.0, 0.0)
 # game still works with zero paths (and the existing economic-loop tests stay
 # green). This is the sanctioned rollout step — free-roam is the fallback
 # until paths are proven, not a parallel system.
-const GATE_CELL := Vector2i(0, 0)         # network root / exit (entrance gate)
+const GATE_CELL := Vector2i(0, 17)        # network root / exit (entrance gate)
 const AMENITY_ENGAGE_D := 1               # must stand next to a stand to use it
 # _path_move outcomes.
 const PATH_MOVING := 0                     # stepping along the network
@@ -102,6 +107,13 @@ var _value_model := VisitorValueModel.new()
 
 
 func on_spawn(agent: Agent) -> void:
+	# The engine's auto-spawn lands agents at Vector2.ZERO; explicit zoo-side
+	# spawns can pass any position. Either way, an auto-spawn at (0,0) puts the
+	# guest at the top-left of the grid which is no longer where the gate is.
+	# Snap auto-spawns onto the actual gate cell so guests visibly enter
+	# through the ticket booth.
+	if agent.position == Vector2.ZERO:
+		agent.position = Vector2(GATE_CELL)
 	var fee := _value_model.compute_entry_fee(agent)
 	Ledger.post_income(fee, "Ticket", &"entry")
 	ZooBootstrap.money_floated.emit(fee, agent.position)
@@ -116,6 +128,16 @@ func on_spawn(agent: Agent) -> void:
 func on_need_threshold_crossed(agent: Agent, need_id: StringName) -> void:
 	if agent.behavior_state.get(STATE) == ST_LEAVING:
 		return
+	# If we're already seeking another amenity, only switch when the newly
+	# crossed need is more urgent (lower current level) than the one we're
+	# already chasing. Otherwise the next threshold crossing would abandon a
+	# half-finished trip and the agent ends up cycling between amenities,
+	# never actually satisfying any — which is what tanks the rep.
+	if agent.behavior_state.get(STATE) == ST_SEEKING and agent.seeking_need != &"":
+		var current_level: float = float(agent.need_levels.get(agent.seeking_need, 1.0))
+		var new_level: float = float(agent.need_levels.get(need_id, 1.0))
+		if new_level >= current_level:
+			return
 	var best_id := _pick_satisfier_with_noise(agent, need_id)
 	if best_id == 0:
 		return  # nothing satisfies — keep browsing until we leave from frustration
@@ -214,8 +236,42 @@ func _nav_seek(agent: Agent) -> void:
 			agent.seeking_need = &""
 			agent.behavior_state[STATE] = ST_BROWSING
 			_clear_nav(agent)
+			# If other needs are still below threshold, chain into the next
+			# seek immediately. The engine only re-fires threshold_crossed when
+			# a need goes ABOVE threshold and then crosses back below — so a
+			# need that was already low before this trip would otherwise be
+			# stranded until the visitor leaves frustrated.
+			_seek_next_unmet_need(agent)
 		_:
 			_step_toward_target(agent)   # legacy free-roam (satisfies on reach)
+
+
+# After satisfying one need, look at the agent's other needs and start seeking
+# the most urgent one still below threshold. Mirrors on_need_threshold_crossed
+# but driven by state inspection, not the engine signal.
+func _seek_next_unmet_need(agent: Agent) -> void:
+	var type: AgentType = ContentDB.get_agent_type(agent.agent_type_id)
+	if type == null:
+		return
+	var lowest_id: StringName = &""
+	var lowest_level: float = INF
+	for ns: NeedSpec in type.needs:
+		if ns.need == null:
+			continue
+		var nid: StringName = ns.need.id
+		var lvl: float = float(agent.need_levels.get(nid, 1.0))
+		if lvl < ns.threshold and lvl < lowest_level:
+			lowest_id = nid
+			lowest_level = lvl
+	if lowest_id == &"":
+		return
+	var best_id := _pick_satisfier_with_noise(agent, lowest_id)
+	if best_id == 0:
+		return
+	agent.target_entity_id = best_id
+	agent.seeking_need = lowest_id
+	agent.behavior_state[STATE] = ST_SEEKING
+	_clear_nav(agent)
 
 
 # Browsing: walk to a path cell within viewing distance of the target exhibit,
@@ -226,13 +282,72 @@ func _nav_browse(agent: Agent) -> void:
 	if region == null or region.cells.is_empty() or region.placements.is_empty():
 		_pick_browse_target(agent)
 		return
-	match _path_move(agent, region.cells, _view_engage_d()):
+	# Pick a *specific* path cell to view from. Each visitor commits to one
+	# spot so a crowd disperses along the fence instead of all stopping at
+	# the same engagement-distance threshold cell.
+	var path_cell: Vector2i = agent.behavior_state.get(BROWSE_PATH_CELL, Vector2i.MAX)
+	if path_cell == Vector2i.MAX:
+		path_cell = _random_view_path_cell(region, agent)
+		if path_cell == INetworkNavigator.NO_STEP:
+			_step_browsing(agent)   # no usable viewing cell — free-roam fallback
+			return
+		agent.behavior_state[BROWSE_PATH_CELL] = path_cell
+		_clear_nav(agent)
+	match _path_move(agent, [path_cell] as Array[Vector2i], 0):
 		PATH_MOVING:
 			return
 		PATH_ARRIVED:
 			_linger_and_donate(agent, region)
 		_:
 			_step_browsing(agent)   # legacy free-roam fallback
+
+
+# Pick a random path cell near the region's fence. Each visitor commits to one
+# spot so a crowd disperses along the perimeter instead of all stopping at the
+# first cell within engagement distance.
+#
+# The candidate set is path cells within engagement-distance of any region cell.
+# We expand outward from the fence rather than iterating the whole network
+# (WalkableNetwork doesn't expose its cell list — engine seam, see CLAUDE.md §1).
+func _random_view_path_cell(region: Region, _agent: Agent) -> Vector2i:
+	var net: WalkableNetwork = NavigationRegistry.get_network()
+	if net == null or net.cell_count() == 0:
+		return INetworkNavigator.NO_STEP
+	var engage_d := _view_engage_d()
+	var region_set := {}
+	for rc in region.cells:
+		region_set[rc] = true
+	var seen := {}
+	var candidates: Array[Vector2i] = []
+	var weights: Array[float] = []
+	var total: float = 0.0
+	# Manhattan-ring expansion from each region cell up to engage_d.
+	for rc in region.cells:
+		for dy in range(-engage_d, engage_d + 1):
+			var span: int = engage_d - absi(dy)
+			for dx in range(-span, span + 1):
+				var c := rc + Vector2i(dx, dy)
+				if seen.has(c) or region_set.has(c):
+					continue
+				seen[c] = true
+				if not net.has_cell(c):
+					continue
+				var d: int = absi(dx) + absi(dy)
+				# Inverse-distance: cells right against the fence dominate
+				# but every viewable cell keeps a non-zero chance.
+				var w: float = 1.0 / float(d + 1)
+				candidates.append(c)
+				weights.append(w)
+				total += w
+	if candidates.is_empty():
+		return INetworkNavigator.NO_STEP
+	var pick := SimClock.rng.randf() * total
+	var accum: float = 0.0
+	for i in candidates.size():
+		accum += weights[i]
+		if pick <= accum:
+			return candidates[i]
+	return candidates[candidates.size() - 1]
 
 
 # Once parked within viewing distance of an exhibit: tip on arrival, hold for
@@ -472,9 +587,6 @@ func _step_browsing(agent: Agent) -> void:
 		region = RegionRegistry.get_region(target_region_id)
 	if region == null or region.cells.is_empty():
 		_pick_browse_target(agent)
-		agent.position += Vector2(
-			SimClock.rng.randf_range(-0.05, 0.05),
-			SimClock.rng.randf_range(-0.05, 0.05))
 		return
 	var view_pos: Vector2 = agent.behavior_state.get(BROWSE_VIEW_POS, Vector2.INF)
 	if view_pos == Vector2.INF:
@@ -494,11 +606,12 @@ func _step_browsing(agent: Agent) -> void:
 			_pick_browse_target(agent)
 			agent.behavior_state[LINGER_UNTIL] = 0
 			return
-		# Drift while lingering — gives the impression of looking around
-		# without overlapping with other visitors at the same fence spot.
-		agent.position += Vector2(
-			SimClock.rng.randf_range(-0.04, 0.04),
-			SimClock.rng.randf_range(-0.04, 0.04))
+		# Gentle sway while lingering — deterministic so the visitor doesn't
+		# vibrate. Each agent gets its own phase + axis so a crowd doesn't
+		# move in lockstep. Amplitude is a tenth of a tile; the bob in the
+		# renderer adds the visual "alive" feel.
+		var phase := float(SimClock.current_tick) * 0.06 + float(agent.agent_id) * 0.73
+		agent.position += Vector2(cos(phase) * 0.004, sin(phase * 1.13) * 0.004)
 		return
 	var step := to_target.normalized() * _walking_speed(agent) * BROWSE_SPEED_FACTOR
 	agent.position = _avoid_regions(agent.position, step)
@@ -679,6 +792,7 @@ func _pick_browse_target(agent: Agent) -> void:
 	if candidates.is_empty():
 		agent.behavior_state[BROWSE_TARGET] = 0
 		agent.behavior_state[BROWSE_VIEW_POS] = Vector2.INF
+		agent.behavior_state.erase(BROWSE_PATH_CELL)
 		return
 	var picked_region_id: int = candidates[candidates.size() - 1]
 	var pick := SimClock.rng.randf() * total_weight
@@ -689,6 +803,10 @@ func _pick_browse_target(agent: Agent) -> void:
 			picked_region_id = candidates[i]
 			break
 	agent.behavior_state[BROWSE_TARGET] = picked_region_id
+	# Clear last exhibit's viewing spots so _nav_browse picks a fresh one for
+	# the new target; otherwise the visitor would try to walk to the previous
+	# exhibit's fence.
+	agent.behavior_state.erase(BROWSE_PATH_CELL)
 	var region := RegionRegistry.get_region(picked_region_id)
 	if region != null:
 		agent.behavior_state[BROWSE_VIEW_POS] = _pick_viewing_point(region, agent)

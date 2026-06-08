@@ -15,6 +15,7 @@ class_name IsoPreview
 
 const TW := 64           # iso tile width  (2 : 1)
 const TH := 32           # iso tile height
+const GATE_CELL: Vector2i = Vector2i(0, 17)   # entrance — bottom-left corner
 const FENCE_H := 16
 const GROUND_W := 28     # cells of ground to draw
 const GROUND_H := 18
@@ -47,6 +48,8 @@ var _user_zoom := 1.0
 var _pan := Vector2.ZERO
 var _last_size := Vector2.ZERO
 var _panning := false
+# Mouse button currently held for drag-paint (LEFT/RIGHT); 0 = nothing held.
+var _drag_button: int = 0
 
 # Parkland scenery billboards (trees / rocks / bushes), depth-sorted with
 # everything else so guests pass behind a tree. Deterministic per cell, cached
@@ -69,6 +72,9 @@ func _ready() -> void:
 	# STOP so we receive _gui_input — this is an interactive view now, not a
 	# passive overlay.
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# Zoom + pan scale the world in screen space; without clipping, foliage
+	# at the edges spills out over the BUILD panel and the event log.
+	clip_contents = true
 	set_process(true)
 	# Tile the ground noise texture seamlessly across the whole ground plane.
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
@@ -92,7 +98,29 @@ var _time := 0.0
 func _process(d: float) -> void:
 	_time += d
 	_tick_money_floats()
+	_handle_keyboard_pan(d)
 	queue_redraw()
+
+
+# WASD / arrow keys nudge the view _pan in screen space. Speed scales with the
+# control size so big windows feel as snappy as small ones; modifiers boost it
+# for fast traversal.
+const KEY_PAN_SPEED := 600.0   # screen px / second at 1x
+func _handle_keyboard_pan(dt: float) -> void:
+	var dir := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		dir.y += 1
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		dir.y -= 1
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		dir.x += 1
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		dir.x -= 1
+	if dir == Vector2.ZERO:
+		return
+	var boost := 2.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0
+	_pan += dir.normalized() * KEY_PAN_SPEED * boost * dt
+	_rebuild_view()
 
 
 func _on_money_floated(amount: int, world_pos: Vector2) -> void:
@@ -150,13 +178,30 @@ func _screen_to_cell(p: Vector2) -> Vector2i:
 
 
 func _gui_input(event: InputEvent) -> void:
+	# Mac trackpad pinch — `factor` is multiplicative (>1 = zoom in).
+	if event is InputEventMagnifyGesture:
+		_zoom_at(event.position, event.factor)
+		return
+	# Mac two-finger scroll on the trackpad arrives as a pan gesture.
+	if event is InputEventPanGesture:
+		_pan -= event.delta * 8.0
+		_rebuild_view()
+		return
 	if event is InputEventMouseMotion:
 		if _panning:
 			_pan += event.relative
 			_rebuild_view()
 		_hover_screen = event.position
+		var prev_cell := _hover_cell
 		_hover_cell = _screen_to_cell(event.position)
 		_hovering = true
+		# Drag-paint while a build-mouse button is held and the hovered cell
+		# changes. Skipped during panning so middle-drag still pans cleanly.
+		if not _panning and _drag_button != 0 and _hover_cell != prev_cell:
+			if _drag_button == MOUSE_BUTTON_LEFT:
+				placement_drag_requested.emit(_hover_cell)
+			elif _drag_button == MOUSE_BUTTON_RIGHT:
+				remove_drag_requested.emit(_hover_cell)
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_zoom_at(event.position, 1.1)
@@ -166,8 +211,12 @@ func _gui_input(event: InputEvent) -> void:
 			_panning = event.pressed
 		elif event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			placement_requested.emit(_screen_to_cell(event.position))
+			_drag_button = MOUSE_BUTTON_LEFT
 		elif event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
 			remove_requested.emit(_screen_to_cell(event.position))
+			_drag_button = MOUSE_BUTTON_RIGHT
+		elif not event.pressed and event.button_index == _drag_button:
+			_drag_button = 0
 
 
 # Zoom about the cursor: keep the model point under `screen_pos` fixed.
@@ -389,7 +438,8 @@ func _draw_night_glows(darkness: float) -> void:
 		if sc["sprite"] == "lamp_post":
 			var c: Vector2i = sc["cell"]
 			_glow(_view_xf * (_tile_center(c.x, c.y) + Vector2(0, -10)), 30.0 * z, lamp, darkness)
-	_glow(_view_xf * (_tile_center(0, 0) + Vector2(0, -10)), 28.0 * z, lamp, darkness)
+	_glow(_view_xf * (_tile_center(GATE_CELL.x, GATE_CELL.y) + Vector2(0, -10)),
+		28.0 * z, lamp, darkness)
 	for inst_id in EntityRegistry.instances.keys():
 		var inst: EntityInstance = EntityRegistry.instances[inst_id]
 		var def := inst.get_def()
@@ -555,28 +605,61 @@ func _draw_ground() -> void:
 			_fill_diamond(gx, gy, _grass_color(gx, gy))
 
 
-# Enclosure floors are drawn as solid, varied diamonds (same seamless trick as
-# the grass) so a multi-tile pen reads as one continuous surface, not a grid.
-func _region_floor_color(region: Region, gx: int, gy: int) -> Color:
+# Color a single zone-tile cell by its own tile def, not the region's aggregate
+# tags — a grass tile reads as grass even when it sits next to rock and water.
+func _zone_tile_floor_color(def: EntityDef, gx: int, gy: int) -> Color:
 	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
 	var base: Color
-	if &"water" in region.provided_zone_tags:
+	var tags := def.zone_tags
+	if &"water" in tags:
 		base = Color("#3f7fb0")
-	elif &"rocks" in region.provided_zone_tags:
+	elif &"rocks" in tags:
 		base = Color("#9c7b4f")
-	elif &"tall_cage" in region.provided_zone_tags:
+	elif &"tall_cage" in tags:
 		base = Color("#8a6f47")
+	elif &"grass" in tags:
+		base = Color("#5a8045")
 	else:
-		base = Color("#7a5d3a")   # dirt enclosure floor, distinct from grass
+		base = Color("#7a5d3a")
 	var v := float(h % 7) / 7.0
 	return base.lerp(base.lightened(0.12), v).darkened(0.04 * float((h / 7) % 3))
 
 
+# Iterate zone-tile entities directly so each cell is colored by its actual
+# tile type. Cells inside a region but without a zone-tile entity (shouldn't
+# happen — regions are built from these — but defensive) fall back to a dirt
+# tint via the region-level color.
 func _draw_region_fills() -> void:
+	var painted := {}
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null or def.zone_kind == &"":
+			continue
+		var c: Vector2i = inst.position
+		_fill_diamond(c.x, c.y, _zone_tile_floor_color(def, c.x, c.y))
+		painted[c] = true
+	# Defensive: any region cells without a painted zone tile (e.g., loaded
+	# from an older save) still get a sensible fill.
 	for region: Region in RegionRegistry.all_regions():
 		for c in region.cells:
-			_fill_diamond(c.x, c.y, _region_floor_color(region, c.x, c.y))
+			if painted.has(c):
+				continue
+			_fill_diamond(c.x, c.y, _region_fallback_color(region, c.x, c.y))
 	_draw_region_fringe()
+
+
+func _region_fallback_color(region: Region, gx: int, gy: int) -> Color:
+	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
+	var base: Color
+	var tags := region.provided_zone_tags
+	if &"water" in tags: base = Color("#3f7fb0")
+	elif &"rocks" in tags: base = Color("#9c7b4f")
+	elif &"tall_cage" in tags: base = Color("#8a6f47")
+	elif &"grass" in tags: base = Color("#5a8045")
+	else: base = Color("#7a5d3a")
+	var v := float(h % 7) / 7.0
+	return base.lerp(base.lightened(0.12), v).darkened(0.04 * float((h / 7) % 3))
 
 
 # Soften the hard diamond boundary where an exhibit floor meets the parkland:
@@ -688,9 +771,16 @@ func _draw_sorted_objects() -> void:
 		if def.zone_kind != &"":
 			continue   # zone tiles are GROUND (drawn as region-fill diamonds), not billboards
 		var fp := def.footprint
+		# Amenities (food stand, drink stand, restroom, bench, ...) render at
+		# the smaller billboard scale so their iso sprite doesn't tower above
+		# the footprint and visually overlap neighboring path tiles. Larger
+		# capstones (arena, compost, restaurant) still render at full scale.
+		var is_small_amenity := not def.satisfies.is_empty() \
+			and fp.x <= 1 and fp.y <= 1
 		draws.append({
 			"d": float(inst.position.x + inst.position.y) + float(fp.x + fp.y) * 0.5,
-			"sprite": String(def.sprite_key), "fp": fp, "cell": inst.position, "label": def.display_name})
+			"sprite": String(def.sprite_key), "fp": fp, "cell": inst.position,
+			"label": def.display_name, "small": is_small_amenity})
 
 	# Animals inside exhibits. Animals amble around their enclosure (a purely
 	# presentational wander — the sim still treats them as fixed placements);
@@ -704,7 +794,16 @@ func _draw_sorted_objects() -> void:
 			var pdef: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
 			if pdef == null:
 				continue
-			var home: Vector2i = region.cells[i % region.cells.size()]
+			# Honor the player's chosen primary_cell when present (set by
+			# _place_placeable_at on click and by donation-box outside-the-fence
+			# logic). For pre-generated / engine-stamped placements (no state
+			# override), distribute across region cells so multiple placements
+			# in the same exhibit don't stack and z-fight on the first cell.
+			var home: Vector2i
+			if p.state.has("primary_cell"):
+				home = p.state["primary_cell"]
+			else:
+				home = region.cells[i % region.cells.size()]
 			var is_animal := not pdef.appeal_contribution.is_empty()
 			if is_animal:
 				var seed := _hash2(home.x + i * 97 + 5, home.y + i * 53 + 3)
@@ -725,9 +824,9 @@ func _draw_sorted_objects() -> void:
 					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
 					"label": pdef.display_name, "small": true})
 
-	# Entrance gate: the ticket booth at cell (0,0), where guests enter/leave.
+	# Entrance gate: the ticket booth at the gate cell, where guests enter/leave.
 	draws.append({"d": 0.4, "sprite": "ticket_booth", "fp": Vector2i.ONE,
-		"pos": Vector2(0, 0), "wmul": 1.3, "small": false})
+		"pos": Vector2(GATE_CELL), "wmul": 1.3, "small": false})
 
 	# Parkland scenery.
 	if _scenery_dirty:
@@ -768,7 +867,7 @@ func _mark_scenery_dirty(_arg = null) -> void:
 func _rebuild_scenery() -> void:
 	_scenery_dirty = false
 	_scenery.clear()
-	var blocked := {Vector2i(0, 0): true}   # entrance gate
+	var blocked := {GATE_CELL: true}   # entrance gate
 	var path_cells: Array = []
 	for region: Region in RegionRegistry.all_regions():
 		for c in region.cells:
@@ -985,9 +1084,12 @@ func _sprite_anchor(name: String) -> Dictionary:
 const ARCH_COLORS := {
 	&"visitor": Color("#dfe6df"), &"child": Color("#f4a261"),
 	&"family": Color("#83c779"), &"enthusiast": Color("#c9a4ff")}
+# All archetypes share the same body sprite so the crowd reads at a uniform
+# scale; the archetype ring (colored arc around the halo) still tells you who
+# is who. Restore per-archetype art once we have a consistent character pack.
 const ARCH_SPRITE := {
-	&"visitor": "visitor", &"child": "visitor_child",
-	&"family": "visitor_family", &"enthusiast": "visitor_enthusiast"}
+	&"visitor": "visitor", &"child": "visitor",
+	&"family": "visitor", &"enthusiast": "visitor"}
 const NEED_SHOW_THRESHOLD := 0.4
 const NEED_BUBBLES := {
 	&"hunger":   {"glyph": "H", "color": Color("#e27d60")},
@@ -1087,15 +1189,8 @@ func _sprite(name: String) -> Texture2D:
 # True ¾ isometric directional art: if assets/sprites/<species>_4dir/ exists,
 # return the sprite name facing the screen-space heading (N/S/E/W). Falls back
 # to the plain billboard sprite when there's no directional set for a species.
-#
-# DISABLED for now: the lion_4dir / zebra_4dir art currently in the repo is
-# anthropomorphic — the animals stand upright like people (a Pixel Lab
-# generation error; see design/pixel_lab_briefs.md, which now requires
-# quadruped art). Until correct four-legged directional art lands we fall back
-# to the (anatomically correct) billboard sprites. Flip _directional_enabled
-# true once good _4dir sets exist. The mapping logic below stays unit-tested.
 var _has_4dir := {}              # species -> bool
-var _directional_enabled := false
+var _directional_enabled := true
 
 func _directional_sprite(species: String, heading: Vector2) -> String:
 	if not _has_4dir.has(species):
