@@ -18,10 +18,12 @@ const TH := 32           # iso tile height
 const FENCE_H := 16
 const GROUND_W := 28     # cells of ground to draw
 const GROUND_H := 18
+const GROUND_TEX_SCALE := 96.0   # model px the seamless ground-noise tile spans
 
 var origin := Vector2(660, 70)
 var _sprites := {}       # name -> Texture2D | null
 var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
+var _ground_noise: ImageTexture   # seamless grayscale grain for the ground
 
 # Hover/interaction state (mirrors MapView). _hover_cell is the grid cell the
 # cursor is over, via inverse projection; _hovering gates the preview.
@@ -68,6 +70,9 @@ func _ready() -> void:
 	# passive overlay.
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
+	# Tile the ground noise texture seamlessly across the whole ground plane.
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	_ground_noise = _make_ground_noise()
 	resized.connect(_rebuild_view)
 	ZooBootstrap.money_floated.connect(_on_money_floated)
 	# Parkland scenery (trees/rocks/bushes) is deterministic per cell but must
@@ -509,9 +514,18 @@ func _fill_diamond(gx: float, gy: float, fill: Color) -> void:
 	var hw := TW * 0.5 + 0.75
 	var hh := TH * 0.5 + 0.5
 	var c := t + Vector2(0, TH * 0.5)
-	draw_colored_polygon(PackedVector2Array([
-		c + Vector2(0, -hh), c + Vector2(hw, 0),
-		c + Vector2(0, hh), c + Vector2(-hw, 0)]), fill)
+	var pts := PackedVector2Array([
+		c + Vector2(0, -hh), c + Vector2(hw, 0), c + Vector2(0, hh), c + Vector2(-hw, 0)])
+	if _ground_noise == null:
+		draw_colored_polygon(pts, fill)
+		return
+	# Multiply a seamless grayscale noise texture by the terrain tint, UV-mapped
+	# in model space so the grain is world-locked (no swim on pan/zoom) and
+	# continuous across diamonds (no seams). Turns flat fills into textured turf.
+	var uvs := PackedVector2Array([
+		pts[0] / GROUND_TEX_SCALE, pts[1] / GROUND_TEX_SCALE,
+		pts[2] / GROUND_TEX_SCALE, pts[3] / GROUND_TEX_SCALE])
+	draw_polygon(pts, PackedColorArray([fill, fill, fill, fill]), uvs, _ground_noise)
 
 
 func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
@@ -1096,6 +1110,40 @@ func _directional_sprite(species: String, heading: Vector2) -> String:
 	else:
 		dir = "west"
 	return "%s_4dir/%s" % [species, dir]
+
+
+# Bake a small, seamless grayscale value-noise texture used to grain the ground.
+# Two octaves of a wrapping value noise (lattice indices taken modulo the octave
+# size, so the image tiles), mapped to [0.78, 1.0] so it only darkens the tint.
+func _make_ground_noise() -> ImageTexture:
+	var n := 64
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	for y in n:
+		for x in n:
+			var v := 0.6 * _tile_value_noise(x, y, n, 6) + 0.4 * _tile_value_noise(x, y, n, 14)
+			var g: float = 0.72 + 0.28 * v
+			img.set_pixel(x, y, Color(g, g, g))
+	return ImageTexture.create_from_image(img)
+
+
+func _tile_value_noise(x: int, y: int, n: int, cells: int) -> float:
+	var fx := float(x) / float(n) * float(cells)
+	var fy := float(y) / float(n) * float(cells)
+	var x0 := int(floor(fx))
+	var y0 := int(floor(fy))
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	tx = tx * tx * (3.0 - 2.0 * tx)
+	ty = ty * ty * (3.0 - 2.0 * ty)
+	var v00 := _lattice(x0, y0, cells)
+	var v10 := _lattice(x0 + 1, y0, cells)
+	var v01 := _lattice(x0, y0 + 1, cells)
+	var v11 := _lattice(x0 + 1, y0 + 1, cells)
+	return lerpf(lerpf(v00, v10, tx), lerpf(v01, v11, tx), ty)
+
+
+func _lattice(ix: int, iy: int, cells: int) -> float:
+	return float(_hash2(posmod(ix, cells) + 11, posmod(iy, cells) + 17) % 1000) / 1000.0
 
 
 func _hash2(a: int, b: int) -> int:
