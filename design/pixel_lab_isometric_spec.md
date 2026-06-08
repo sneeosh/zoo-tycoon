@@ -107,6 +107,11 @@ zoom, click→cell, `_bar`, visitor inspection.)
 
 Remaining is polish / promotion, not parity:
 
+> **Art passes to finish the look:** the two remaining items below both need
+> art, not code — tight generation briefs (exact sizes, paths, the seamless
+> rule, the directional facing convention) are in
+> [`pixel_lab_briefs.md`](./pixel_lab_briefs.md).
+
 - [ ] **Player-facing toggle.** Iso is still behind the `TYCOON_ISO` env var;
       it could become a settings/HUD toggle now that it's a full view.
 - [ ] **Weather visuals.** Neither view renders weather today (it only scales
