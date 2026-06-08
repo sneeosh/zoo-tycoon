@@ -1087,13 +1087,21 @@ func _sprite(name: String) -> Texture2D:
 # True ¾ isometric directional art: if assets/sprites/<species>_4dir/ exists,
 # return the sprite name facing the screen-space heading (N/S/E/W). Falls back
 # to the plain billboard sprite when there's no directional set for a species.
-var _has_4dir := {}   # species -> bool
+#
+# DISABLED for now: the lion_4dir / zebra_4dir art currently in the repo is
+# anthropomorphic — the animals stand upright like people (a Pixel Lab
+# generation error; see design/pixel_lab_briefs.md, which now requires
+# quadruped art). Until correct four-legged directional art lands we fall back
+# to the (anatomically correct) billboard sprites. Flip _directional_enabled
+# true once good _4dir sets exist. The mapping logic below stays unit-tested.
+var _has_4dir := {}              # species -> bool
+var _directional_enabled := false
 
 func _directional_sprite(species: String, heading: Vector2) -> String:
 	if not _has_4dir.has(species):
 		_has_4dir[species] = ResourceLoader.exists(
 			"res://assets/sprites/%s_4dir/south.png" % species)
-	if not _has_4dir[species]:
+	if not _directional_enabled or not _has_4dir[species]:
 		return species
 	# Map the heading's screen angle to the nearest cardinal facing. Default to
 	# "south" (facing the camera) when nearly stationary.

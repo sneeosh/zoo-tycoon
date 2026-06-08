@@ -71,10 +71,21 @@ assets/sprites/<species>_4dir/east.png
 assets/sprites/<species>_4dir/west.png
 ```
 
-**Size & pivot:** **92×92** px (match `lion_4dir` exactly), transparent, object
-**centered horizontally**, with the **feet near the bottom of the opaque
-area** (the game seats the sprite by its lowest opaque pixels, so a floating
-animal will float). Generous transparent margin.
+> ⚠️ **The current `lion_4dir` and `zebra_4dir` art is WRONG** — both came out
+> **anthropomorphic** (the animal stands upright on two legs like a person in a
+> costume). The directional renderer is therefore **disabled** (`_directional_enabled
+> = false` in `iso_preview.gd`) and animals fall back to the billboard sprites
+> until corrected art lands. When regenerating, the **#1 requirement** is:
+
+**Anatomy — non-negotiable:** the animal is a **real four-legged quadruped on
+all fours**, in profile/¾, **NOT** standing upright, **NOT** bipedal, **NOT**
+humanoid, **no costume**. A lion looks like a lion walking; a zebra like a zebra
+grazing. Reference a real animal silhouette, not a mascot.
+
+**Size & pivot:** **92×92** px (match the *intended* `lion_4dir` size),
+transparent, object **centered horizontally**, with the **feet near the bottom
+of the opaque area** (the game seats the sprite by its lowest opaque pixels, so a
+floating animal will float). Generous transparent margin.
 
 **Facing convention — match `lion_4dir` exactly (the renderer depends on it):**
 | File | The animal faces… | i.e. moving toward screen… |
