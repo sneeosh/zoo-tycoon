@@ -368,6 +368,44 @@ func _draw_day_night() -> void:
 	if darkness <= 0.01:
 		return
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.10, 0.28, darkness), true)
+	# Lamps and lit buildings push back the dark (OpenRCT2-style light sources).
+	if darkness >= 0.18:
+		_draw_night_glows(darkness)
+
+
+# Warm pools of light at lamp posts, the entrance gate, and building windows
+# once it's dark enough. Drawn in screen space (after the dusk overlay) by
+# projecting each source through the view transform. Translucent warm circles
+# over the darkened ground read as glow without needing an additive material.
+func _draw_night_glows(darkness: float) -> void:
+	var z := _fit_zoom * _user_zoom
+	var lamp := Color("#ffe6ad")
+	for sc in _scenery:
+		if sc["sprite"] == "lamp_post":
+			var c: Vector2i = sc["cell"]
+			_glow(_view_xf * (_tile_center(c.x, c.y) + Vector2(0, -10)), 30.0 * z, lamp, darkness)
+	_glow(_view_xf * (_tile_center(0, 0) + Vector2(0, -10)), 28.0 * z, lamp, darkness)
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def == null or def.walkable or def.zone_kind != &"":
+			continue
+		var cx := inst.position.x + float(def.footprint.x) * 0.5 - 0.5
+		var cy := inst.position.y + float(def.footprint.y) * 0.5 - 0.5
+		var span: float = maxf(def.footprint.x, def.footprint.y)
+		_glow(_view_xf * (_tile_center(cx, cy) + Vector2(0, -8)),
+			20.0 * z * (1.0 + 0.4 * (span - 1.0)), Color("#ffce85"), darkness * 0.85)
+
+
+# A soft pool of light: concentric translucent rings that whiten toward a bright
+# core, so warm-over-dark reads as a lamp glow without an additive material.
+func _glow(pos: Vector2, radius: float, warm: Color, intensity: float) -> void:
+	var core := warm.lerp(Color.WHITE, 0.4)
+	for i in 7:
+		var t := float(i) / 7.0
+		var r := radius * (1.0 - t)
+		var col := warm.lerp(core, 1.0 - t)
+		draw_circle(pos, r, Color(col.r, col.g, col.b, intensity * 0.16))
 
 
 # Pulsing ⚠ over any exhibit guests can't path to (set by main from the
