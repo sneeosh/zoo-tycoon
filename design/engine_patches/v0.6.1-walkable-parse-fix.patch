@@ -1,0 +1,86 @@
+From 4040ef60d7f5e43be5e9f613fb2ebd7b170e25cc Mon Sep 17 00:00:00 2001
+From: Kenny Johnson <kennyallenjohnson@gmail.com>
+Date: Sun, 7 Jun 2026 18:17:12 +0000
+Subject: [PATCH] fix(content_db): un-nest v0.6.0 walkable column parsing from
+ useful_life_days
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The walkable / traversal_cost / network_id / walkable_tags column reads were
+indented inside the `if row.has("useful_life_days")` block, so any entities
+table lacking that optional accounting column never registered walkable tiles
+— WalkableNetworks stayed empty and agents couldn't path. Dedent the four
+blocks one level so they run for every entity row. Pure indentation fix;
+engine suite 295/295.
+---
+ CHANGELOG.md                              | 15 ++++++++++++-
+ addons/tycoon_core/autoload/content_db.gd | 26 +++++++++++------------
+ 2 files changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 35905b2..d19ae1d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,7 +7,20 @@ The engine follows semver: `MAJOR.MINOR.PATCH` where MAJOR bumps break
+ schema/interface compatibility, MINOR bumps add capabilities without
+ breaking existing games, and PATCH bumps are bug fixes.
+ 
+-## v0.6.0 — 2026-06-07
++## v0.6.1 — 2026-06-07
++
++Bug fix for the v0.6.0 walkable-network field parsing.
++
++### Fixed
++- `ContentDB._compile_entities` parsed the v0.6.0 `walkable` /
++  `traversal_cost` / `network_id` / `walkable_tags` columns inside the
++  `if row.has("useful_life_days")` block, so an entities table without a
++  `useful_life_days` column never registered any tile as walkable —
++  `WalkableNetwork`s stayed empty and no agent could path. Dedented the
++  four `if row.has(...)` blocks one level so they're evaluated for every
++  entity row, independent of the optional accounting column. Pure
++  indentation fix; no behavior change for tables that *did* carry
++  `useful_life_days`. Engine suite still 295/295.
+ 
+ Agent navigation on a constrained walkable network — the generic tycoon
+ primitive behind "agents move on a player-built network of walkable cells
+diff --git a/addons/tycoon_core/autoload/content_db.gd b/addons/tycoon_core/autoload/content_db.gd
+index 136e9fb..df0c1c4 100644
+--- a/addons/tycoon_core/autoload/content_db.gd
++++ b/addons/tycoon_core/autoload/content_db.gd
+@@ -231,19 +231,19 @@ func _compile_entities(parsed: Dictionary) -> void:
+ 			# (no depreciation, immediate expense).
+ 			if row.has("useful_life_days"):
+ 				ed.useful_life_days = _cell_int(path, row, line, "useful_life_days", 0, 1_000_000)
+-				# v0.6.0 walkable-network fields (optional — see
+-				# design/algorithms/navigation.md). Absent columns leave the
+-				# schema defaults (walkable=false, cost 1.0, default network).
+-				if row.has("walkable"):
+-					ed.walkable = _cell_bool(path, row, line, "walkable", false)
+-				if row.has("traversal_cost"):
+-					ed.traversal_cost = _cell_float(path, row, line, "traversal_cost", 0.0, 1e9)
+-				if row.has("network_id"):
+-					var net_id := _cell_string_name(path, row, line, "network_id")
+-					if net_id != &"":
+-						ed.network_id = net_id
+-				if row.has("walkable_tags"):
+-					ed.walkable_tags = _cell_array_string_names(row, "walkable_tags")
++			# v0.6.0 walkable-network fields (optional — see
++			# design/algorithms/navigation.md). Absent columns leave the
++			# schema defaults (walkable=false, cost 1.0, default network).
++			if row.has("walkable"):
++				ed.walkable = _cell_bool(path, row, line, "walkable", false)
++			if row.has("traversal_cost"):
++				ed.traversal_cost = _cell_float(path, row, line, "traversal_cost", 0.0, 1e9)
++			if row.has("network_id"):
++				var net_id := _cell_string_name(path, row, line, "network_id")
++				if net_id != &"":
++					ed.network_id = net_id
++			if row.has("walkable_tags"):
++				ed.walkable_tags = _cell_array_string_names(row, "walkable_tags")
+ 			entity_defs[ed.id] = ed
+ 
+ 	# Effects, applied to their owning entity by entity_id.
+-- 
+2.43.0
+

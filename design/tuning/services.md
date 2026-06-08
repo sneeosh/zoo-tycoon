@@ -28,8 +28,8 @@ base decay (needs.md) is slow.
 
 | need_id  | price | revenue_source | spillover_need | spillover_amount |
 | -------- | ----- | -------------- | -------------- | ---------------- |
-| hunger   | 5     | food_stand     | restroom       | 0.30             |
-| thirst   | 3     | drink_stand    | restroom       | 0.40             |
+| hunger   | 5     | food_stand     | restroom       | 0.15             |
+| thirst   | 3     | drink_stand    | restroom       | 0.20             |
 | restroom | 0     | restroom       |                | 0.0              |
 | energy   | 0     | bench          |                | 0.0              |
 
@@ -81,3 +81,38 @@ a donation fires at all.
 donation_view_chance      = 0.35
 donation_amount_max       = 6
 donation_min_satisfaction = 0.55
+
+## Guest types
+
+<!--
+Adaptation plan §2 item 2 — per-archetype spend. spend_multiplier scales
+everything a guest of that type pays: the gate ticket, food/drink/meals, and
+donations. A Family is a whole party (2.2×); a Child spends little on their
+own (0.5×); an Enthusiast splurges and tips (1.4×); an Adult is the 1.0
+baseline. This is what makes the guest mix — driven by which exhibits you
+build — show up in the books. Archetype ids must match agents.md; an
+unlisted type defaults to 1.0.
+-->
+
+| agent_id   | spend_multiplier |
+| ---------- | ---------------- |
+| visitor    | 1.0              |
+| child      | 0.5              |
+| family     | 2.2              |
+| enthusiast | 1.4              |
+
+## Day cycle
+
+<!--
+Roadmap 3.4 (day/night + opening hours). Opening hours as a fraction of the
+day in [0,1) — derived from SimClock (current_tick % ticks_per_day). Guests
+only arrive while the park is open; it empties through the evening as the
+last visitors finish up. open_end < 1.0 leaves a closed stretch each night
+so the day has a rhythm instead of a flat 24-hour spawn.
+
+(Nocturnal animals shifting appeal by time is a planned follow-up — it needs
+a time factor in appeal scoring and is noted as an engine time-hook.)
+-->
+
+open_start = 0.0
+open_end   = 0.80

@@ -14,6 +14,10 @@ signal money_floated(amount: int, world_pos: Vector2)
 
 # Keep the instances alive at module scope. AgentPool holds refs but
 # storing here too means we can swap them at runtime if needed.
+# Guest archetype agent-type ids (design/tuning/agents.md). All share the
+# visitor behavior + satisfaction model.
+const GUEST_TYPES: Array[StringName] = [&"visitor", &"child", &"family", &"enthusiast"]
+
 var _visitor_behavior: VisitorBehavior
 var _visitor_satisfaction: VisitorSatisfactionModel
 var _zoo_quality: ZooQualityRating         # callable from game UI
@@ -26,6 +30,36 @@ var scenario: Scenario
 # Per-need service pricing + spillover (design/tuning/services.md). Read by
 # VisitorBehavior when a guest satisfies a need at a satisfier entity.
 var services: ServiceConfig
+
+# Animal-welfare tuning (design/tuning/welfare.md). The daily update lives in
+# _on_day_ending_for_welfare; welfare lives in each animal placement's
+# state["welfare"] / state["sick"]. kind is "sick" / "recovered" / "died".
+var welfare: WelfareConfig
+signal animal_welfare_alert(region_id: int, index: int, kind: String, animal_name: String)
+
+# Breeding/aging tuning (design/tuning/breeding.md). Daily logic in
+# _on_day_ending_for_breeding, which runs after the welfare update.
+var breeding: BreedingConfig
+signal animal_born(region_id: int, species: StringName, animal_name: String, rare: bool)
+
+# Staff (roadmap 3.3). Hired zookeepers tend exhibits (a daily welfare bonus)
+# for a daily wage. Auto-distributed evenly across populated exhibits.
+var staff: StaffConfig
+var hired_keepers: int = 0
+signal staff_changed(hired: int)
+
+# Weather + seasons (roadmap 3.6). Re-rolled each day; scales guest demand.
+var weather_cfg: WeatherConfig
+var current_weather: StringName = &""
+signal weather_changed(weather_id: StringName, season_id: StringName)
+
+# Marketing campaigns (roadmap 4.2). Spend cash to bias arrivals toward an
+# archetype for a few days by boosting its spawn weight. One at a time.
+var marketing: MarketingConfig
+var campaign_target: StringName = &""
+var campaign_days_left: int = 0
+var _base_spawn_weights: Dictionary = {}   # agent_type id -> base spawn_weight
+signal campaign_changed(target: StringName, days_left: int)
 
 # Per-exhibit donation totals — region_id (int) -> cumulative $ tipped at that
 # exhibit's Donation Box. Display-only running stat; surfaced in the Manage
@@ -42,6 +76,11 @@ var entry_fee: int = 10
 var ticket_bracket: StringName = &"standard"
 var park_open: bool = true
 var _default_base_spawn_rate: float = 0.5
+
+# Day cycle (roadmap 3.4). Guests only arrive during opening hours; the gate
+# spawn rate is gated by both the manual park_open toggle and the hours.
+var _hours_open: bool = true
+signal park_hours_changed(open: bool)
 
 signal admin_changed
 
@@ -74,8 +113,13 @@ func _ready() -> void:
 	_zoo_quality = ZooQualityRating.new()
 	_animal_happiness = ZooAnimalHappiness.new()
 
-	AgentPool.register_behavior(&"visitor", _visitor_behavior)
-	AgentPool.register_satisfaction_model(&"visitor", _visitor_satisfaction)
+	# All guest archetypes (Adult / Child / Family / Enthusiast — see
+	# design/tuning/agents.md) share one behavior + satisfaction model; they
+	# differ only in tuning (preferences, need decay, traits, spend). When a
+	# non-guest population lands (e.g. staff in Phase 3) it registers its own.
+	for guest_type in GUEST_TYPES:
+		AgentPool.register_behavior(guest_type, _visitor_behavior)
+		AgentPool.register_satisfaction_model(guest_type, _visitor_satisfaction)
 	# v0.4.0 — engine multiplies placement appeal_contribution by the
 	# happiness this returns when computing region appeal. Without this
 	# registration, the engine's default returns 1.0 (no opinion) and
@@ -99,7 +143,38 @@ func _ready() -> void:
 
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
+	welfare = WelfareConfig.load_from_tuning()
+	breeding = BreedingConfig.load_from_tuning()
+	staff = StaffConfig.load_from_tuning()
+	weather_cfg = WeatherConfig.load_from_tuning()
+	marketing = MarketingConfig.load_from_tuning()
 	donations_by_region.clear()
+	hired_keepers = 0
+	# Snapshot each archetype's base spawn weight so a campaign boost can be
+	# applied and cleanly restored.
+	_base_spawn_weights.clear()
+	for at_id in ContentDB.agent_types.keys():
+		_base_spawn_weights[at_id] = (ContentDB.agent_types[at_id] as AgentType).spawn_weight
+	Accounting.register_category(&"marketing", Accounting.Category.OPERATING_EXPENSE)
+	EventBus.day_ended.connect(_tick_campaign)
+	# Seed today's weather, then re-roll each new day.
+	if weather_cfg != null and not weather_cfg.weathers.is_empty():
+		current_weather = weather_cfg.pick_weather(SimClock.rng)
+	EventBus.day_ended.connect(_roll_weather)
+
+	# Husbandry runs at day end: welfare first (care update + neglect deaths),
+	# then aging/breeding — so the day's survivors age and breed. A death's
+	# removal refund is negated in each handler so an animal lost to neglect or
+	# old age never pays the player (see seam note).
+	Accounting.register_category(&"animal_loss", Accounting.Category.OPERATING_EXPENSE)
+	EventBus.day_ending.connect(_on_day_ending_for_welfare)
+	EventBus.day_ending.connect(_on_day_ending_for_breeding)
+
+	# Save/load completeness: the engine persists entities + ledger but NOT
+	# region placements (animals + their welfare/age state) or any zoo-side
+	# settings, and it doesn't rebuild regions on load. Register a provider
+	# that fills both gaps so a saved zoo reloads intact.
+	SaveService.register_game_state_provider("zoo", _save_game_state, _load_game_state)
 
 	# Cache the engine's default spawn rate so the open/closed toggle and
 	# ticket-bracket elasticity can scale from it. ContentDB has already
@@ -109,6 +184,12 @@ func _ready() -> void:
 	# Start on the bracket marked default in services.md (Standard / $10).
 	if services != null and services.default_bracket != &"":
 		set_ticket_bracket(services.default_bracket)
+
+	# Gate guest arrivals by opening hours; re-apply the spawn rate when the
+	# park opens or closes for the day.
+	_hours_open = is_within_open_hours()
+	_apply_spawn_rate()
+	EventBus.tick.connect(_on_tick_hours)
 
 	Accounting.register_category(&"arena_show", Accounting.Category.REVENUE)
 
@@ -250,11 +331,75 @@ func current_demand_multiplier() -> float:
 
 
 # base_spawn_rate = engine default × bracket demand elasticity, gated to 0
-# when the park is closed. Composes with the engine's per-day
-# satisfaction→spawn multiplier (AgentPool.current_spawn_multiplier).
+# when the park is closed (manually) or outside opening hours. Composes with
+# the engine's per-day satisfaction→spawn multiplier.
 func _apply_spawn_rate() -> void:
+	var open := park_open and is_within_open_hours()
+	var difficulty_demand: float = scenario.demand_multiplier if scenario != null else 1.0
 	AgentPool.base_spawn_rate = (_default_base_spawn_rate
-		* current_demand_multiplier()) if park_open else 0.0
+		* current_demand_multiplier() * environment_multiplier()
+		* difficulty_demand) if open else 0.0
+
+
+# Apply a difficulty overlay (roadmap 2.6) — overrides the win bar, resets the
+# opening cash, and scales guest demand. Intended for a new game (called from
+# the welcome screen); resetting cash mid-run would wipe the player's money.
+signal difficulty_changed(id: StringName)
+
+func set_difficulty(id: StringName) -> void:
+	if scenario == null or not scenario.apply_difficulty(id):
+		return
+	Ledger.reset(scenario.starting_cash)
+	_apply_spawn_rate()
+	difficulty_changed.emit(id)
+
+
+# Current season's record (id/label/mult) from the day count.
+func current_season() -> Dictionary:
+	if weather_cfg == null:
+		return {"id": &"", "label": "", "mult": 1.0}
+	return weather_cfg.season_for_day(SimClock.current_day)
+
+
+# Combined weather × season demand multiplier (1.0 if weather isn't loaded).
+func environment_multiplier() -> float:
+	if weather_cfg == null:
+		return 1.0
+	var wm: float = float(weather_cfg.weather_by_id(current_weather).get("mult", 1.0))
+	var sm: float = float(current_season().get("mult", 1.0))
+	return wm * sm
+
+
+# Re-roll the weather for the day that just started, then re-apply demand.
+func _roll_weather(_day: int) -> void:
+	if weather_cfg == null or weather_cfg.weathers.is_empty():
+		return
+	current_weather = weather_cfg.pick_weather(SimClock.rng)
+	_apply_spawn_rate()
+	weather_changed.emit(current_weather, current_season().get("id", &""))
+
+
+# Fraction of the current day elapsed, in [0,1) — derived from SimClock.
+func time_of_day_fraction() -> float:
+	var tpd: int = maxi(SimClock.ticks_per_day, 1)
+	return float(SimClock.current_tick % tpd) / float(tpd)
+
+
+# Is the park within its opening hours right now? (Independent of the manual
+# park_open toggle.) Defaults open when no day-cycle tuning is loaded.
+func is_within_open_hours() -> bool:
+	if services == null:
+		return true
+	var f := time_of_day_fraction()
+	return f >= services.open_start and f < services.open_end
+
+
+func _on_tick_hours(_t: int) -> void:
+	var open := is_within_open_hours()
+	if open != _hours_open:
+		_hours_open = open
+		_apply_spawn_rate()
+		park_hours_changed.emit(open)
 
 
 # Convenience for game UI to read the zoo's quality rating without
@@ -284,3 +429,318 @@ func record_donation(region_id: int, amount: int) -> void:
 
 func donations_for_region(region_id: int) -> int:
 	return int(donations_by_region.get(region_id, 0))
+
+
+# ---------------------------------------------------------------------------
+# Animal welfare — daily care update + illness/death (roadmap 3.1)
+# ---------------------------------------------------------------------------
+
+func _on_day_ending_for_welfare(_day: int) -> void:
+	if welfare == null:
+		return
+	# Keepers tend exhibits: a daily welfare bonus, distributed evenly across
+	# populated exhibits, plus their wages. Labor can keep an imperfect
+	# exhibit healthy.
+	var keeper_bonus: float = 0.0
+	if staff != null and hired_keepers > 0:
+		var exhibits: int = _populated_exhibit_count()
+		if exhibits > 0:
+			keeper_bonus = (float(hired_keepers) / float(exhibits)) * staff.keeper_welfare_bonus
+		Ledger.post_expense(hired_keepers * staff.keeper_wage_per_day,
+			"Keeper wages (%d)" % hired_keepers, &"zoo_staff")
+	var deaths: Array = []   # {region_id, index, name, refund}
+	for region: Region in RegionRegistry.all_regions():
+		for i in region.placements.size():
+			var p: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals (appeal-contributing) have welfare
+			var care: float = _animal_happiness.care_quality(region, i)
+			var w: float = float(p.state.get("welfare", 1.0))
+			var was_sick: bool = bool(p.state.get("sick", false))
+			if care >= welfare.happiness_threshold:
+				w = minf(1.0, w + welfare.recovery_per_day)
+			else:
+				var severity: float = (welfare.happiness_threshold - care) \
+					/ maxf(welfare.happiness_threshold, 0.001)
+				w = maxf(0.0, w - welfare.decline_per_day * severity)
+			w = minf(1.0, w + keeper_bonus)   # keepers help everywhere they tend
+			p.state["welfare"] = w
+			var sick: bool = w < welfare.illness_threshold
+			p.state["sick"] = sick
+			if w <= 0.0:
+				deaths.append({"region_id": region.region_id, "index": i,
+					"name": def.display_name, "refund": int(def.build_cost * 0.5)})
+			elif sick and not was_sick:
+				animal_welfare_alert.emit(region.region_id, i, "sick", def.display_name)
+			elif was_sick and not sick:
+				animal_welfare_alert.emit(region.region_id, i, "recovered", def.display_name)
+	# Remove the dead. Descending index so earlier removals don't shift the
+	# indices of later ones within the same region.
+	deaths.sort_custom(func(a, b): return a["index"] > b["index"])
+	for d in deaths:
+		if not RegionRegistry.remove_placement(d["region_id"], d["index"]):
+			continue
+		# SEAM NOTE: RegionRegistry.remove_placement posts a half build-cost
+		# refund — it can't tell a sale from a death. Negate it; a dead animal
+		# isn't an asset you recoup. A no-refund removal option upstream would
+		# retire this workaround.
+		if int(d["refund"]) > 0:
+			Ledger.post_expense(int(d["refund"]), "Loss: %s died" % d["name"], &"animal_loss")
+		ProgressionManager.add_reputation(-welfare.death_reputation_penalty)
+		animal_welfare_alert.emit(d["region_id"], d["index"], "died", d["name"])
+
+
+# ---------------------------------------------------------------------------
+# Staff
+# ---------------------------------------------------------------------------
+
+func set_hired_keepers(n: int) -> void:
+	var capped := clampi(n, 0, staff.max_keepers if staff != null else 12)
+	if capped == hired_keepers:
+		return
+	hired_keepers = capped
+	staff_changed.emit(hired_keepers)
+
+
+# Number of exhibits that currently hold at least one animal (keeper coverage
+# is split across these).
+func _populated_exhibit_count() -> int:
+	var n := 0
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null and not def.appeal_contribution.is_empty():
+				n += 1
+				break
+	return n
+
+
+# ---------------------------------------------------------------------------
+# Marketing campaigns
+# ---------------------------------------------------------------------------
+
+# Launch a campaign promoting `target` archetype. Charges the cost, boosts that
+# archetype's spawn weight for campaign_days. Returns false if one is already
+# running, the archetype is unknown, or there isn't enough cash.
+func start_campaign(target: StringName) -> bool:
+	if marketing == null or campaign_days_left > 0:
+		return false
+	if not _base_spawn_weights.has(target):
+		return false
+	if Ledger.get_balance() < marketing.campaign_cost:
+		return false
+	Ledger.post_expense(marketing.campaign_cost,
+		"Marketing campaign", &"marketing")
+	campaign_target = target
+	campaign_days_left = marketing.campaign_days
+	_apply_campaign_weights()
+	campaign_changed.emit(campaign_target, campaign_days_left)
+	return true
+
+
+func _apply_campaign_weights() -> void:
+	for at_id in _base_spawn_weights.keys():
+		var at: AgentType = ContentDB.agent_types.get(at_id)
+		if at == null:
+			continue
+		var boost: float = marketing.campaign_boost if at_id == campaign_target else 1.0
+		at.spawn_weight = float(_base_spawn_weights[at_id]) * boost
+
+
+func _restore_campaign_weights() -> void:
+	for at_id in _base_spawn_weights.keys():
+		var at: AgentType = ContentDB.agent_types.get(at_id)
+		if at != null:
+			at.spawn_weight = float(_base_spawn_weights[at_id])
+
+
+func _tick_campaign(_day: int) -> void:
+	if campaign_days_left <= 0:
+		return
+	campaign_days_left -= 1
+	if campaign_days_left <= 0:
+		campaign_target = &""
+		_restore_campaign_weights()
+	campaign_changed.emit(campaign_target, campaign_days_left)
+
+
+# Daily keeper wage bill at the current headcount.
+func keeper_wage_bill() -> int:
+	if staff == null:
+		return 0
+	return hired_keepers * staff.keeper_wage_per_day
+
+
+# Welfare/sick read for the UI. Returns {welfare:float, sick:bool}.
+func animal_welfare(region: Region, index: int) -> Dictionary:
+	if index < 0 or index >= region.placements.size():
+		return {"welfare": 1.0, "sick": false}
+	var st: Dictionary = region.placements[index].state
+	return {"welfare": float(st.get("welfare", 1.0)), "sick": bool(st.get("sick", false))}
+
+
+# ---------------------------------------------------------------------------
+# Breeding & aging (roadmap 3.5) — runs at day end, after the welfare update.
+# ---------------------------------------------------------------------------
+
+func _on_day_ending_for_breeding(_day: int) -> void:
+	if breeding == null:
+		return
+	var old_age_deaths: Array = []   # {region_id, index, name, refund}
+	var births: Array = []           # {region_id, species}
+	for region: Region in RegionRegistry.all_regions():
+		# species id -> Array[int] of placement indices eligible to breed
+		var breeders: Dictionary = {}
+		for i in region.placements.size():
+			var p: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals age / breed
+			var age: int = int(p.state.get("age_days", 0)) + 1
+			p.state["age_days"] = age
+			if age > breeding.max_age_days:
+				old_age_deaths.append({"region_id": region.region_id, "index": i,
+					"name": def.display_name, "refund": int(def.build_cost * 0.5)})
+				continue
+			if age >= breeding.min_age_days \
+					and float(p.state.get("welfare", 1.0)) >= breeding.welfare_threshold:
+				if not breeders.has(p.placeable_def_id):
+					breeders[p.placeable_def_id] = [] as Array[int]
+				(breeders[p.placeable_def_id] as Array[int]).append(i)
+		# A species with two+ eligible adults may produce one offspring/day.
+		for species_id in breeders.keys():
+			if (breeders[species_id] as Array).size() < 2:
+				continue
+			if SimClock.rng.randf() < breeding.chance_per_day:
+				births.append({"region_id": region.region_id, "species": species_id})
+
+	# Old-age deaths first (descending index within a region).
+	old_age_deaths.sort_custom(func(a, b): return a["index"] > b["index"])
+	for d in old_age_deaths:
+		if not RegionRegistry.remove_placement(d["region_id"], d["index"]):
+			continue
+		if int(d["refund"]) > 0:   # negate the half-refund (see welfare seam note)
+			Ledger.post_expense(int(d["refund"]), "Old age: %s" % d["name"], &"animal_loss")
+		animal_welfare_alert.emit(d["region_id"], d["index"], "old_age", d["name"])
+
+	# Births (space permitting — add_placement fails when the pen is full).
+	for b in births:
+		var species: StringName = b["species"]
+		var def: PlaceableDef = ContentDB.placeable_defs.get(species)
+		if def == null:
+			continue
+		# Overcrowding is the natural population cap — skip silently when the
+		# pen is full (checking first avoids add_placement's warning).
+		if not RegionRegistry.can_add_placement(b["region_id"], species)["ok"]:
+			continue
+		var placement := RegionRegistry.add_placement(b["region_id"], species)
+		if placement == null:
+			continue
+		# A birth is free — negate the placement build cost (same source so the
+		# books wash out).
+		if def.build_cost > 0:
+			Ledger.post_income(def.build_cost, "Birth: %s" % def.display_name, species)
+		placement.state["age_days"] = 0
+		placement.state["welfare"] = 1.0
+		var rare: bool = SimClock.rng.randf() < breeding.rare_chance
+		if rare:
+			ProgressionManager.add_reputation(breeding.rare_reputation)
+		animal_born.emit(b["region_id"], species, def.display_name, rare)
+
+
+# Age (in days) of an animal placement, for the UI.
+func animal_age(region: Region, index: int) -> int:
+	if index < 0 or index >= region.placements.size():
+		return 0
+	return int(region.placements[index].state.get("age_days", 0))
+
+
+# ---------------------------------------------------------------------------
+# Save / load — completes the engine's save with region placements + zoo state
+# ---------------------------------------------------------------------------
+
+func _save_game_state() -> Dictionary:
+	var exhibits: Array = []
+	for region: Region in RegionRegistry.all_regions():
+		if region.cells.is_empty():
+			continue
+		var pls: Array = []
+		for p: Placement in region.placements:
+			pls.append({
+				"def": String(p.placeable_def_id),
+				"welfare": float(p.state.get("welfare", 1.0)),
+				"age_days": int(p.state.get("age_days", 0)),
+				"sick": bool(p.state.get("sick", false)),
+				"attitude": float(p.state.get("attitude", 1.0)),
+			})
+		# Anchor on a cell so we can find the rebuilt region after load.
+		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
+	return {
+		"ticket_bracket": String(ticket_bracket),
+		"park_open": park_open,
+		"hired_keepers": hired_keepers,
+		"current_weather": String(current_weather),
+		"difficulty": String(scenario.difficulty) if scenario != null else "standard",
+		"campaign_target": String(campaign_target),
+		"campaign_days_left": campaign_days_left,
+		"exhibits": exhibits,
+	}
+
+
+func _load_game_state(data: Dictionary) -> void:
+	# The engine restored entities + ledger but left the reactive registries
+	# stale (it doesn't re-emit entity_placed on load). Rebuild regions + the
+	# nav network from the restored entities.
+	RegionRegistry.reset()
+	NavigationRegistry.reset()
+	for inst_id in EntityRegistry.instances.keys():
+		EventBus.entity_placed.emit(inst_id)
+
+	# Restore zoo-side settings (apply_difficulty, not set_difficulty — the
+	# Ledger is already restored and must not be reset).
+	if scenario != null:
+		scenario.apply_difficulty(StringName(data.get("difficulty", "standard")))
+	park_open = bool(data.get("park_open", true))
+	hired_keepers = int(data.get("hired_keepers", 0))
+	current_weather = StringName(data.get("current_weather", current_weather))
+	set_ticket_bracket(StringName(data.get("ticket_bracket", "standard")))
+	# Marketing campaign — re-apply (or clear) the spawn-weight boost to match.
+	campaign_target = StringName(data.get("campaign_target", ""))
+	campaign_days_left = int(data.get("campaign_days_left", 0))
+	if campaign_days_left > 0:
+		_apply_campaign_weights()
+	else:
+		campaign_target = &""
+		_restore_campaign_weights()
+
+	# Rebuild placements directly (NOT via add_placement — that would charge
+	# the build cost again and double-register maintenance, which Ledger
+	# already restored). The restored recurring rules cover their upkeep.
+	for ex in data.get("exhibits", []):
+		var cell := Vector2i(int(ex["cell"][0]), int(ex["cell"][1]))
+		var region := RegionRegistry.region_at_cell(cell)
+		if region == null:
+			continue
+		for pd in ex.get("placements", []):
+			var def_id := StringName(pd.get("def", ""))
+			if not ContentDB.placeable_defs.has(def_id):
+				continue
+			var p := Placement.new()
+			p.placeable_def_id = def_id
+			p.added_at_tick = SimClock.current_tick
+			p.primary_cell = region.cells[0]
+			p.state = {
+				"welfare": float(pd.get("welfare", 1.0)),
+				"age_days": int(pd.get("age_days", 0)),
+				"sick": bool(pd.get("sick", false)),
+				"attitude": float(pd.get("attitude", 1.0)),
+			}
+			region.placements.append(p)
+
+	donations_by_region.clear()
+	arena_bookings.clear()
+	_apply_spawn_rate()
+	admin_changed.emit()
+	staff_changed.emit(hired_keepers)
+	difficulty_changed.emit(scenario.difficulty if scenario != null else &"standard")

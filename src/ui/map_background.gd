@@ -47,27 +47,106 @@ func _draw_region_auras() -> void:
 		var cell_set := {}
 		for c in region.cells:
 			cell_set[c] = true
-		var fill_color := Color(color.r, color.g, color.b, 0.38)
+		var fill_color := Color(color.r, color.g, color.b, 0.30)
 		for c in region.cells:
 			var rect := Rect2(_cell_to_screen(c),
 				Vector2(TILE_SIZE, TILE_SIZE))
 			draw_rect(rect, fill_color, true)
-		var stroke := Color(color.r, color.g, color.b, 0.85)
-		var w: float = 2.5
-		for c in region.cells:
-			var screen := _cell_to_screen(c)
-			var p0 := screen
-			var p1 := screen + Vector2(TILE_SIZE, 0)
-			var p2 := screen + Vector2(TILE_SIZE, TILE_SIZE)
-			var p3 := screen + Vector2(0, TILE_SIZE)
-			if not cell_set.has(c + Vector2i(0, -1)):
-				draw_line(p0, p1, stroke, w)
-			if not cell_set.has(c + Vector2i(1, 0)):
-				draw_line(p1, p2, stroke, w)
-			if not cell_set.has(c + Vector2i(0, 1)):
-				draw_line(p2, p3, stroke, w)
-			if not cell_set.has(c + Vector2i(-1, 0)):
-				draw_line(p3, p0, stroke, w)
+		# Scatter ground cover inside the pen (under the fence + animals) so it
+		# looks lived-in, then fence the perimeter.
+		_draw_region_decor(region)
+		# A real fence around the perimeter — a rail with posts — so a pen
+		# reads as an enclosure (Zoo-Tycoon style) instead of a tinted square.
+		_draw_region_fence(region, cell_set)
+
+
+# Sparse ground cover inside an enclosure — grass tufts, small shrubs, and
+# pebbles, picked deterministically per cell. Drawn beneath the fence and the
+# animals (which are foreground), so it reads as terrain, not clutter.
+func _draw_region_decor(region: Region) -> void:
+	var is_water := &"water" in region.provided_zone_tags
+	if is_water:
+		return   # water exhibits get an animated shimmer instead
+	var rocky := &"rocks" in region.provided_zone_tags
+	for c in region.cells:
+		var s := _cell_to_screen(c)
+		var h := _hash2(c.x * 3 + 7, c.y * 5 + 11)
+		for k in 3:
+			var hk := h ^ (k * 149)
+			if (hk % 3) != 0:
+				continue
+			var p := s + Vector2(
+				6.0 + float((hk / 7) % (TILE_SIZE - 12)),
+				6.0 + float((hk / 13) % (TILE_SIZE - 12)))
+			var kind := hk % 5
+			if rocky and kind < 2:
+				_draw_pebble(p, hk)
+			elif kind == 0:
+				_draw_pebble(p, hk)
+			elif kind <= 2:
+				_draw_tuft(p, hk)
+			else:
+				_draw_small_shrub(p, hk)
+
+
+func _draw_tuft(p: Vector2, h: int) -> void:
+	var col := Color("#4f7a34") if (h % 2) == 0 else Color("#5e8a3c")
+	for i in 3:
+		var lean := float((i - 1)) * 1.6
+		draw_line(p + Vector2(float(i - 1) * 1.6, 1.0),
+			p + Vector2(lean, -3.0 - float(h % 2)), col, 1.0)
+
+
+func _draw_small_shrub(p: Vector2, h: int) -> void:
+	var r := 2.6 + float(h % 2)
+	draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.22))
+	draw_circle(p, r, Color("#3f6428"))
+	draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#5d8a39"))
+
+
+func _draw_pebble(p: Vector2, h: int) -> void:
+	var r := 1.8 + float(h % 2)
+	draw_circle(p + Vector2(0, 1), r, Color(0, 0, 0, 0.20))
+	draw_circle(p, r, Color("#8b8478"))
+	draw_circle(p + Vector2(-0.6, -0.6), r * 0.45, Color("#aaa294"))
+
+
+# Perimeter fence: a shaded rail along each boundary edge plus square posts at
+# the corners. Drawn slightly proud of the ground with a drop shadow for a
+# hint of height even in the top-down view.
+func _draw_region_fence(region: Region, cell_set: Dictionary) -> void:
+	var rail := Color("#6f6356")
+	var rail_hi := Color("#8a7c6b")
+	var shadow := Color(0, 0, 0, 0.28)
+	var post := Color("#3f372d")
+	var post_hi := Color("#5b5142")
+	var posts := {}   # corner (Vector2i) -> true, to dedupe shared corners
+	for c in region.cells:
+		var s := _cell_to_screen(c)
+		var corners := [s, s + Vector2(TILE_SIZE, 0),
+			s + Vector2(TILE_SIZE, TILE_SIZE), s + Vector2(0, TILE_SIZE)]
+		var edges := [
+			[Vector2i(0, -1), 0, 1],   # top
+			[Vector2i(1, 0), 1, 2],    # right
+			[Vector2i(0, 1), 2, 3],    # bottom
+			[Vector2i(-1, 0), 3, 0],   # left
+		]
+		for e in edges:
+			if cell_set.has(c + e[0]):
+				continue
+			var a: Vector2 = corners[e[1]]
+			var b: Vector2 = corners[e[2]]
+			draw_line(a + Vector2(1, 2), b + Vector2(1, 2), shadow, 4.0)
+			draw_line(a, b, rail, 3.0)
+			draw_line(a, b, rail_hi, 1.0)
+			# Mark the two endpoints as posts.
+			posts[Vector2i(roundi(a.x), roundi(a.y))] = a
+			posts[Vector2i(roundi(b.x), roundi(b.y))] = b
+	for key in posts.keys():
+		var p: Vector2 = posts[key]
+		draw_rect(Rect2(p - Vector2(2, 3), Vector2(5, 7)), shadow, true)
+		draw_rect(Rect2(p - Vector2(3, 4), Vector2(6, 8)), post, true)
+		draw_rect(Rect2(p - Vector2(3, 4), Vector2(6, 2)), post_hi, true)
 
 
 func _region_tint(region: Region) -> Color:
@@ -90,8 +169,16 @@ func _draw_ground() -> void:
 	var s := size
 	draw_rect(Rect2(Vector2.ZERO, s), Color("#0c1410"), true)
 	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
-	draw_rect(build_rect, Color("#1f3324"), true)
-	draw_rect(build_rect.grow(-2), Color("#33502e"), true)
+	draw_rect(build_rect, Color("#24402a"), true)
+	draw_rect(build_rect.grow(-2), Color("#3c5e36"), true)
+	# Gentle top-to-bottom light banding for depth (lighter near the top).
+	var bands := 6
+	for i in bands:
+		var t := float(i) / float(bands)
+		var band := Rect2(
+			build_rect.position + Vector2(0, t * build_rect.size.y),
+			Vector2(build_rect.size.x, build_rect.size.y / float(bands)))
+		draw_rect(band, Color(1, 1, 1, 0.04 * (1.0 - t)), true)
 
 
 func _draw_grass_texture() -> void:
@@ -152,7 +239,7 @@ func _draw_decorative_foliage() -> void:
 			var h := _hash2(cx + 31, cy + 17)
 			var on_border := cx < 2 or cy < 2 \
 				or cx >= BUILDABLE_TILES.x - 2 or cy >= BUILDABLE_TILES.y - 2
-			var threshold: int = 2 if on_border else 90
+			var threshold: int = 2 if on_border else 48
 			if (h % threshold) != 0:
 				continue
 			if Vector2i(cx, cy) == GATE_TILE:

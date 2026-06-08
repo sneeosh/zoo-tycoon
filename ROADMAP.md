@@ -1,6 +1,6 @@
 # Zoo Tycoon — Product Roadmap
 
-**Status:** Living document. Last updated 2026-05-25.
+**Status:** Living document. Last updated 2026-06-07.
 **Owner:** Kenny Johnson (PM + Eng).
 
 > **This is the Zoo Tycoon repo.** It started as the engine's validation
@@ -56,9 +56,8 @@ economic loop is live and honest:
 harness), engine has held under feature pressure with no seam leaks.
 
 **Gaps that block a "real game" feeling:** no sound, no mobile input, no
-staff, single visitor archetype, **paths-only guest movement still
-pending engine v0.6.x**, no welfare/breeding, no time-of-day, no
-scenarios.
+staff, no breeding, no time-of-day, no scenarios. *(Guest archetypes and
+animal welfare have since landed — see the decision log.)*
 
 ---
 
@@ -192,6 +191,83 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-07** — **Animals-as-agents direction set (spec authored, not yet
+  scheduled).** Decided to pursue promoting animals from static `Placement`
+  records to real engine `Agent`s — moving, needs-driven individuals — so their
+  movement is a consequence of the model, not a renderer trick (North Star
+  principle 2). Full design contract:
+  [`design/animals_as_agents_spec.md`](./design/animals_as_agents_spec.md).
+  Key findings: it's **overwhelmingly zoo-side** on the existing agent system
+  (new `animal` `AgentType` with `spawn_weight 0`, `AnimalBehavior` free-roam
+  state machine — **no pathfinding needed**, welfare-as-needs, Placement↔Agent
+  lifecycle binding, save/load persistence). **One engine seam filed:**
+  `AgentPool.compute_aggregate_satisfaction()` averages over *all* agents and
+  drives the visitor spawn curve, so animal welfare would leak into guest
+  demand (a hungry lion suppressing arrivals). Proposed additive
+  `AgentType.drives_spawn_balance` flag, **target engine v0.6.x** — *not*
+  patched in place. **Sequencing:** depends on that engine bump; slots
+  naturally as a Phase 3 deepening of the welfare/breeding systems (it makes
+  welfare continuous and watchable) but is **parked pending the post-playtest
+  go/no-go** — promote into a phase then, don't start the engine work before.
+  *Interim:* both renderers amble animals via a presentational sine-wander
+  (top-down already did; iso added today) — explicitly a stopgap the spec
+  deletes once the sim owns the position.
+- **2026-06-07** — **Marketing campaigns (4.2).** Spend cash to promote a
+  guest archetype for a few days (spawn-weight boost), closing the
+  investment→visitor-mix loop the archetypes opened. Run from the gate
+  admin panel; persists through save/load. *(Pulled forward from Phase 4 —
+  it's small and synergistic; the broader Phase 4 reach work still waits on
+  engine v1.0.)*
+- **2026-06-07** — **Difficulty scenarios (2.6) + a save/load fix.**
+  **Difficulty** (Easy / Standard / Hard) as a scenario overlay — overrides
+  the win bar, opening cash, and a global demand multiplier; picked at the
+  welcome screen, shown live in the MISSION panel. **Save/load was found
+  broken** (the engine persists entities + ledger but not region placements,
+  and doesn't rebuild regions on load → loading produced an empty park).
+  Fixed zoo-side via `register_game_state_provider`: placements + their
+  welfare/age state and all zoo settings now round-trip intact (proven by a
+  new test). That's an engine gap (RegionRegistry has no `save_state`)
+  worked around in zoo code — a candidate to push upstream. Suite 33 → 37.
+
+- **2026-06-07** — **All six Phase 3 systems landed early** (3.1–3.6), all
+  engine-clean: **welfare** (care-driven health/illness/death), **guest
+  archetypes** (Adult/Child/Family/Enthusiast — preferences, decay, traits,
+  spend), **staff** (hire zookeepers → daily welfare vs. wages), **day/night
+  + opening hours** (SimClock-derived; HUD clock + dusk tint), **breeding &
+  generations** (well-kept pairs breed, space-capped; aging + old-age
+  death + rare-birth milestones), and **weather + seasons** (daily roll ×
+  season, both scaling guest demand). Two effects are intentionally deferred
+  to future engine hooks: nocturnal-appeal-by-time and per-animal
+  climate/welfare. Staff is a robust effect layer (not yet a walking
+  population). Test suite grew 8 → 33, all green. *(Pulled forward ahead of
+  the Phase 2 exit gate; the playtest is the go/no-go.)*
+  **Guest archetypes** — Adult / Child / Family / Enthusiast, each a
+  weighted `AgentType` sharing one behavior but differing in appeal
+  preferences (so exhibit mix decides the crowd), need-decay, traits, and
+  spend (Family 2.2× … Child 0.5×, so the mix shows in the books). Tinted
+  by type on the map. **Animal welfare** — a care-driven welfare meter per
+  animal: poor exhibits erode it (scaling appeal down), low welfare →
+  sick, zero → death + reputation hit; surfaced as panel %/sick flag, a
+  map ✚, and log alerts. Both are zoo-side (no engine changes). One minor
+  seam noted: `RegionRegistry.remove_placement` always half-refunds, so a
+  death's refund is negated in zoo code. Zoo 25/25.
+- **2026-06-07** — **Paths-only guest movement landed (engine v0.6.0 →
+  v0.6.1).** Bumped the engine to its new navigation surface
+  (`WalkableNetwork`, `INetworkNavigator` + default A\*,
+  `NavigationRegistry`, engagement-distance helper) and wired the zoo onto
+  it: a walkable `path` tile (paint-to-place), guests route the network
+  toward exhibits/amenities and view from a path cell within the
+  engagement distance, and a "no path access" warning flags unreachable
+  exhibits. Path-first with a free-roam fallback (no network / off-network
+  / unreachable) — the sanctioned rollout step, so the economic loop still
+  works with zero paths. **Found + fixed an engine bug along the way:**
+  v0.6.0's `ContentDB` parsed the `walkable` columns inside the optional
+  `useful_life_days` block, so no tile ever registered as walkable; fixed
+  at the source per [`CLAUDE.md`](./CLAUDE.md) §1 (engine **v0.6.1**, commit
+  `4040ef6`) — writeup + durable patch in
+  [`design/engine_patches/`](./design/engine_patches/). The engine
+  commit/tag still needs pushing to the engine remote (this session lacked
+  credentials). Engine 295/295; zoo 20/20.
 - **2026-06-07** — **Landed the Zoo Tycoon character pack (minus paths).**
   Shipped adaptation-plan §6 commits 5–10 entirely in zoo code, engine
   submodule untouched: four guest needs (hunger / thirst / restroom /

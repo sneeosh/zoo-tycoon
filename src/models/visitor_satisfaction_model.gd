@@ -17,8 +17,20 @@ class_name VisitorSatisfactionModel
 # proximity bonuses (and the Compost Building's stink penalty) feed in
 # automatically.
 
-const MEAN_WEIGHT: float = 0.6
-const MIN_WEIGHT: float = 0.4
+# With four needs, one is usually mid-decay at any moment, so a heavy MIN
+# term kept satisfaction chronically low (guests left unhappy → reputation
+# bled away even in a well-served park). The min term still rewards keeping
+# every need covered, but it no longer dominates.
+const MEAN_WEIGHT: float = 0.78
+const MIN_WEIGHT: float = 0.22
+
+
+# Satisfaction = how well the guest's NEEDS are met blended with how much
+# they're ENJOYING the exhibits. Comfort keeps them from leaving; enjoyment is
+# what earns the park its reputation — so a great zoo with stocked amenities
+# sends guests home delighted, and a dull or neglected one doesn't.
+const NEEDS_WEIGHT: float = 0.68
+const ENJOY_WEIGHT: float = 0.32
 
 
 func update_satisfaction(agent: Agent) -> void:
@@ -32,4 +44,6 @@ func update_satisfaction(agent: Agent) -> void:
 		if level < lowest:
 			lowest = level
 	var mean: float = sum / agent.need_levels.size()
-	agent.satisfaction = MEAN_WEIGHT * mean + MIN_WEIGHT * lowest
+	var needs_blend: float = MEAN_WEIGHT * mean + MIN_WEIGHT * lowest
+	var enjoyment: float = float(agent.behavior_state.get(&"enjoyment", 0.5))
+	agent.satisfaction = NEEDS_WEIGHT * needs_blend + ENJOY_WEIGHT * enjoyment

@@ -15,11 +15,18 @@ const TICKET_PRICE: int = 10
 const FOOD_PRICE: int = 5
 
 
-func compute_entry_fee(_agent: Agent) -> int:
-	if ZooBootstrap.scenario != null:
-		return ZooBootstrap.entry_fee
-	return TICKET_PRICE
+func compute_entry_fee(agent: Agent) -> int:
+	var base: int = ZooBootstrap.entry_fee if ZooBootstrap.scenario != null else TICKET_PRICE
+	return int(round(base * _spend_mult(agent)))
 
 
-func compute_food_purchase(_agent: Agent) -> int:
-	return FOOD_PRICE
+func compute_food_purchase(agent: Agent) -> int:
+	return int(round(FOOD_PRICE * _spend_mult(agent)))
+
+
+# Per-archetype spend multiplier (Family parties pay more, Children less).
+# Defaults to 1.0 — so the Adult `visitor` baseline is unchanged.
+func _spend_mult(agent: Agent) -> float:
+	if ZooBootstrap.services == null:
+		return 1.0
+	return ZooBootstrap.services.spend_multiplier(agent.agent_type_id)

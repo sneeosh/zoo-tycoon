@@ -20,6 +20,7 @@ const ENTITY_COLORS := {
 	&"rock_patch":  Color("#65726f"),
 	&"water_patch": Color("#3a7eb2"),
 	&"cage_panel":  Color("#7e8a92"),
+	&"path":        Color("#9a8f7d"),
 	&"food_stand":  Color("#e27d60"),
 	&"drink_stand": Color("#5aa9e6"),
 	&"restroom":    Color("#41b3a3"),
@@ -29,14 +30,29 @@ const ENTITY_COLORS := {
 	&"arena":       Color("#a86a32"),
 }
 
+const WEATHER_ICONS := {
+	&"sunny":  "☀",
+	&"cloudy": "☁",
+	&"rainy":  "☂",
+}
+
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
-var _map_view: MapView
+var _map_view: BaseMapView
+# Which projection is active. Initial mode honors TYCOON_ISO; the top-bar View
+# button flips it at runtime by rebuilding the view in place.
+var _use_iso: bool = OS.get_environment("TYCOON_ISO") != ""
+var _view_container: VBoxContainer
+var _view_btn: Button
+# region_id -> true for populated exhibits with no gate-reachable path cell
+# within viewing distance (guests can't reach them). Recomputed each HUD tick.
+var _disconnected_regions: Dictionary = {}
 var _money_label: Label
 var _day_label: Label
 var _quality_label: Label
 var _reputation_label: Label
 var _agents_label: Label
+var _weather_label: Label
 var _yesterday_label: Label
 var _fps_label: Label
 var _log_text: RichTextLabel
@@ -56,6 +72,10 @@ var _reports_body: VBoxContainer
 var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
 var _welcome_btn_row: HBoxContainer
+var _welcome_difficulty_label: Label
+var _welcome_difficulty_row: HBoxContainer
+var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
+var _selected_difficulty: StringName = &"standard"
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
 var _goals_state: Dictionary = {       # one-way: true once completed
@@ -66,6 +86,8 @@ var _goals_state: Dictionary = {       # one-way: true once completed
 	"day_3":      false,
 }
 # Mission HUD elements (filled in by _build_mission_section).
+var _mission_title: Label
+var _mission_subtitle: Label
 var _mission_cash_label: Label
 var _mission_rep_label: Label
 var _mission_days_label: Label
@@ -79,6 +101,9 @@ var _admin_bracket_row: HBoxContainer
 var _admin_bracket_buttons: Dictionary = {}   # bracket id (StringName) -> Button
 var _admin_fee_caption: Label
 var _admin_open_label: Label
+var _admin_staff_value: Label
+var _admin_campaign_label: Label
+var _admin_campaign_buttons: Dictionary = {}   # archetype id -> Button
 var _arena_modal: Control
 var _arena_body: VBoxContainer
 var _arena_subject_id: int = 0   # entity_instance_id of the open arena
@@ -227,6 +252,23 @@ func _refresh_region_panel() -> void:
 			rec_label.add_theme_color_override("font_color", Color("#c9a4ff"))
 			rec_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			_region_panel_body.add_child(rec_label)
+		if ZooBootstrap.hired_keepers > 0:
+			var coverage := float(ZooBootstrap.hired_keepers) \
+				/ float(maxi(ZooBootstrap._populated_exhibit_count(), 1))
+			var keeper_label := Label.new()
+			keeper_label.text = "Keepers tending: %.1f" % coverage
+			keeper_label.add_theme_font_size_override("font_size", 11)
+			keeper_label.add_theme_color_override("font_color", Color("#a8c4b0"))
+			_region_panel_body.add_child(keeper_label)
+
+	# Path-access warning — guests can't reach an exhibit with no path nearby.
+	if _disconnected_regions.has(region.region_id):
+		var warn := Label.new()
+		warn.text = "⚠ No path access — lay a path within view so guests can reach it."
+		warn.add_theme_font_size_override("font_size", 11)
+		warn.add_theme_color_override("font_color", Color("#e76f51"))
+		warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_region_panel_body.add_child(warn)
 
 	# Donations collected at this exhibit's Donation Box (if any).
 	var donated := ZooBootstrap.donations_for_region(region.region_id)
@@ -265,10 +307,25 @@ func _refresh_region_panel() -> void:
 		_region_panel_body.add_child(row)
 
 		var name_label := Label.new()
-		var happiness := EffectResolver._happiness_model.compute_happiness(region, i)
-		name_label.text = "%s  (%.0f%%)" % [def.display_name, happiness * 100.0]
+		var is_animal := not def.appeal_contribution.is_empty()
+		# Animals show care quality (suitability) here, not the welfare-
+		# discounted appeal, plus a welfare read + sick flag.
+		var care := ZooBootstrap.get_happiness_model().care_quality(region, i) \
+			if is_animal else EffectResolver._happiness_model.compute_happiness(region, i)
+		var row_text := "%s  (%.0f%%)" % [def.display_name, care * 100.0]
+		var row_color := _happiness_color(care)
+		if is_animal:
+			var wf := ZooBootstrap.animal_welfare(region, i)
+			row_text += "  · welfare %.0f%%" % (float(wf["welfare"]) * 100.0)
+			var age := ZooBootstrap.animal_age(region, i)
+			if age > 0:
+				row_text += " · %dd" % age
+			if bool(wf["sick"]):
+				row_text += "  ⚠ sick"
+				row_color = Color("#e76f51")
+		name_label.text = row_text
 		name_label.add_theme_font_size_override("font_size", 13)
-		name_label.add_theme_color_override("font_color", _happiness_color(happiness))
+		name_label.add_theme_color_override("font_color", row_color)
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(name_label)
 
@@ -428,12 +485,17 @@ func _on_reports_pressed() -> void:
 const WELCOME_LINES: Array = [
 	"Welcome to your Zoo!",
 	"",
-	"You're the new director. Build exhibits, attract guests, and turn",
-	"a profit — see the MISSION panel on the left for your 30-day goal.",
+	"You're the new director. Build exhibits, lay paths so guests can",
+	"reach them, keep your animals well cared for, and turn a profit —",
+	"see the MISSION panel on the left for your 30-day goal.",
 	"",
-	"First time here? Take the 60-second tutorial — it walks you through",
-	"building your first exhibit, placing an animal, and watching a",
-	"guest pay. Otherwise, jump straight in with a pre-built starter zoo.",
+	"Guests have needs — food, drink, restrooms, rest — and arrive as",
+	"adults, families, children and enthusiasts who each love different",
+	"animals. Care for your animals and they'll breed; neglect them and",
+	"they sicken. The park opens by day and quiets at night.",
+	"",
+	"First time here? Take the 60-second tutorial. Otherwise, jump",
+	"straight in with a pre-built starter zoo.",
 ]
 
 
@@ -452,10 +514,10 @@ func _build_welcome_modal(parent: Control) -> void:
 
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.offset_left = -310
-	card.offset_top = -200
-	card.offset_right = 310
-	card.offset_bottom = 200
+	card.offset_left = -320
+	card.offset_top = -250
+	card.offset_right = 320
+	card.offset_bottom = 250
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_welcome_modal.add_child(card)
@@ -487,6 +549,18 @@ func _build_welcome_modal(parent: Control) -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
 
+	# Difficulty selector (first-launch only; hidden in help mode).
+	_welcome_difficulty_label = Label.new()
+	_welcome_difficulty_label.text = "Difficulty"
+	_welcome_difficulty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_difficulty_label.add_theme_font_size_override("font_size", 12)
+	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#7e9286"))
+	col.add_child(_welcome_difficulty_label)
+	_welcome_difficulty_row = HBoxContainer.new()
+	_welcome_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_welcome_difficulty_row.add_theme_constant_override("separation", 8)
+	col.add_child(_welcome_difficulty_row)
+
 	_welcome_btn_row = HBoxContainer.new()
 	_welcome_btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_welcome_btn_row.add_theme_constant_override("separation", 12)
@@ -495,7 +569,26 @@ func _build_welcome_modal(parent: Control) -> void:
 	# launch — tutorial vs skip) or info-mode (the "?" help button — close).
 
 
+func _on_pick_difficulty(id: StringName) -> void:
+	_selected_difficulty = id
+	_refresh_welcome_difficulty()
+
+
+func _refresh_welcome_difficulty() -> void:
+	for id in _welcome_difficulty_buttons.keys():
+		var btn: Button = _welcome_difficulty_buttons[id]
+		var active: bool = id == _selected_difficulty
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.set_corner_radius_all(4)
+		style.set_content_margin_all(6)
+		btn.add_theme_stylebox_override("normal", style)
+		btn.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#e6e6e6"))
+
+
 func _on_welcome_start_tutorial() -> void:
+	ZooBootstrap.set_difficulty(_selected_difficulty)
 	_welcome_modal.visible = false
 	_start_tutorial()
 	SimClock.play()
@@ -503,6 +596,7 @@ func _on_welcome_start_tutorial() -> void:
 
 
 func _on_welcome_skip_tutorial() -> void:
+	ZooBootstrap.set_difficulty(_selected_difficulty)
 	_welcome_modal.visible = false
 	_stage_starter_park()
 	SimClock.play()
@@ -879,10 +973,10 @@ func _build_admin_modal(parent: Control) -> void:
 
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
-	card.offset_left = -260
-	card.offset_top = -180
-	card.offset_right = 260
-	card.offset_bottom = 180
+	card.offset_left = -280
+	card.offset_top = -250
+	card.offset_right = 280
+	card.offset_bottom = 250
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_admin_modal.add_child(card)
@@ -894,9 +988,16 @@ func _build_admin_modal(parent: Control) -> void:
 	margin.add_theme_constant_override("margin_bottom", 18)
 	card.add_child(margin)
 
+	# Scroll so the admin sections (pricing, hours, staff, marketing) never
+	# clip on short windows.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	margin.add_child(scroll)
+
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 14)
-	margin.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
 
 	var header := HBoxContainer.new()
 	col.add_child(header)
@@ -973,6 +1074,73 @@ func _build_admin_modal(parent: Control) -> void:
 	open_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(open_hint)
 
+	col.add_child(HSeparator.new())
+
+	# Zookeeper hire/fire row.
+	var staff_row := HBoxContainer.new()
+	staff_row.add_theme_constant_override("separation", 10)
+	col.add_child(staff_row)
+	var staff_label := Label.new()
+	staff_label.text = "Zookeepers"
+	staff_label.add_theme_font_size_override("font_size", 14)
+	staff_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	staff_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	staff_row.add_child(staff_label)
+	var s_minus := Button.new()
+	s_minus.text = "−"
+	s_minus.custom_minimum_size = Vector2(36, 32)
+	s_minus.focus_mode = Control.FOCUS_NONE
+	s_minus.pressed.connect(func(): _bump_keepers(-1))
+	staff_row.add_child(s_minus)
+	_admin_staff_value = Label.new()
+	_admin_staff_value.custom_minimum_size = Vector2(110, 0)
+	_admin_staff_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_admin_staff_value.add_theme_font_size_override("font_size", 14)
+	_admin_staff_value.add_theme_color_override("font_color", Color("#f4d35e"))
+	staff_row.add_child(_admin_staff_value)
+	var s_plus := Button.new()
+	s_plus.text = "+"
+	s_plus.custom_minimum_size = Vector2(36, 32)
+	s_plus.focus_mode = Control.FOCUS_NONE
+	s_plus.pressed.connect(func(): _bump_keepers(1))
+	staff_row.add_child(s_plus)
+
+	var staff_hint := Label.new()
+	staff_hint.text = "Keepers tend your exhibits — each adds welfare to your animals every day. Hire enough to keep them healthy without bleeding cash on wages."
+	staff_hint.add_theme_font_size_override("font_size", 11)
+	staff_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	staff_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(staff_hint)
+
+	col.add_child(HSeparator.new())
+
+	# Marketing campaigns — promote a guest archetype for a few days.
+	var mkt_label := Label.new()
+	mkt_label.text = "Marketing"
+	mkt_label.add_theme_font_size_override("font_size", 14)
+	mkt_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	col.add_child(mkt_label)
+	var mkt_row := HBoxContainer.new()
+	mkt_row.add_theme_constant_override("separation", 8)
+	col.add_child(mkt_row)
+	for target in [&"family", &"child", &"enthusiast"]:
+		var at: AgentType = ContentDB.get_agent_type(target)
+		if at == null:
+			continue
+		var b := Button.new()
+		b.text = "Promote\n%s" % at.display_name
+		b.custom_minimum_size = Vector2(0, 44)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.focus_mode = Control.FOCUS_NONE
+		b.pressed.connect(_on_run_campaign.bind(target))
+		mkt_row.add_child(b)
+		_admin_campaign_buttons[target] = b
+	_admin_campaign_label = Label.new()
+	_admin_campaign_label.add_theme_font_size_override("font_size", 11)
+	_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_campaign_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_campaign_label)
+
 
 func _open_admin_modal() -> void:
 	_refresh_admin_modal()
@@ -1010,6 +1178,10 @@ func _refresh_admin_modal() -> void:
 	else:
 		_admin_open_label.text = "Closed"
 		_admin_open_label.add_theme_color_override("font_color", Color("#e76f51"))
+	if _admin_staff_value != null:
+		_admin_staff_value.text = "%d  ·  $%d/day" % [
+			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
+	_refresh_campaign_controls()
 
 
 func _on_pick_ticket_bracket(id: StringName) -> void:
@@ -1018,6 +1190,52 @@ func _on_pick_ticket_bracket(id: StringName) -> void:
 	if not b.is_empty():
 		_push_log("[color=#f4d35e]Ticket price → %s ($%d).[/color]" %
 			[b["label"], int(b["price"])])
+	_refresh_admin_modal()
+
+
+func _on_run_campaign(target: StringName) -> void:
+	var at: AgentType = ContentDB.get_agent_type(target)
+	var label: String = at.display_name if at != null else String(target)
+	if ZooBootstrap.start_campaign(target):
+		_push_log("[color=#f4d35e]📣 Campaign launched:[/color] promoting %s for %d days." %
+			[label, ZooBootstrap.marketing.campaign_days])
+	elif ZooBootstrap.campaign_days_left > 0:
+		_push_log("[color=#e76f51]A campaign is already running.[/color]")
+	else:
+		_push_log("[color=#e76f51]Not enough cash for a campaign ($%d).[/color]" %
+			ZooBootstrap.marketing.campaign_cost)
+	_refresh_admin_modal()
+
+
+func _refresh_campaign_controls() -> void:
+	if _admin_campaign_label == null:
+		return
+	var active: bool = ZooBootstrap.campaign_days_left > 0
+	var can_afford: bool = Ledger.get_balance() >= ZooBootstrap.marketing.campaign_cost
+	for id in _admin_campaign_buttons.keys():
+		(_admin_campaign_buttons[id] as Button).disabled = active or not can_afford
+	if active:
+		var at: AgentType = ContentDB.get_agent_type(ZooBootstrap.campaign_target)
+		var label: String = at.display_name if at != null else String(ZooBootstrap.campaign_target)
+		_admin_campaign_label.text = "Promoting %s — %d day(s) left." % [
+			label, ZooBootstrap.campaign_days_left]
+		_admin_campaign_label.add_theme_color_override("font_color", Color("#f4d35e"))
+	else:
+		_admin_campaign_label.text = "Spend $%d to pull more of a guest type for %d days." % [
+			ZooBootstrap.marketing.campaign_cost, ZooBootstrap.marketing.campaign_days]
+		_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
+
+
+func _bump_keepers(delta: int) -> void:
+	var before := ZooBootstrap.hired_keepers
+	ZooBootstrap.set_hired_keepers(before + delta)
+	var now := ZooBootstrap.hired_keepers
+	if now != before:
+		if now > before:
+			_push_log("[color=#83c779]Hired a zookeeper.[/color] Now %d on staff ($%d/day)." %
+				[now, ZooBootstrap.keeper_wage_bill()])
+		else:
+			_push_log("[color=#7e9286]Let a zookeeper go.[/color] Now %d on staff." % now)
 	_refresh_admin_modal()
 
 
@@ -1036,16 +1254,20 @@ func _toggle_park_open() -> void:
 
 const TUTORIAL_STEPS: Array = [
 	{
-		"title": "Step 1 of 3 — Build an exhibit",
+		"title": "Step 1 of 4 — Build an exhibit",
 		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit automatically.",
 	},
 	{
-		"title": "Step 2 of 3 — Add an animal",
+		"title": "Step 2 of 4 — Add an animal",
 		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Exhibit panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
 	},
 	{
-		"title": "Step 3 of 3 — Speed time, watch them pay",
-		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in and pay — watch for the [color=#f4d35e]+$10[/color] floats above their heads.",
+		"title": "Step 3 of 4 — Lay a path",
+		"body": "Click [color=#f4d35e]Path[/color] under PATHS, then click a line of tiles from the [color=#f4d35e]entrance gate[/color] out toward your exhibit. Guests walk the paths you build — an exhibit with a path within view draws a crowd.",
+	},
+	{
+		"title": "Step 4 of 4 — Speed time, watch them pay",
+		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in along your path and pay — watch for the [color=#f4d35e]+$[/color] floats above their heads.",
 	},
 ]
 
@@ -1131,7 +1353,7 @@ func _show_tutorial_step() -> void:
 	var spec: Dictionary = TUTORIAL_STEPS[_tutorial_step]
 	_tutorial_progress.text = spec["title"]
 	_tutorial_prompt.text = spec["body"]
-	if _tutorial_step == 2:
+	if _tutorial_step == 3:
 		_tutorial_step3_floor = Ledger.get_balance()
 
 
@@ -1153,6 +1375,12 @@ func _check_tutorial_advance() -> void:
 					_advance_tutorial()
 					return
 		2:
+			# Done once the player has laid a few path tiles (a network forms).
+			var net := NavigationRegistry.get_network()
+			if net != null and net.cell_count() >= 3:
+				_advance_tutorial()
+				return
+		3:
 			# Done when balance has gone up by at least $10 (one ticket)
 			# since the step began.
 			if Ledger.get_balance() >= _tutorial_step3_floor + 10:
@@ -1209,6 +1437,27 @@ func _close_welcome() -> void:
 func _render_welcome_buttons(initial_launch: bool) -> void:
 	for child in _welcome_btn_row.get_children():
 		child.queue_free()
+	# Difficulty selector — only on first launch (not the "?" help re-open).
+	_welcome_difficulty_label.visible = initial_launch
+	_welcome_difficulty_row.visible = initial_launch
+	for child in _welcome_difficulty_row.get_children():
+		child.queue_free()
+	_welcome_difficulty_buttons.clear()
+	if initial_launch and ZooBootstrap.scenario != null:
+		for d in ZooBootstrap.scenario.difficulties:
+			var id: StringName = d["id"]
+			var btn := Button.new()
+			btn.text = "  %s  " % d["label"]
+			btn.custom_minimum_size = Vector2(0, 34)
+			btn.focus_mode = Control.FOCUS_NONE
+			btn.tooltip_text = "$%s start · reach $%s + %d rep in %d days" % [
+				_format_thousands(int(d["starting_cash"])),
+				_format_thousands(int(d["target_cash"])),
+				int(d["target_reputation"]), int(d["days_limit"])]
+			btn.pressed.connect(_on_pick_difficulty.bind(id))
+			_welcome_difficulty_row.add_child(btn)
+			_welcome_difficulty_buttons[id] = btn
+		_refresh_welcome_difficulty()
 	if initial_launch:
 		var tutorial_btn := Button.new()
 		tutorial_btn.text = "  Start tutorial  "
@@ -1247,25 +1496,38 @@ const GOAL_SPECS: Array = [
 
 func _build_mission_section(col: VBoxContainer) -> void:
 	col.add_child(HSeparator.new())
-	var title := Label.new()
-	title.text = "MISSION"
-	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color("#f4d35e"))
-	col.add_child(title)
+	_mission_title = Label.new()
+	_mission_title.add_theme_font_size_override("font_size", 12)
+	_mission_title.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(_mission_title)
 
-	var s: Scenario = ZooBootstrap.scenario
-	var subtitle := Label.new()
-	subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
-		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
-	subtitle.add_theme_font_size_override("font_size", 11)
-	subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
-	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	col.add_child(subtitle)
+	_mission_subtitle = Label.new()
+	_mission_subtitle.add_theme_font_size_override("font_size", 11)
+	_mission_subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
+	_mission_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_mission_subtitle)
+	_refresh_mission_targets()
 
 	# Three live progress rows. Bound in _refresh_mission.
 	_mission_cash_label = _make_mission_row(col)
 	_mission_rep_label = _make_mission_row(col)
 	_mission_days_label = _make_mission_row(col)
+
+
+# Mission header + target line — refreshed when the difficulty (and thus the
+# win bar) changes.
+func _refresh_mission_targets() -> void:
+	if _mission_title == null:
+		return
+	var s: Scenario = ZooBootstrap.scenario
+	var diff_label := String(s.difficulty).capitalize()
+	for d in s.difficulties:
+		if d["id"] == s.difficulty:
+			diff_label = d["label"]
+			break
+	_mission_title.text = "MISSION  ·  %s" % diff_label
+	_mission_subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
+		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
 
 
 func _make_mission_row(col: VBoxContainer) -> Label:
@@ -1844,6 +2106,7 @@ func _build_top_bar(parent: Control) -> void:
 	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
 	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
 	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
+	_weather_label = _stat("", 14, Color("#a8c4b0"))
 	_yesterday_label = _stat("", 12, Color("#7e9286"))
 	_fps_label = _stat("", 11, Color("#5b6f63"))
 	row.add_child(_money_label)
@@ -1853,6 +2116,8 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
 	row.add_child(_v_sep())
+	row.add_child(_weather_label)
+	row.add_child(_v_sep())
 	row.add_child(_yesterday_label)
 	row.add_child(_v_sep())
 	row.add_child(_fps_label)
@@ -1860,6 +2125,14 @@ func _build_top_bar(parent: Control) -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
+
+	_view_btn = Button.new()
+	_view_btn.custom_minimum_size = Vector2(96, 36)
+	_view_btn.focus_mode = Control.FOCUS_NONE
+	_view_btn.tooltip_text = "Switch between top-down and isometric view"
+	_view_btn.pressed.connect(_toggle_view)
+	_update_view_button()
+	row.add_child(_view_btn)
 
 	var help_btn := Button.new()
 	help_btn.text = "?"
@@ -2038,14 +2311,18 @@ func _build_left_panel(parent: Control) -> void:
 	# group placeables by has-appeal (animals) vs not (infrastructure).
 	# Stable order inside each group: alphabetical by def_id.
 	var zone_ids: Array[StringName] = []
+	var path_ids: Array[StringName] = []
 	var amenity_ids: Array[StringName] = []
 	for def_id in ContentDB.entity_defs.keys():
 		var d: EntityDef = ContentDB.entity_defs[def_id]
-		if d.zone_kind != &"":
+		if d.walkable:
+			path_ids.append(def_id)
+		elif d.zone_kind != &"":
 			zone_ids.append(def_id)
 		else:
 			amenity_ids.append(def_id)
 	zone_ids.sort_custom(func(a, b): return String(a) < String(b))
+	path_ids.sort_custom(func(a, b): return String(a) < String(b))
 	amenity_ids.sort_custom(func(a, b): return String(a) < String(b))
 
 	var animal_ids: Array[StringName] = []
@@ -2064,6 +2341,9 @@ func _build_left_panel(parent: Control) -> void:
 
 	_add_build_subhead(col, "Exhibit tiles")
 	for def_id in zone_ids:
+		_add_build_button(col, def_id)
+	_add_build_subhead(col, "Paths")
+	for def_id in path_ids:
 		_add_build_button(col, def_id)
 	_add_build_subhead(col, "Amenities")
 	for def_id in amenity_ids:
@@ -2100,11 +2380,11 @@ func _build_right_column(parent: Control) -> void:
 	center.add_theme_constant_override("separation", 0)
 	parent.add_child(center)
 
-	_map_view = MAP_VIEW_SCRIPT.new()
-	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_map_view.entity_colors = ENTITY_COLORS
-	_map_view.placement_requested.connect(_on_placement_requested)
-	_map_view.remove_requested.connect(_on_remove_requested)
+	# Top-down vs isometric. Both share BaseMapView so main drives either
+	# identically; the player flips between them at runtime with the View
+	# button in the top bar (initial mode honors the TYCOON_ISO env var).
+	_view_container = center
+	_map_view = _make_view()
 	center.add_child(_map_view)
 
 	_build_region_panel(parent)
@@ -2157,6 +2437,7 @@ func _wire_engine_signals() -> void:
 	EventBus.region_changed.connect(func(_rid): _check_tutorial_advance())
 	EventBus.placement_added.connect(func(_rid, _idx): _check_tutorial_advance())
 	EventBus.balance_changed.connect(func(_b): _check_tutorial_advance())
+	EventBus.entity_placed.connect(func(_id): _check_tutorial_advance())   # path step
 
 	# Keep the region panel synced with engine state.
 	EventBus.region_changed.connect(func(rid):
@@ -2175,6 +2456,20 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.donation_collected.connect(func(rid, _amt):
 		if rid == _selected_region_id:
 			_refresh_region_panel())
+	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
+	ZooBootstrap.animal_born.connect(_on_animal_born)
+	ZooBootstrap.park_hours_changed.connect(func(open: bool):
+		if open:
+			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
+		else:
+			_push_log("[color=#7e9286]🌙 The park closes for the evening — no new guests until morning.[/color]"))
+	ZooBootstrap.difficulty_changed.connect(func(_id: StringName):
+		_refresh_mission_targets()
+		_refresh_hud())
+	ZooBootstrap.weather_changed.connect(func(wid: StringName, _sid: StringName):
+		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(wid)
+		var verb := "is pulling a crowd" if float(wx.get("mult", 1.0)) >= 1.0 else "is keeping guests home"
+		_push_log("[color=#a8c4b0]%s weather %s today.[/color]" % [wx.get("label", "Mild"), verb]))
 
 
 func _stage_starter_park() -> void:
@@ -2196,14 +2491,26 @@ func _stage_starter_park() -> void:
 		for y in range(8, 10):
 			EntityRegistry.place(&"water_patch", Vector2i(x, y))
 
-	# --- Amenities along the path from entrance to exhibits. The starter
-	# park covers all four guest needs (food / drink / restroom / rest) so a
-	# first-time player sees a contented crowd before they learn to balance
-	# them. ---
-	EntityRegistry.place(&"food_stand",  Vector2i(14, 4))
-	EntityRegistry.place(&"drink_stand", Vector2i(13, 6))
-	EntityRegistry.place(&"restroom",    Vector2i(14, 9))
-	EntityRegistry.place(&"bench",       Vector2i(11, 6))
+	# --- Path network: a spine from the entrance gate (0,0) down to a main
+	# concourse that runs past both exhibits. Guests spawn at the gate and
+	# walk the path; they view an exhibit from any path cell within the
+	# engagement distance (navigation.md), so the concourse alone lets them
+	# see the lion and the penguins. Lay paths BEFORE amenities so the
+	# amenities can sit adjacent to the concourse without colliding. ---
+	for y in range(0, 7):
+		EntityRegistry.place(&"path", Vector2i(0, y))   # gate → concourse
+	for x in range(1, 16):
+		EntityRegistry.place(&"path", Vector2i(x, 6))   # concourse
+
+	# --- Amenities, each adjacent to the concourse so guests reach them.
+	# The starter park covers all four guest needs (food / drink / restroom /
+	# rest) so a first-time player sees a contented crowd before they learn
+	# to balance them. ---
+	EntityRegistry.place(&"food_stand",  Vector2i(13, 4))  # touches (13,6)/(14,6)
+	EntityRegistry.place(&"drink_stand", Vector2i(11, 5))  # touches (11,6)
+	EntityRegistry.place(&"restroom",    Vector2i(4, 5))   # touches (4,6)
+	EntityRegistry.place(&"restroom",    Vector2i(8, 5))   # 2nd restroom (spillover bottleneck)
+	EntityRegistry.place(&"bench",       Vector2i(2, 5))   # touches (2,6)
 
 	# --- Lion + its infrastructure. ---
 	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 3))
@@ -2220,12 +2527,12 @@ func _stage_starter_park() -> void:
 			RegionRegistry.add_placement(penguin_region.region_id, &"penguin")
 		RegionRegistry.add_placement(penguin_region.region_id, &"feeding_trough")
 
-	# Visitors spawn near the entrance gate at (0,0). Spread them along
-	# the path so they don't pile up in one spot at t=0.
+	# Visitors enter at the gate and walk in along the path. Spawn them on the
+	# entrance path column (x=0, y 0..6) so they start on the network and
+	# route immediately; auto-spawned guests enter at the gate cell (0,0).
 	for i in range(STARTER_VISITOR_COUNT):
 		AgentPool.spawn(&"visitor", Vector2(
-			SimClock.rng.randf_range(0.0, 3.0),
-			SimClock.rng.randf_range(0.0, 6.0)))
+			0.0, SimClock.rng.randf_range(0.0, 6.0)))
 
 
 # ============================================================================
@@ -2245,13 +2552,23 @@ func _refresh_hud() -> void:
 	_money_label.text = "$%d" % Ledger.get_balance()
 	# Engine current_day is 0-indexed (incremented on day boundaries).
 	# Player-facing displays use 1-indexed days.
-	_day_label.text = "Day %d  ·  Tick %d" % [SimClock.current_day + 1, SimClock.current_tick]
+	var f := ZooBootstrap.time_of_day_fraction()
+	var mins := int(f * 24.0 * 60.0)
+	var clock_icon := "☀" if ZooBootstrap.is_within_open_hours() else "🌙"
+	_day_label.text = "Day %d  ·  %02d:%02d %s" % [
+		SimClock.current_day + 1, mins / 60, mins % 60, clock_icon]
 	_quality_label.text = "%.1f★" % quality
 	var rep := ProgressionManager.reputation
 	var rep_color := Color("#c9a4ff") if rep >= 0 else Color("#e76f51")
 	_reputation_label.text = "Rep %+d" % rep
 	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	if _weather_label != null and ZooBootstrap.weather_cfg != null:
+		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(ZooBootstrap.current_weather)
+		var season: Dictionary = ZooBootstrap.current_season()
+		_weather_label.text = "%s %s · %s" % [
+			WEATHER_ICONS.get(ZooBootstrap.current_weather, ""),
+			wx.get("label", ""), season.get("label", "")]
 	_yesterday_label.text = "Yesterday  +$%d  −$%d  =  $%d" % [
 		breakdown["income"], breakdown["expense"], breakdown["net"]]
 	_fps_label.text = "%d fps" % Engine.get_frames_per_second()
@@ -2259,6 +2576,37 @@ func _refresh_hud() -> void:
 		_evaluate_goals()
 	_refresh_mission()
 	_refresh_build_locks()
+	_recompute_path_access()
+
+
+# Find populated exhibits that no gate-reachable path cell can see. Only
+# meaningful once a path network exists — with zero paths the game is in
+# free-roam mode and every exhibit is reachable, so we stay quiet. Surfaced
+# as a map warning + a Manage Exhibit panel line so the player knows to
+# connect a path.
+func _recompute_path_access() -> void:
+	_disconnected_regions.clear()
+	var net: WalkableNetwork = NavigationRegistry.get_network()
+	if net != null and net.cell_count() > 0:
+		var d := _view_engage_d()
+		for region in RegionRegistry.all_regions():
+			if region.placements.is_empty():
+				continue
+			if not _region_path_connected(net, region, d):
+				_disconnected_regions[region.region_id] = true
+	if _map_view != null:
+		_map_view.disconnected_regions = _disconnected_regions
+
+
+func _region_path_connected(net: WalkableNetwork, region: Region, d: int) -> bool:
+	var viewing := NavigationRegistry.nearest(GATE_TILE, func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, region.cells, d))
+	return viewing != INetworkNavigator.NO_STEP
+
+
+func _view_engage_d() -> int:
+	var bc: BalanceConfig = ContentDB.balance_config
+	return bc.nav_default_engagement_distance if bc != null else 10
 
 
 func _refresh_affordability() -> void:
@@ -2391,7 +2739,8 @@ func _on_build_toggled(pressed: bool, def_id: StringName) -> void:
 		if other_id != def_id:
 			(_build_buttons[other_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = def_id
-	_map_view.preview_def_id = def_id
+	if _map_view != null:
+		_map_view.preview_def_id = def_id
 
 
 func _clear_build_selection() -> void:
@@ -2400,7 +2749,8 @@ func _clear_build_selection() -> void:
 	if _build_buttons.has(_selected_def_id):
 		(_build_buttons[_selected_def_id] as Button).set_pressed_no_signal(false)
 	_selected_def_id = &""
-	_map_view.preview_def_id = &""
+	if _map_view != null:
+		_map_view.preview_def_id = &""
 
 
 const SAVE_SLOT := "main"
@@ -2467,6 +2817,43 @@ func _place_placeable_at(cell: Vector2i) -> void:
 		return
 	_push_log("Added [b]%s[/b] to Exhibit #%d" % [def.display_name, region.region_id])
 	# Stay in place mode so the player can quickly add more of the same.
+
+
+# Build the active view (top-down or iso) and wire it to main. Both implement
+# BaseMapView so the wiring is identical; only the class differs.
+func _make_view() -> BaseMapView:
+	var v: BaseMapView = IsoPreview.new() if _use_iso else MAP_VIEW_SCRIPT.new()
+	v.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.entity_colors = ENTITY_COLORS
+	v.placement_requested.connect(_on_placement_requested)
+	v.remove_requested.connect(_on_remove_requested)
+	return v
+
+
+# Flip projection at runtime: rebuild the view in place, carrying over the
+# transient view state (build preview + disconnected-exhibit badges).
+func _toggle_view() -> void:
+	if _view_container == null or _map_view == null:
+		return
+	_use_iso = not _use_iso
+	var prev_preview := _map_view.preview_def_id
+	var prev_disconnected := _map_view.disconnected_regions
+	var idx := _map_view.get_index()
+	_view_container.remove_child(_map_view)
+	_map_view.queue_free()
+	_map_view = _make_view()
+	_view_container.add_child(_map_view)
+	_view_container.move_child(_map_view, idx)
+	_map_view.preview_def_id = prev_preview
+	_map_view.disconnected_regions = prev_disconnected
+	_update_view_button()
+
+
+func _update_view_button() -> void:
+	if _view_btn == null:
+		return
+	# Show the current mode; pressing switches to the other.
+	_view_btn.text = "View: Iso" if _use_iso else "View: Top"
 
 
 func _on_placement_requested(cell: Vector2i) -> void:
@@ -2537,6 +2924,35 @@ func _on_remove_requested(cell: Vector2i) -> void:
 # ============================================================================
 # Event-log helpers
 # ============================================================================
+
+func _on_welfare_alert(region_id: int, _index: int, kind: String, animal_name: String) -> void:
+	match kind:
+		"sick":
+			_push_log("[color=#e76f51]⚠ %s in Exhibit #%d is unwell.[/color] Improve its exhibit before it's too late." %
+				[animal_name, region_id])
+		"recovered":
+			_push_log("[color=#83c779]%s in Exhibit #%d is back to health.[/color]" %
+				[animal_name, region_id])
+		"died":
+			_push_log("[color=#e76f51][b]✝ %s in Exhibit #%d died of neglect.[/b][/color] Reputation took a hit." %
+				[animal_name, region_id])
+		"old_age":
+			_push_log("[color=#a8c4b0]%s in Exhibit #%d passed away of old age.[/color]" %
+				[animal_name, region_id])
+	if region_id == _selected_region_id:
+		_refresh_region_panel()
+
+
+func _on_animal_born(region_id: int, _species: StringName, animal_name: String, rare: bool) -> void:
+	if rare:
+		_push_log("[color=#f4d35e][b]★ A rare %s was born in Exhibit #%d![/b][/color] The press loves it — reputation up." %
+			[animal_name, region_id])
+	else:
+		_push_log("[color=#83c779]🐣 A baby %s was born in Exhibit #%d.[/color]" %
+			[animal_name, region_id])
+	if region_id == _selected_region_id:
+		_refresh_region_panel()
+
 
 func _on_day_settled(day: int, income: int, expense: int) -> void:
 	var net := income - expense

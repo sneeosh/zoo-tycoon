@@ -13,11 +13,13 @@ func before_each() -> void:
 	Ledger.reset(5000)
 	EntityRegistry.reset()
 	RegionRegistry.reset()
+	NavigationRegistry.reset()
 	AgentPool.reset()
 	SimClock.current_tick = 0
 	SimClock.current_day = 0
 	SimClock.current_period = 0
 	SimClock.set_seed(1234)
+	ZooBootstrap.set_hired_keepers(0)
 
 
 # --- Content loaded from zoo/design/tuning/ -----------------------------
@@ -55,6 +57,69 @@ func test_visitor_agent_type_loaded() -> void:
 	assert_true(need_ids.has(&"thirst"), "thirst need present")
 	assert_true(need_ids.has(&"restroom"), "restroom need present")
 	assert_true(need_ids.has(&"energy"), "energy need present")
+
+
+func test_difficulties_loaded_and_overlay() -> void:
+	var s := Scenario.load_from_tuning()
+	assert_eq(s.difficulties.size(), 3, "three difficulties")
+	assert_true(s.apply_difficulty(&"hard"), "hard overlay applies")
+	assert_eq(s.target_cash, 28000, "hard raises the cash bar")
+	assert_eq(s.days_limit, 24, "hard shortens the window")
+	assert_lt(s.demand_multiplier, 1.0, "hard thins the crowd")
+	assert_true(s.apply_difficulty(&"easy"))
+	assert_eq(s.starting_cash, 14000, "easy starts richer")
+	assert_false(s.apply_difficulty(&"unknown"), "unknown ids are ignored")
+
+
+func test_set_difficulty_resets_cash_and_targets() -> void:
+	ZooBootstrap.set_difficulty(&"easy")
+	assert_eq(ZooBootstrap.scenario.target_cash, 15000, "easy win bar applied")
+	assert_eq(Ledger.get_balance(), 14000, "easy opening cash applied")
+	# Restore Standard so later tests start from the default.
+	ZooBootstrap.set_difficulty(&"standard")
+	assert_eq(ZooBootstrap.scenario.target_cash, 20000)
+	assert_almost_eq(ZooBootstrap.scenario.demand_multiplier, 1.0, 0.001)
+
+
+func test_marketing_campaign_boosts_then_expires() -> void:
+	var fam: AgentType = ContentDB.get_agent_type(&"family")
+	var base := fam.spawn_weight
+	assert_true(ZooBootstrap.start_campaign(&"family"), "campaign launches when affordable")
+	assert_gt(fam.spawn_weight, base, "family arrivals are boosted during the campaign")
+	assert_false(ZooBootstrap.start_campaign(&"child"), "only one campaign at a time")
+	for d in range(ZooBootstrap.marketing.campaign_days):
+		ZooBootstrap._tick_campaign(d)
+	assert_eq(ZooBootstrap.campaign_days_left, 0, "campaign ends after its run")
+	assert_almost_eq(fam.spawn_weight, base, 0.001, "spawn weight restored when it ends")
+
+
+func test_guest_archetypes_loaded() -> void:
+	# Four guest archetypes, each a full AgentType with the four needs and its
+	# own appeal preferences.
+	for tid in [&"visitor", &"child", &"family", &"enthusiast"]:
+		var at: AgentType = ContentDB.get_agent_type(tid)
+		assert_not_null(at, "archetype '%s' loaded" % tid)
+		assert_eq(at.needs.size(), 4, "'%s' has four needs" % tid)
+	assert_true(ContentDB.get_agent_type(&"child").preferences.has(&"cute"),
+		"children prefer cute exhibits")
+	assert_true(ContentDB.get_agent_type(&"enthusiast").preferences.has(&"exotic"),
+		"enthusiasts prefer exotic exhibits")
+	var sc := ServiceConfig.load_from_tuning()
+	assert_almost_eq(sc.spend_multiplier(&"family"), 2.2, 0.001, "family parties spend more")
+	assert_almost_eq(sc.spend_multiplier(&"visitor"), 1.0, 0.001, "adult is the spend baseline")
+
+
+func test_archetype_spend_scales_gate_fee() -> void:
+	# A guest's archetype scales what they pay at the gate (and inside).
+	var fee := ZooBootstrap.entry_fee
+	var pre := Ledger.get_balance()
+	AgentPool.spawn(&"family")
+	assert_eq(Ledger.get_balance() - pre, int(round(fee * 2.2)),
+		"a family pays a party-sized gate fee")
+	var pre2 := Ledger.get_balance()
+	AgentPool.spawn(&"child")
+	assert_eq(Ledger.get_balance() - pre2, int(round(fee * 0.5)),
+		"a child pays half the gate fee")
 
 
 func test_amenities_satisfy_each_need() -> void:
@@ -96,7 +161,10 @@ func test_ticket_brackets_loaded() -> void:
 
 func test_ticket_bracket_drives_entry_fee_and_demand() -> void:
 	# Switching brackets on the live bootstrap sets the entry fee and scales
-	# the park's base spawn rate by the bracket's demand multiplier.
+	# the park's base spawn rate by the bracket's demand multiplier. Pin a
+	# neutral environment (cloudy × spring = 1.0) so weather doesn't skew it.
+	ZooBootstrap.current_weather = &"cloudy"
+	SimClock.current_day = 0
 	var base := ZooBootstrap._default_base_spawn_rate
 	ZooBootstrap.set_ticket_bracket(&"budget")
 	assert_eq(ZooBootstrap.entry_fee, 5, "budget gate fee is $5")
@@ -149,7 +217,7 @@ func test_visitor_seeks_and_buys_food_when_hungry() -> void:
 	# away, walking speed ~0.18/tick → ~30 ticks). After eating, hunger
 	# decays again. We can't snapshot hunger==1.0 at an arbitrary
 	# end-tick — check the transaction log for the food purchase.
-	for i in range(600):
+	for i in range(1000):
 		SimClock.advance_tick()
 
 	var has_food_purchase := false
@@ -230,7 +298,7 @@ func test_restaurant_is_a_one_stop_meal() -> void:
 	# and buys a "Meal" — the multi-need one-stop refill, not a single "Food".
 	EntityRegistry.place(&"restaurant", Vector2i(3, 3))
 	AgentPool.spawn(&"visitor", Vector2(0, 0))
-	for i in range(600):
+	for i in range(1000):
 		SimClock.advance_tick()
 	var has_meal := false
 	for tx: Dictionary in Ledger.transactions:
@@ -255,6 +323,250 @@ func test_compost_has_revenue_and_stink_effects() -> void:
 	assert_true(has_stink, "compost carries a stink satisfaction penalty")
 
 
+func test_path_tiles_build_a_walkable_network() -> void:
+	# Placing `path` tiles must reactively build a WalkableNetwork (proves the
+	# engine bump is wired: walkable column parsed, NavigationRegistry autoload
+	# live, routing works).
+	for x in range(0, 5):
+		EntityRegistry.place(&"path", Vector2i(x, 0))
+	var net := NavigationRegistry.get_network()
+	assert_not_null(net, "a default network exists once path tiles are placed")
+	assert_eq(net.cell_count(), 5, "five path cells in the network")
+	assert_true(net.has_cell(Vector2i(0, 0)), "gate-end path cell present")
+	var route := NavigationRegistry.path(Vector2i(0, 0), Vector2i(4, 0))
+	assert_eq(route.size(), 5, "straight 5-cell route end to end")
+	# A non-path cell is off-network.
+	assert_false(net.has_cell(Vector2i(0, 1)), "non-path cell is not walkable")
+
+
+func test_guest_walks_only_on_paths_to_reach_food() -> void:
+	# With a path network present, a guest sticks to it: lay a straight path
+	# from the gate to a food stand and assert the guest's cell is ALWAYS a
+	# path cell across its whole visit, and that it still reaches and buys food.
+	for x in range(0, 9):
+		EntityRegistry.place(&"path", Vector2i(x, 0))
+	EntityRegistry.place(&"food_stand", Vector2i(4, 1))   # path (4,0) sits beside it
+	var net := NavigationRegistry.get_network()
+	assert_not_null(net)
+	var aid := AgentPool.spawn(&"visitor", Vector2(0, 0))
+	var off_path_ticks := 0
+	for i in range(1000):
+		SimClock.advance_tick()
+		var a := AgentPool.get_agent(aid)
+		if a == null:
+			break   # left the park (still left via the path)
+		if not net.has_cell(Vector2i(a.position.round())):
+			off_path_ticks += 1
+	assert_eq(off_path_ticks, 0, "guest never stepped off the path network")
+	var bought := false
+	for tx: Dictionary in Ledger.transactions:
+		if tx["label"] == "Food":
+			bought = true
+			break
+	assert_true(bought, "guest reached the food stand along the path and ate")
+
+
+func test_disconnected_exhibit_detection() -> void:
+	# The HUD flags a populated exhibit when no gate-reachable path cell can
+	# see it. This exercises that exact query (NavigationRegistry.nearest with
+	# the engagement-distance predicate).
+	for y in range(0, 4):
+		EntityRegistry.place(&"path", Vector2i(0, y))
+	var net := NavigationRegistry.get_network()
+	# Exhibit beside the path → within viewing distance → connected.
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 1))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 2))
+	var near := RegionRegistry.region_at_cell(Vector2i(1, 1))
+	# Exhibit far from any path → no path access.
+	EntityRegistry.place(&"grass_patch", Vector2i(25, 25))
+	EntityRegistry.place(&"grass_patch", Vector2i(25, 26))
+	var far := RegionRegistry.region_at_cell(Vector2i(25, 25))
+	var d := 10
+	var near_cell := NavigationRegistry.nearest(Vector2i(0, 0), func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, near.cells, d))
+	var far_cell := NavigationRegistry.nearest(Vector2i(0, 0), func(c: Vector2i) -> bool:
+		return net.within_engagement_distance(c, far.cells, d))
+	assert_ne(near_cell, INetworkNavigator.NO_STEP, "exhibit beside the path is reachable")
+	assert_eq(far_cell, INetworkNavigator.NO_STEP, "far exhibit has no path access")
+
+
+func test_welfare_kills_a_neglected_animal() -> void:
+	# A cramped lion with no food/water troughs has poor care quality, so its
+	# welfare declines day over day until it dies and is removed.
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 0))
+	EntityRegistry.place(&"rock_patch", Vector2i(2, 0))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(RegionRegistry.add_placement(region.region_id, &"lion"))
+	var died := false
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+		if region.placements.is_empty():
+			died = true
+			break
+	assert_true(died, "a neglected animal eventually dies of poor welfare")
+
+
+func test_welfare_recovers_under_good_care() -> void:
+	# A well-kept lion (room + troughs) recovers welfare and isn't sick.
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	region.placements[0].state["welfare"] = 0.4   # start ailing
+	for day in range(8):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+	assert_gt(float(region.placements[0].state["welfare"]), 0.9, "good care restores welfare")
+	assert_false(bool(region.placements[0].state.get("sick", false)), "recovered animal isn't sick")
+
+
+func test_welfare_scales_appeal() -> void:
+	# A neglected animal draws fewer guests: welfare scales the appeal the
+	# engine consumes, while care_quality (the welfare driver) does not.
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	var model := ZooBootstrap.get_happiness_model()
+	var care := model.care_quality(region, 0)
+	region.placements[0].state["welfare"] = 0.5
+	assert_almost_eq(model.compute_happiness(region, 0), care * 0.5, 0.001,
+		"welfare halves the appeal the engine sees")
+
+
+func _count_species(region: Region, species: StringName) -> int:
+	var n := 0
+	for p in region.placements:
+		if p.placeable_def_id == species:
+			n += 1
+	return n
+
+
+func test_breeding_produces_offspring() -> void:
+	# A roomy exhibit with two well-kept adult lions produces offspring.
+	for x in range(0, 4):
+		for y in range(0, 4):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 4))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	for p in region.placements:
+		if p.placeable_def_id == &"lion":
+			p.state["age_days"] = 5
+			p.state["welfare"] = 1.0
+	var before := _count_species(region, &"lion")
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_breeding(day)
+	assert_gt(_count_species(region, &"lion"), before, "well-kept lion pair breeds")
+
+
+func test_no_breeding_with_a_single_animal() -> void:
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	region.placements[0].state["age_days"] = 5
+	region.placements[0].state["welfare"] = 1.0
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_breeding(day)
+	assert_eq(_count_species(region, &"lion"), 1, "a lone animal can't breed")
+
+
+func test_animal_dies_of_old_age() -> void:
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	region.placements[0].state["age_days"] = ZooBootstrap.breeding.max_age_days
+	ZooBootstrap._on_day_ending_for_breeding(0)
+	assert_eq(_count_species(region, &"lion"), 0, "an animal past its lifespan dies")
+
+
+func test_opening_hours_gate_arrivals() -> void:
+	# Guests arrive during opening hours and stop arriving after closing.
+	SimClock.current_tick = 0
+	assert_true(ZooBootstrap.is_within_open_hours(), "open at the start of the day")
+	ZooBootstrap._apply_spawn_rate()
+	assert_gt(AgentPool.base_spawn_rate, 0.0, "guests arrive while open")
+	SimClock.current_tick = int(SimClock.ticks_per_day * 0.9)   # past open_end 0.80
+	assert_false(ZooBootstrap.is_within_open_hours(), "closed in the evening")
+	ZooBootstrap._apply_spawn_rate()
+	assert_eq(AgentPool.base_spawn_rate, 0.0, "no new arrivals after closing")
+	# Restore a known clock + gate for later tests.
+	SimClock.current_tick = 0
+	ZooBootstrap.set_ticket_bracket(&"standard")
+
+
+func test_keepers_maintain_welfare_and_cost_wages() -> void:
+	# Hiring keepers keeps an otherwise-neglected animal alive (welfare bonus),
+	# and charges wages each day.
+	EntityRegistry.place(&"grass_patch", Vector2i(0, 0))
+	EntityRegistry.place(&"grass_patch", Vector2i(1, 0))
+	EntityRegistry.place(&"rock_patch", Vector2i(2, 0))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")   # cramped, no troughs
+	ZooBootstrap.set_hired_keepers(3)
+	var pre := Ledger.get_balance()
+	# Run the same number of days that killed the unkept lion; with keepers it
+	# survives.
+	for day in range(40):
+		ZooBootstrap._on_day_ending_for_welfare(day)
+		if region.placements.is_empty():
+			break
+	assert_false(region.placements.is_empty(), "keepers keep a neglected animal alive")
+	assert_lt(Ledger.get_balance(), pre, "keeper wages are charged daily")
+	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_keeper_headcount_is_capped() -> void:
+	ZooBootstrap.set_hired_keepers(9999)
+	assert_eq(ZooBootstrap.hired_keepers, ZooBootstrap.staff.max_keepers,
+		"headcount is capped at max_keepers")
+	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_weather_and_seasons_loaded() -> void:
+	var wc := WeatherConfig.load_from_tuning()
+	assert_eq(wc.seasons.size(), 4, "four seasons")
+	assert_eq(wc.weathers.size(), 3, "three weather states")
+	# Seasons cycle by day.
+	assert_eq(wc.season_for_day(0)["id"], &"spring", "day 0 is spring")
+	assert_eq(wc.season_for_day(wc.days_per_season)["id"], &"summer", "next block is summer")
+	# Rainy thins the crowd vs sunny.
+	assert_lt(float(wc.weather_by_id(&"rainy")["mult"]),
+		float(wc.weather_by_id(&"sunny")["mult"]), "rain < sun for demand")
+
+
+func test_environment_multiplier_scales_spawn() -> void:
+	# Weather × season feeds into the gate spawn rate.
+	SimClock.current_tick = 0
+	SimClock.current_day = 0   # spring (1.0)
+	ZooBootstrap.current_weather = &"rainy"   # 0.7
+	ZooBootstrap._apply_spawn_rate()
+	var rainy_rate := AgentPool.base_spawn_rate
+	ZooBootstrap.current_weather = &"sunny"   # 1.15
+	ZooBootstrap._apply_spawn_rate()
+	assert_gt(AgentPool.base_spawn_rate, rainy_rate, "sunny draws more than rainy")
+	# Restore a neutral-ish state for later tests.
+	ZooBootstrap.current_weather = &"cloudy"
+	ZooBootstrap._apply_spawn_rate()
+
+
 func test_full_day_runs_end_to_end() -> void:
 	# Place a small park and spawn a few visitors, then advance a full
 	# day. The build plan's success criterion: economic loop with
@@ -277,6 +589,102 @@ func test_full_day_runs_end_to_end() -> void:
 	assert_gt(Ledger.get_balance(), pre_balance,
 		"end-to-end loop nets positive over one day with %d starting balance" % pre_balance)
 	assert_eq(SimClock.current_day, 1, "exactly one day elapsed")
+
+
+func test_playthrough_park_stays_solvent_and_profits() -> void:
+	# A full multi-day playthrough of a sensibly-built park, exercising every
+	# system at once (paths, needs, donations, welfare, breeding, day/night,
+	# weather, staff). Guards against crashes and economic collapse before a
+	# playtest. Starts from the real game's opening cash.
+	Ledger.reset(ContentDB.balance_config.starting_cash)
+	# Path spine: gate down to a concourse.
+	for y in range(0, 6):
+		EntityRegistry.place(&"path", Vector2i(0, y))
+	for x in range(1, 9):
+		EntityRegistry.place(&"path", Vector2i(x, 5))
+	# A well-built lion exhibit with troughs + a donation box, in view of the path.
+	for c in [Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(3, 3), Vector2i(4, 3)]:
+		EntityRegistry.place(&"grass_patch", c)
+	EntityRegistry.place(&"rock_patch", Vector2i(5, 3))
+	var region := RegionRegistry.region_at_cell(Vector2i(3, 2))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	RegionRegistry.add_placement(region.region_id, &"donation_box")
+	# Amenities for all four needs, each beside the concourse.
+	EntityRegistry.place(&"food_stand", Vector2i(6, 3))
+	EntityRegistry.place(&"drink_stand", Vector2i(2, 4))
+	EntityRegistry.place(&"restroom", Vector2i(4, 4))
+	EntityRegistry.place(&"bench", Vector2i(1, 4))
+	ZooBootstrap.set_hired_keepers(1)
+
+	var pre_run := Ledger.get_balance()
+	for i in range(12 * SimClock.ticks_per_day):
+		SimClock.advance_tick()
+
+	assert_eq(SimClock.current_day, 12, "twelve days elapsed without a crash")
+	assert_gt(Ledger.get_balance(), 0, "park never went bankrupt")
+	var revenue := int(Accounting.get_income_statement(0, SimClock.current_day).get("revenue", 0))
+	assert_gt(revenue, 0, "the park earned revenue from guests")
+	assert_gt(Ledger.get_balance(), pre_run,
+		"a well-run park turns a profit over the run (winnability signal)")
+	assert_false(region.placements.is_empty(), "the cared-for lion is still alive")
+	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_saveload_round_trips_the_whole_zoo() -> void:
+	# The engine doesn't persist region placements or zoo settings and doesn't
+	# rebuild regions on load; the zoo's save-state provider fills both gaps.
+	# Build a park with animal welfare/age state + zoo settings, save, wipe,
+	# load, and assert it all came back — including the cash balance (no
+	# double-charge).
+	ZooBootstrap.set_difficulty(&"hard")            # opening cash 7000
+	ZooBootstrap.set_ticket_bracket(&"premium")
+	ZooBootstrap.set_hired_keepers(2)
+	ZooBootstrap.set_park_open(false)
+	for x in range(0, 3):
+		for y in range(0, 2):
+			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
+	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	EntityRegistry.place(&"food_stand", Vector2i(8, 8))
+	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
+	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
+	region.placements[0].state["welfare"] = 0.42
+	region.placements[0].state["age_days"] = 7
+	var bal_before := Ledger.get_balance()
+
+	SaveService.save_to_slot("rt")
+	# Wipe everything to a clean, different state.
+	EntityRegistry.reset(); RegionRegistry.reset(); NavigationRegistry.reset(); AgentPool.reset()
+	ZooBootstrap.set_hired_keepers(0); ZooBootstrap.set_park_open(true)
+	ZooBootstrap.set_ticket_bracket(&"standard")
+	Ledger.reset(123)
+	SaveService.load_from_slot("rt")
+
+	var r2 := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	assert_not_null(r2, "exhibit was rebuilt on load")
+	assert_eq(r2.placements.size(), 2, "lion + trough restored")
+	var lion_i := -1
+	for i in r2.placements.size():
+		if r2.placements[i].placeable_def_id == &"lion":
+			lion_i = i
+	assert_gt(lion_i, -1, "the lion came back")
+	assert_almost_eq(float(r2.placements[lion_i].state.get("welfare", 1.0)), 0.42, 0.001,
+		"welfare state restored")
+	assert_eq(int(r2.placements[lion_i].state.get("age_days", 0)), 7, "age restored")
+	assert_eq(ZooBootstrap.hired_keepers, 2, "keepers restored")
+	assert_eq(ZooBootstrap.ticket_bracket, &"premium", "ticket bracket restored")
+	assert_false(ZooBootstrap.park_open, "park open/closed restored")
+	assert_eq(ZooBootstrap.scenario.difficulty, &"hard", "difficulty restored")
+	assert_eq(Ledger.get_balance(), bal_before, "cash balance preserved (no double-charge)")
+
+	SaveService.delete_slot("rt")
+	# Restore defaults for any later tests.
+	ZooBootstrap.set_difficulty(&"standard")
+	ZooBootstrap.set_park_open(true)
+	ZooBootstrap.set_ticket_bracket(&"standard")
+	ZooBootstrap.set_hired_keepers(0)
 
 
 func test_quality_rating_reflects_region_appeal() -> void:

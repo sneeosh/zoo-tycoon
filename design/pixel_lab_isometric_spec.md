@@ -1,8 +1,10 @@
 # Isometric Direction — validation, plan, and Pixel Lab art spec
 
-**Status:** Prototype validated 2026-06-07. Isometric renderer exists behind
-the `TYCOON_ISO` env var (`src/ui/iso_preview.gd`); the shipping build stays
-top-down for now.
+**Status:** Functional parity reached 2026-06-07. The isometric view
+(`src/ui/iso_preview.gd`) is a real, interactive view — build/place/sell,
+camera (fit/zoom/pan), and all legibility systems — behind the `TYCOON_ISO`
+env var. The shipping default stays top-down until iso is promoted to a
+player-facing toggle. See the progress checklist in "code work remaining".
 
 ---
 
@@ -25,15 +27,28 @@ harness `TYCOON_ISO=1 TYCOON_SHOT=/tmp/iso.png:300`.)
 
 ## The art that actually moves the needle (Pixel Lab)
 
-The renderer currently fills tiles with flat tinted diamonds. Replacing those
-with proper isometric ground textures is ~80% of the visual jump.
+> **Update 2026-06-07 — the ground now renders procedurally, so the grid is
+> fixed without art.** The first cut of `iso_grass/dirt/rock/water/path.png`
+> baked a dark soil rim into every diamond edge, so tiling them painted a
+> visible grid (confirmed by a 3×3 tiling test). The renderer no longer tiles
+> those PNGs: ground, paths, and enclosure floors are drawn as solid,
+> per-cell-varied diamonds with scattered foliage (the same seamless technique
+> the top-down view uses). Adjacent solid diamonds share edges exactly, so
+> there is no lattice. **Priority A below is now optional polish, not a
+> blocker** — and if textured tiles ever come back they MUST be truly seamless
+> (see the hard requirement in the table).
 
-### Priority A — isometric ground tiles (diamond, **64×32**, seamless)
+### Priority A — isometric ground tiles (diamond, **64×32**, seamless) — OPTIONAL
 
-Each is a single diamond that fills a 64×32 canvas (the four points touch the
-mid-points of the canvas edges), transparent outside the diamond, and **tiles
-seamlessly** with copies of itself on all four diagonal edges (no border/frame
-— same rule as the top-down seamless tiles, but diamond-shaped).
+The procedural ground looks clean already; textured tiles are only worth it if
+they're a clear upgrade. **The one non-negotiable rule: zero border.** Each is a
+single diamond that fills a 64×32 canvas (the four points touch the mid-points
+of the canvas edges), transparent outside the diamond, and **tiles seamlessly**
+on all four diagonal edges — the texture must bleed all the way to every edge
+with **no darker rim, frame, or outline**. Verify by tiling the PNG 3×3: you
+must not be able to see where one diamond ends and the next begins. (The first
+batch failed exactly this test — the dark bottom-edge rim is what produced the
+grid.)
 
 | File | Surface |
 |---|---|
@@ -70,15 +85,43 @@ same ¾ iso angle and sized to its footprint (1×1 ≈ 64×64, 2×2 ≈ 128×96)
 
 ## The code work remaining (mine, not yours)
 
-To promote iso from prototype to the real renderer:
+Progress so far (2026-06-07): iso is now a **real interactive view**, not a
+prototype.
 
-1. **Inverse projection** (screen → cell) for click-to-place, hover inspector,
-   and build preview in iso. (Math is straightforward; just not wired yet.)
-2. **Port the visual systems** already in the top-down view: day/night tint,
-   weather, water shimmer, mood bubbles, money-float toasts, the "no path
-   access" ⚠ and sick ✚ markers, pen ground-cover.
-3. **Textured ground** once the iso tiles above land (drop-in).
-4. **Tune** camera origin/zoom and depth-sort tie-breaks.
+- [x] **Inverse projection + interaction.** `_screen_to_cell` round-trips tile
+      centres (tested); `_gui_input` emits placement/remove; a build preview
+      draws footprint diamonds (entities) / region highlight (placeables) + a
+      hover outline. Both views now share `BaseMapView`, so `main.gd` drives
+      them through one path. (`tests/test_iso_view.gd`.)
+- [x] **Camera:** fit-to-view on resize, mouse-wheel zoom about the cursor,
+      middle-drag pan — one view `Transform2D`, projection math untouched.
+      (Cursor-anchored zoom is tested.)
+- [x] **Visual ports done:** day/night tint, "no path access" ⚠ warning,
+      water shimmer, money-float toasts, sick ✚ marker, **guest mood bubbles +
+      archetype rendering**, **hover inspector card**.
+
+**Iso is now at functional parity with top-down** — build/place/sell, build
+preview, camera, and every legibility/feedback system listed above. (Tests:
+`tests/test_iso_view.gd`, 7 cases — projection round-trip, cursor-anchored
+zoom, click→cell, `_bar`, visitor inspection.)
+
+Remaining is polish / promotion, not parity:
+
+> **Art passes to finish the look:** the two remaining items below both need
+> art, not code — tight generation briefs (exact sizes, paths, the seamless
+> rule, the directional facing convention) are in
+> [`pixel_lab_briefs.md`](./pixel_lab_briefs.md).
+
+- [ ] **Player-facing toggle.** Iso is still behind the `TYCOON_ISO` env var;
+      it could become a settings/HUD toggle now that it's a full view.
+- [ ] **Weather visuals.** Neither view renders weather today (it only scales
+      demand). Rain/snow particles would be a net-new enhancement for *both*
+      views, not an iso port.
+- [ ] **Depth-sort tie-breaks** for edge cases (object vs. fence on the same
+      cell) could use tuning.
+- [ ] **Real iso art** stays optional — procedural ground reads cleanly with no
+      grid; billboarded top-down sprites work. True ¾ iso building/animal art
+      would sharpen it but isn't a blocker (Priority C above).
 
 None of this touches the simulation — it's all in the view layer. Estimate:
 the inverse-projection + interaction is the main chunk; the rest is porting

@@ -26,6 +26,13 @@ var donation_view_chance: float = 0.35
 var donation_amount_max: int = 6
 var donation_min_satisfaction: float = 0.55
 
+# Per-archetype spend multiplier (## Guest types). agent_type id -> float.
+var spend_by_type: Dictionary = {}
+
+# Opening hours as a fraction of the day [0,1) (## Day cycle).
+var open_start: float = 0.0
+var open_end: float = 0.80
+
 
 static func load_from_tuning() -> ServiceConfig:
 	var sc := ServiceConfig.new()
@@ -51,7 +58,34 @@ static func load_from_tuning() -> ServiceConfig:
 
 	sc._load_ticket_brackets(parsed)
 	sc._load_donations(parsed)
+	sc._load_guest_types(parsed)
+	sc._load_day_cycle(parsed)
 	return sc
+
+
+func _load_day_cycle(parsed: Dictionary) -> void:
+	var scalars: Dictionary = parsed["sections"].get("Day cycle", {}).get("scalars", {})
+	if scalars.is_empty():
+		return   # optional — defaults leave the park open all day
+	open_start = _scalar_float(scalars, "open_start", open_start)
+	open_end = _scalar_float(scalars, "open_end", open_end)
+
+
+func _load_guest_types(parsed: Dictionary) -> void:
+	var section: Dictionary = parsed["sections"].get("Guest types", {})
+	var tables: Array = section.get("tables", [])
+	if tables.is_empty():
+		return   # optional — every type defaults to 1.0
+	for row: Dictionary in tables[0]["rows"]:
+		var id := StringName(String(row.get("agent_id", "")).strip_edges())
+		if id == &"":
+			continue
+		spend_by_type[id] = _to_float(row.get("spend_multiplier", "1"))
+
+
+# Spend multiplier for an agent type (gate, purchases, tips). Default 1.0.
+func spend_multiplier(agent_type_id: StringName) -> float:
+	return float(spend_by_type.get(agent_type_id, 1.0))
 
 
 func _load_donations(parsed: Dictionary) -> void:
