@@ -562,6 +562,46 @@ func _draw_region_fills() -> void:
 	for region: Region in RegionRegistry.all_regions():
 		for c in region.cells:
 			_fill_diamond(c.x, c.y, _region_floor_color(region, c.x, c.y))
+	_draw_region_fringe()
+
+
+# Soften the hard diamond boundary where an exhibit floor meets the parkland:
+# along every edge that borders a non-region cell, draw a feathered gradient
+# band (per-vertex alpha) that fades the boundary into a blend colour — a foam
+# shoreline for water, a grassy blend for dirt/rock. (Wesnoth/Factorio terrain
+# transitions, done procedurally — see design/research_graphics_tactics.md.)
+func _draw_region_fringe() -> void:
+	for region: Region in RegionRegistry.all_regions():
+		var cellset := {}
+		for c in region.cells:
+			cellset[c] = true
+		var edge: Color = _region_fringe_color(region)
+		var inner := Color(edge.r, edge.g, edge.b, 0.0)
+		for c in region.cells:
+			var t := _project(c.x, c.y)
+			var top := t
+			var right := t + Vector2(TW * 0.5, TH * 0.5)
+			var bottom := t + Vector2(0, TH)
+			var left := t + Vector2(-TW * 0.5, TH * 0.5)
+			var ctr := t + Vector2(0, TH * 0.5)
+			for spec in [[Vector2i(-1, 0), top, left], [Vector2i(0, -1), top, right],
+					[Vector2i(1, 0), right, bottom], [Vector2i(0, 1), left, bottom]]:
+				if cellset.has(c + spec[0]):
+					continue
+				var a: Vector2 = spec[1]
+				var b: Vector2 = spec[2]
+				var a2: Vector2 = a.lerp(ctr, 0.30)
+				var b2: Vector2 = b.lerp(ctr, 0.30)
+				draw_polygon(PackedVector2Array([a, b, b2, a2]),
+					PackedColorArray([edge, edge, inner, inner]))
+
+
+func _region_fringe_color(region: Region) -> Color:
+	if &"water" in region.provided_zone_tags:
+		return Color(0.80, 0.90, 0.95, 0.45)   # pale foam shoreline
+	var g := Color("#3f5e38").lerp(Color("#4a6e3f"), 0.5)   # grassy blend
+	g.a = 0.5
+	return g
 
 
 # Parkland decoration — tufts and shrubs scattered across grass cells that are
