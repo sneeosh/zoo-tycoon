@@ -89,13 +89,16 @@ func test_directional_sprite_picks_facing_from_heading() -> void:
 func test_directional_sprite_falls_back_without_a_4dir_set() -> void:
 	var iso := _new_iso()
 	iso._directional_enabled = true
-	# penguin has no _4dir/ set — return the plain billboard sprite key.
-	assert_eq(iso._directional_sprite("penguin", Vector2(1, 0)), "penguin")
+	# A species with no _4dir/ folder returns the plain billboard sprite key.
+	# (Every shipped species has a set now, so probe with one that doesn't.)
+	assert_eq(iso._directional_sprite("wombat", Vector2(1, 0)), "wombat")
 
 
 func test_directional_disabled_falls_back_to_billboard() -> void:
 	var iso := _new_iso()
-	# Default off (current _4dir art is anthropomorphic) — even lion falls back.
+	# The flag is the per-build kill switch (used while the original
+	# anthropomorphic _4dir art was redone) — off forces billboards.
+	iso._directional_enabled = false
 	assert_eq(iso._directional_sprite("lion", Vector2(1, 0)), "lion")
 
 

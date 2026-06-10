@@ -35,6 +35,10 @@ var services: ServiceConfig
 # _on_day_ending_for_welfare; welfare lives in each animal placement's
 # state["welfare"] / state["sick"]. kind is "sick" / "recovered" / "died".
 var welfare: WelfareConfig
+
+# Per-species habitat preferences (terrain/foliage/rocks/shelter/toys) —
+# the ZT1 exhibit-authoring layer. See design/tuning/habitat.md.
+var habitat: HabitatConfig
 signal animal_welfare_alert(region_id: int, index: int, kind: String, animal_name: String)
 
 # Breeding/aging tuning (design/tuning/breeding.md). Daily logic in
@@ -144,6 +148,13 @@ func _ready() -> void:
 	scenario = Scenario.load_from_tuning()
 	services = ServiceConfig.load_from_tuning()
 	welfare = WelfareConfig.load_from_tuning()
+	habitat = HabitatConfig.load_from_tuning()
+	_animal_happiness.habitat = habitat
+	# Terrain composition is cached per region inside the model; any world
+	# change can repaint a pen's tiles, so drop the cache on those events.
+	for sig in [EventBus.entity_placed, EventBus.entity_removed,
+			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
+		sig.connect(_animal_happiness.clear_terrain_cache)
 	breeding = BreedingConfig.load_from_tuning()
 	staff = StaffConfig.load_from_tuning()
 	weather_cfg = WeatherConfig.load_from_tuning()

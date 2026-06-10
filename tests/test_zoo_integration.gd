@@ -413,15 +413,25 @@ func test_welfare_kills_a_neglected_animal() -> void:
 
 
 func test_welfare_recovers_under_good_care() -> void:
-	# A well-kept lion (room + troughs) recovers welfare and isn't sick.
-	for x in range(0, 3):
-		for y in range(0, 2):
-			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
-	EntityRegistry.place(&"rock_patch", Vector2i(0, 2))
+	# A genuinely well-kept lion recovers welfare and isn't sick. "Well-kept"
+	# now includes the habitat axes (design/tuning/habitat.md): right terrain
+	# mix, a companion, foliage, rocks, and a shelter — a bare cramped pen no
+	# longer counts as good care (see tests/test_habitat.gd).
+	for y in range(4):
+		for x in range(5):
+			if y == 3 and x >= 2:
+				EntityRegistry.place(&"rock_patch", Vector2i(x, y))
+			else:
+				EntityRegistry.place(&"grass_patch", Vector2i(x, y))
 	var region := RegionRegistry.region_at_cell(Vector2i(0, 0))
+	RegionRegistry.add_placement(region.region_id, &"lion")
 	RegionRegistry.add_placement(region.region_id, &"lion")
 	RegionRegistry.add_placement(region.region_id, &"feeding_trough")
 	RegionRegistry.add_placement(region.region_id, &"water_trough")
+	RegionRegistry.add_placement(region.region_id, &"acacia_tree")
+	RegionRegistry.add_placement(region.region_id, &"acacia_tree")
+	RegionRegistry.add_placement(region.region_id, &"rock_small")
+	RegionRegistry.add_placement(region.region_id, &"wood_shelter")
 	region.placements[0].state["welfare"] = 0.4   # start ailing
 	for day in range(8):
 		ZooBootstrap._on_day_ending_for_welfare(day)

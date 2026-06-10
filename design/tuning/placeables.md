@@ -2,13 +2,19 @@
 
 <!--
 v0.4.0: things that go INSIDE a region (an exhibit, made up of
-connected zone-tile entities from entities.md). Two flavors:
+connected zone-tile entities from entities.md). Three flavors:
 
   - Animals: the main attraction. Each has space, social, habitat
     requirements; contribute appeal axes to their containing region.
   - Infrastructure: feeding troughs, water troughs. Don't contribute
     appeal themselves, but provide tags (provides_food, provides_water)
     that animals' happiness needs.
+  - Habitat & enrichment (the ZT1 exhibit-authoring layer): foliage,
+    rocks, shelters, and toys. space_required 0 — they share tiles with
+    the animals, so decorating a pen never crowds anyone out. Their
+    own_tags (foliage / plant_* / rock_item / shelter / enrichment) feed
+    the per-species habitat axes in design/tuning/habitat.md; the model
+    in src/models/zoo_animal_happiness.gd scores them.
 
 The engine ships IPlaceableHappiness as an extension point — zoo's
 implementation is in src/models/zoo_animal_happiness.gd and follows
@@ -35,3 +41,15 @@ design/algorithms/animal_happiness.md.
 | feeding_trough | Feeding Trough | feeding_trough | 60         | 2                | 1              | 1           | 0          | 99         |                    |                   | provides_food,infrastructure   |                              |                               |
 | water_trough   | Water Trough   | water_trough   | 50         | 1                | 1              | 1           | 0          | 99         |                    |                   | provides_water,infrastructure  |                              |                               |
 | donation_box   | Donation Box   | donation_box   | 80         | 0                | 1              | 1           | 0          | 99         |                    |                   | donation_box,infrastructure    |                              |                               |
+| acacia_tree    | Acacia Tree    | tree_oak       | 75         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_savannah         |                              |                               |
+| shrub          | Shrub          | bush_large     | 35         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_savannah         |                              |                               |
+| palm_tree      | Palm Tree      | tree_palm      | 80         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_rainforest       |                              |                               |
+| fern           | Fern           | bush_small     | 40         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_rainforest       |                              |                               |
+| pine_tree      | Pine Tree      | tree_pine      | 60         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_conifer          |                              |                               |
+| birch_tree     | Birch Tree     | tree_birch     | 60         | 0                | 0              | 0           | 0          | 99         |                    |                   | foliage,plant_conifer          |                              |                               |
+| rock_small     | Small Rock     | boulder        | 50         | 0                | 0              | 0           | 0          | 99         |                    |                   | rock_item                      |                              |                               |
+| rock_large     | Large Rock     | boulder        | 120        | 0                | 0              | 0           | 0          | 99         |                    |                   | rock_item,rock_big             |                              |                               |
+| wood_shelter   | Wood Shelter   | wood_shelter   | 250        | 1                | 0              | 0           | 0          | 99         |                    |                   | shelter,infrastructure         |                              |                               |
+| rock_cave      | Rock Cave      | rock_cave      | 400        | 1                | 0              | 0           | 0          | 99         |                    |                   | shelter,infrastructure         |                              |                               |
+| toy_ball       | Play Ball      | toy_ball       | 80         | 1                | 0              | 0           | 0          | 99         |                    |                   | enrichment,infrastructure      |                              |                               |
+| climbing_stump | Climbing Stump | tree_stump     | 120        | 1                | 0              | 0           | 0          | 99         |                    |                   | enrichment,infrastructure      |                              |                               |

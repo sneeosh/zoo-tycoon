@@ -1,10 +1,13 @@
 # Pixel Lab generation briefs — closing the isometric look
 
 The iso view (`TYCOON_ISO` / the in-game **View** toggle) is code-complete for
-the visual push. One art pass remains: **directional animal sprites**. The
-renderer is already wired to consume them — drop the PNGs at the exact paths
-below, commit them (+ the `.import` files Godot makes), flip one flag, and
-they appear with no further code.
+the visual push. Two art passes remain: **directional animal sprites**
+(Brief 2) and the **ZT1 hero objects** (Brief 3 — entrance arch, fountain,
+¾-iso buildings, fence sprites). The renderer is already wired to consume
+Brief 2 — drop the PNGs at the exact paths below, commit them (+ the
+`.import` files Godot makes), flip one flag, and they appear with no further
+code. Brief 3 items replace existing sprite files in place, so most of them
+also need zero code.
 
 Two non-negotiables across everything here:
 - **Crisp pixel art** — no anti-aliased edges, no baked drop-shadow (the game
@@ -152,3 +155,103 @@ If any species' set looks off, the renderer per-species check
 (`ResourceLoader.exists("res://assets/sprites/<species>_4dir/south.png")`)
 means deleting that folder cleanly reverts that species to billboard while
 leaving the others on the directional path.
+
+---
+
+## Brief 3 — ZT1 hero objects (the "looks like Zoo Tycoon" pack)
+
+**Why this brief:** the 2026-06 visual push made ground, paths, fences,
+guests, and dressing procedural — the park now reads bright-ZT1 without
+art. What procedural drawing *can't* fake are the hero silhouettes the 2001
+game is remembered by: the stone **entrance arch with the ZOO sign**, the
+plaza **fountain**, and buildings with real ¾-isometric volume (thatched
+kiosk roofs, the carousel-striped umbrella stand). This brief generates
+those.
+
+**Shared preamble (prepend to every prompt in this brief):**
+
+> Pixel art for a classic 2001-style zoo tycoon game, ¾ isometric view
+> (object viewed from the front-left, sun from the upper-left), crisp
+> pixels, no anti-aliasing, dark ~1 px outline, warm saturated palette.
+> Transparent background, **no baked drop shadow** (the game draws its
+> own), no ground/grass baked into the image — the object only. The object
+> sits at the BOTTOM of the canvas (feet/foundation at the lowest opaque
+> pixels), generous transparent margin on top.
+
+### 3a — Entrance arch  ⭐ highest impact
+
+| File | Canvas | Prompt addition |
+|---|---|---|
+| `assets/sprites/entrance_arch.png` | 192×160 | A grand zoo entrance: a weathered gray stone archway spanning a path, with a curved emerald-green sign across the top reading "ZOO" in gold capital letters. Low stone walls flare out at both sides of the arch. Two small bronze animal statues (a deer and a bear) flank the arch on top of short stone pillars. The opening under the arch is fully transparent so guests can be seen walking through. |
+
+**Code wiring (Kenny/Claude, after art lands):** in
+`src/ui/iso_preview.gd` `_draw_sorted_objects`, the entrance currently
+draws `ticket_booth` at `GATE_CELL` — swap the sprite name to
+`entrance_arch` with `wmul ≈ 2.6` and keep the booth one cell to the side.
+
+### 3b — Plaza fountain
+
+| File | Canvas | Prompt addition |
+|---|---|---|
+| `assets/sprites/fountain.png` | 128×128 | A round two-tier stone fountain on an octagonal stone basin, water arcing from the top bowl into the wide lower pool, light-blue water with white spray highlights. Classic city-park style. |
+| `assets/sprites/fountain_b.png` (optional) | 128×128 | Same fountain, spray at a different frame so the two can alternate for cheap animation. |
+
+**Code wiring:** new `fountain` amenity in `design/tuning/entities.md`
+(2×2, decorative appeal/happiness like the Japanese Garden pattern from
+the reference dossier §7) — zoo-side tuning only, no engine change.
+
+### 3c — Building reskins, true ¾ iso (replace in place — zero code)
+
+Each replaces an existing billboard PNG at the same path. Match the canvas
+of the current file (open it and check; most are ~92–128 px square). The
+constraint that matters: same ¾ iso angle as the preamble, footprint-true
+base proportions (1×1 ≈ 64 px wide base, 2×2 ≈ 128 px wide base).
+
+| File | Footprint | Prompt addition |
+|---|---|---|
+| `food_stand.png` | 2×2 | A small zoo food kiosk with a **thatched straw roof**, wooden counter, burger sign, ketchup-red awning trim. |
+| `drink_stand.png` | 1×1 | A tiny drink cart with a **red-and-white striped umbrella**, cooler box with cup logo. |
+| `restroom.png` | 1×1 | A small tan brick restroom hut with a brown shingle roof and blue M/W door signs. |
+| `gift_shop.png` | 2×2 | A small zoo gift shop with a yellow-gold thatched roof, display window with plush animals, "GIFTS" sign. |
+| `restaurant.png` | 2×2 | A zoo terrace restaurant: cream walls, green tile roof, outdoor tables with umbrellas at the front edge. |
+| `compost.png` | 2×2 | A rustic wooden compost shed with open front bays and a hay/soil pile, a few green stink wisps. |
+| `arena.png` | 3×3 | A circular show arena: low stone ring wall, sand floor, small wooden grandstand arc at the back, festival bunting. |
+
+### 3d — Iso fence sprite sets (upgrade from procedural)
+
+Per `pixel_lab_isometric_spec.md` Priority B, now styled per ZT1's catalog.
+Two styles first:
+
+| Files | Canvas | Style |
+|---|---|---|
+| `assets/sprites/fence_wood_left.png` / `fence_wood_right.png` | 64×48 | Wood slat fence (the ZT1 default exhibit fence): two warm-brown horizontal slats on round posts. `_left` runs along the ↘ tile edge, `_right` mirrors along ↙. |
+| `assets/sprites/fence_picket_left.png` / `fence_picket_right.png` | 64×48 | Low white picket fence (ZT1 uses it around flower beds and guest areas). |
+
+The segment must tile: posts exactly at both ends, rails meeting the canvas
+edges so adjacent segments connect. **Code wiring:** `_draw_fence_edge`
+falls back to procedural rails today; once these exist we texture the edge
+instead (small renderer change, flagged per-style).
+
+### 3e — Exhibit habitat & enrichment objects
+
+The exhibit-authoring layer (design/tuning/habitat.md) shipped with three
+**programmatically generated placeholders** — replace them, and add foliage
+variety. All are in-exhibit objects, so: same preamble, plus *"sized to sit
+inside a fenced animal pen."*
+
+| File | Canvas | Prompt addition |
+|---|---|---|
+| `assets/sprites/wood_shelter.png` *(replace placeholder)* | 96×96 | A small open-front wooden animal shelter / lean-to: slanted plank roof with straw on top, dark shaded interior opening facing front-left, sturdy log posts. |
+| `assets/sprites/rock_cave.png` *(replace placeholder)* | 96×96 | A rocky animal den: a mound of gray granite boulders with a dark arched cave opening facing front-left, moss patches. |
+| `assets/sprites/toy_ball.png` *(replace placeholder)* | 48×48 | A colorful striped beach ball animal toy, red/yellow/blue wedges, white highlight. |
+| `assets/sprites/acacia.png` *(new, then re-point sprite_key)* | 92×92 | An African acacia tree: flat umbrella-shaped dark-green canopy on a slender forked trunk. |
+| `assets/sprites/fern_clump.png` *(new, then re-point)* | 64×64 | A dense clump of tropical ferns, arching bright-green fronds. |
+
+### Priority order for Brief 3
+
+1. **3a entrance arch** — the single most iconic ZT1 read.
+2. **3c food_stand + drink_stand + restroom** — the buildings guests crowd
+   around all game.
+3. **3b fountain** — anchors the plaza like the reference screenshots.
+4. **3e shelters + acacia** — the exhibit layer's hero pieces.
+5. Rest of 3c, then 3d.

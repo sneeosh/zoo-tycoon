@@ -211,6 +211,43 @@ Each row above mirrors one-to-one as a GUT test in
 `tests/systems/test_placeable_happiness.gd`. Drift between table and code
 is a build failure.
 
+## Habitat axes (2026-06 extension — the ZT1 exhibit-authoring layer)
+
+The base model above is exactly what the worked-example table and its
+mirror tests exercise. On top of it, the zoo adds five **habitat axes**
+driven by per-species preferences in
+[`design/tuning/habitat.md`](../tuning/habitat.md) (loaded by
+`src/habitat_config.gd`, injected into the model by bootstrap — a `null`
+config, or a species with no entry, disables all five and reduces to the
+base model):
+
+```
+penalty += terrain_weight   * Σ_tag max(0, want_frac - actual_frac)
+penalty += foliage_weight   * clamp(1 - have/target, 0, 1)   # target = ceil(frac × area)
+penalty += rocks_weight     * clamp(1 - have/target, 0, 1)   # rock_big counts rock_big_value
+penalty += shelter_weight     if wants_shelter and none placed
+penalty += enrichment_weight  if wants_enrichment and no toy placed
+```
+
+- **Terrain** compares the pen's actual zone-tile composition (fraction of
+  cells carrying each zone tag, cached per region and invalidated on world
+  changes) against the species' `terrain_mix`. Deficit-only: extra terrain
+  the animal didn't ask for is fine.
+- **Foliage** counts placements tagged `foliage`; the species' preferred
+  plant family (`plant_savannah` / `plant_rainforest` / `plant_conifer`)
+  counts 1.0, other plants `offtype_foliage_credit`.
+- **Rocks** counts `rock_item` placements (`rock_big` counts double by
+  default).
+- **Shelter / enrichment** are presence checks on the `shelter` /
+  `enrichment` own_tags.
+
+Habitat dressing has `space_required 0`, and the space axis above now
+splits the pen only across placements with `space_required > 0` — so
+planting trees never makes the animals feel cramped. (The worked examples
+are unaffected: every placeable in them has `space_required ≥ 1`.)
+
+Tests: `tests/test_habitat.gd`.
+
 ## What this spec deliberately does NOT model (yet)
 
 - **Mixed-species companion bonuses** — currently a lion alone with five
@@ -223,11 +260,9 @@ is a build failure.
   prey species → attitude drop for N days), illness, age. The engine
   intentionally stays out of all of these — it just exposes the hook so
   every game can model attitude the way its theme calls for.
-- **Habitat *quality*** beyond presence — every region with a `grass` tag
-  currently provides grass equally. Future: tile-count weighted habitat
-  scoring (a region with 8 grass tiles provides "more grass" than one
-  with 1, useful for placeables that want lots of one terrain).
 - **Proximity-weighted needs** — currently `provides_food` from a trough
   on the far side of a 50-cell region satisfies a lion's hunger just as
   much as one right next to it. Future: per-cell distance from the
-  trough modulates whether it counts.
+  trough modulates whether it counts. (The same applies to the habitat
+  axes — they are bag-of-placements, matching the original game's
+  placement-agnostic suitability; see adaptation plan §5 item 5.)

@@ -58,8 +58,8 @@ var _scenery: Array = []        # [{cell, sprite, wmul, jitter}]
 var _scenery_dirty := true
 const SCENERY_WEIGHTS := {
 	"tree_oak": 5, "tree_birch": 4, "tree_pine": 3, "tree_palm": 1,
-	"bush_large": 3, "bush_small": 3, "bush_flowering": 2, "boulder": 2,
-	"tree_stump": 1, "flowers_red": 2, "flowers_yellow": 2}
+	"bush_large": 3, "bush_small": 3, "bush_flowering": 2, "boulder": 1,
+	"flowers_red": 2, "flowers_yellow": 2}
 
 # Floating "+$N" toasts (ZooBootstrap.money_floated), same model as MapView.
 const FLOAT_LIFETIME := 1.4
@@ -87,8 +87,8 @@ func _ready() -> void:
 			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
 		sig.connect(_mark_scenery_dirty)
 	_card_box = StyleBoxFlat.new()
-	_card_box.bg_color = Color("#161e1a")
-	_card_box.border_color = Color("#3d4f44")
+	_card_box.bg_color = Color("#1d2b16")
+	_card_box.border_color = Color(0.55, 0.48, 0.29, 0.6)   # brass, matches HUD
 	_card_box.set_border_width_all(1)
 	_card_box.set_corner_radius_all(4)
 
@@ -252,8 +252,10 @@ func _tile_center(gx: float, gy: float) -> Vector2:
 func _draw() -> void:
 	if _last_size != size:
 		_rebuild_view()
-	# Backdrop fills the whole control in screen space.
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#101a14"), true)
+	# Backdrop fills the whole control in screen space — a deep park green so
+	# the bright daytime ground reads as sunlit lawn against forest, not a
+	# debug void (classic Zoo Tycoon daytime framing).
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#2c4420"), true)
 	# The world is drawn in model space under the fit/zoom/pan transform.
 	draw_set_transform_matrix(_view_xf)
 	_draw_ground()
@@ -362,7 +364,7 @@ func _render_card(lines: Array[String], anchor: Vector2) -> void:
 	draw_style_box(_card_box, Rect2(o, Vector2(card_w, card_h)))
 	var text_o := o + Vector2(10, 8)
 	for i in lines.size():
-		var color := Color("#e6e6e6") if i == 0 else Color("#a8c4b0")
+		var color := Color("#efeadb") if i == 0 else Color("#bccaa8")
 		draw_string(font, text_o + Vector2(0, fs + i * line_h), lines[i],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs + (1 if i == 0 else 0), color)
 
@@ -589,13 +591,16 @@ func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
 
 # A grass-toned diamond with subtle per-cell variation so the parkland reads
 # as living turf rather than a flat green field — without any tile seams.
+# Palette matches Zoo Tycoon (2001) daytime lawn: bright, saturated, sunlit.
 func _grass_color(gx: int, gy: int) -> Color:
 	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
-	var base := Color("#3c5e36")
+	var base := Color("#609f36")
+	# Keep per-cell variation subtle — the world-locked noise texture supplies
+	# the grain; strong cell-level shifts read as a diamond checkerboard.
 	var v := float(h % 7) / 7.0
-	var col := base.lerp(Color("#4a6e3f"), v * 0.6)
+	var col := base.lerp(Color("#68a93b"), v)
 	if (h / 7) % 4 == 0:
-		col = col.darkened(0.06)
+		col = col.darkened(0.02)
 	return col
 
 
@@ -612,17 +617,17 @@ func _zone_tile_floor_color(def: EntityDef, gx: int, gy: int) -> Color:
 	var base: Color
 	var tags := def.zone_tags
 	if &"water" in tags:
-		base = Color("#3f7fb0")
+		base = Color("#46a0d8")        # bright pool blue
 	elif &"rocks" in tags:
-		base = Color("#9c7b4f")
+		base = Color("#b3905c")        # sunlit rocky ground
 	elif &"tall_cage" in tags:
-		base = Color("#8a6f47")
+		base = Color("#c2a468")        # aviary sand
 	elif &"grass" in tags:
-		base = Color("#5a8045")
+		base = Color("#74a943")        # exhibit turf, a shade warmer than lawn
 	else:
-		base = Color("#7a5d3a")
+		base = Color("#d0ad62")        # savannah sand — the ZT1 exhibit floor
 	var v := float(h % 7) / 7.0
-	return base.lerp(base.lightened(0.12), v).darkened(0.04 * float((h / 7) % 3))
+	return base.lerp(base.lightened(0.10), v).darkened(0.04 * float((h / 7) % 3))
 
 
 # Iterate zone-tile entities directly so each cell is colored by its actual
@@ -653,13 +658,13 @@ func _region_fallback_color(region: Region, gx: int, gy: int) -> Color:
 	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
 	var base: Color
 	var tags := region.provided_zone_tags
-	if &"water" in tags: base = Color("#3f7fb0")
-	elif &"rocks" in tags: base = Color("#9c7b4f")
-	elif &"tall_cage" in tags: base = Color("#8a6f47")
-	elif &"grass" in tags: base = Color("#5a8045")
-	else: base = Color("#7a5d3a")
+	if &"water" in tags: base = Color("#46a0d8")
+	elif &"rocks" in tags: base = Color("#b3905c")
+	elif &"tall_cage" in tags: base = Color("#c2a468")
+	elif &"grass" in tags: base = Color("#74a943")
+	else: base = Color("#d0ad62")
 	var v := float(h % 7) / 7.0
-	return base.lerp(base.lightened(0.12), v).darkened(0.04 * float((h / 7) % 3))
+	return base.lerp(base.lightened(0.10), v).darkened(0.04 * float((h / 7) % 3))
 
 
 # Soften the hard diamond boundary where an exhibit floor meets the parkland:
@@ -695,8 +700,8 @@ func _draw_region_fringe() -> void:
 
 func _region_fringe_color(region: Region) -> Color:
 	if &"water" in region.provided_zone_tags:
-		return Color(0.80, 0.90, 0.95, 0.45)   # pale foam shoreline
-	var g := Color("#3f5e38").lerp(Color("#4a6e3f"), 0.5)   # grassy blend
+		return Color(0.85, 0.93, 0.97, 0.45)   # pale foam shoreline
+	var g := Color("#5a9c33").lerp(Color("#6cb03d"), 0.5)   # grassy blend
 	g.a = 0.5
 	return g
 
@@ -730,11 +735,11 @@ func _draw_ground_scatter() -> void:
 func _draw_tuft(p: Vector2, h: int) -> void:
 	if (h % 3) == 0:
 		var r := 3.0 + float(h % 2)
-		draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.18))
-		draw_circle(p, r, Color("#35522482"))
-		draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#5a7b3aaa"))
+		draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.12))
+		draw_circle(p, r, Color("#4d862a82"))
+		draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#7fbf4daa"))
 	else:
-		var col := Color("#4f7a3488") if (h % 2) == 0 else Color("#5e8a3c88")
+		var col := Color("#74ad4288") if (h % 2) == 0 else Color("#84bd4c88")
 		for i in 3:
 			draw_line(p + Vector2(float(i - 1) * 1.6, 1.0),
 				p + Vector2(float(i - 1) * 1.6, -3.0 - float(h % 2)), col, 1.0)
@@ -745,6 +750,17 @@ func _draw_tuft(p: Vector2, h: int) -> void:
 # nearer things overlap farther ones.
 func _draw_sorted_objects() -> void:
 	var draws: Array = []
+
+	# Paths first (ground, not billboards) — collected up front so each cell
+	# knows its path neighbours for continuous paver joints + outer curbs.
+	var path_cells := {}
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		var def := inst.get_def()
+		if def != null and def.walkable:
+			path_cells[inst.position] = true
+	for c in path_cells.keys():
+		_draw_path_cell(c, path_cells)
 
 	# Fence segments per region-perimeter edge.
 	for region: Region in RegionRegistry.all_regions():
@@ -764,10 +780,7 @@ func _draw_sorted_objects() -> void:
 		if def == null:
 			continue
 		if def.walkable:
-			var ph := _hash2(inst.position.x * 3 + 7, inst.position.y * 5 + 11)
-			var pcol := Color("#c8b083").lerp(Color("#d8c39a"), float(ph % 5) / 5.0)
-			_fill_diamond(inst.position.x, inst.position.y, pcol.darkened(0.03 * float((ph / 5) % 3)))
-			continue
+			continue   # already drawn as paver ground above
 		if def.zone_kind != &"":
 			continue   # zone tiles are GROUND (drawn as region-fill diamonds), not billboards
 		var fp := def.footprint
@@ -784,11 +797,20 @@ func _draw_sorted_objects() -> void:
 
 	# Animals inside exhibits. Animals amble around their enclosure (a purely
 	# presentational wander — the sim still treats them as fixed placements);
-	# infrastructure (troughs, donation boxes) stays put.
+	# habitat dressing and infrastructure stay put.
 	for region: Region in RegionRegistry.all_regions():
 		if region.cells.is_empty():
 			continue
 		var bb := _region_bounds(region)
+		# Pre-pass: where the toy is (if any), so animals can gather to play.
+		var toy_home := Vector2i(-1, -1)
+		for j in region.placements.size():
+			var jdef: PlaceableDef = ContentDB.placeable_defs.get(
+				region.placements[j].placeable_def_id)
+			if jdef != null and &"enrichment" in jdef.own_tags:
+				toy_home = region.placements[j].state.get("primary_cell",
+					region.cells[j % region.cells.size()])
+				break
 		for i in region.placements.size():
 			var p: Placement = region.placements[i]
 			var pdef: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
@@ -809,20 +831,49 @@ func _draw_sorted_objects() -> void:
 				var seed := _hash2(home.x + i * 97 + 5, home.y + i * 53 + 3)
 				var speed: float = 0.8 if (&"bird" in pdef.own_tags) else 0.45
 				var pos := _wander_in(region, bb, seed, _time * speed)
+				var ahead := _wander_in(region, bb, seed, _time * speed + 0.12)
+				# Play sessions: when the pen has a toy, each animal
+				# periodically drifts to it — the visible payoff for placing
+				# enrichment. Staggered per animal so the gathering ebbs.
+				if toy_home.x >= 0:
+					var play := fmod(_time * 0.05 + float(seed % 100) * 0.01, 1.0)
+					if play < 0.30:
+						var pull: float = clampf(play / 0.06, 0.0, 1.0) \
+							* clampf((0.30 - play) / 0.06, 0.0, 1.0)
+						pos = pos.lerp(Vector2(toy_home), 0.8 * pull)
+						ahead = ahead.lerp(Vector2(toy_home), 0.8 * pull)
 				# Heading: sample the wander a hair ahead and pick the facing
 				# sprite (true ¾ iso art) when a <species>_4dir/ set exists.
-				var ahead := _wander_in(region, bb, seed, _time * speed + 0.12)
 				var heading := _tile_center(ahead.x, ahead.y) - _tile_center(pos.x, pos.y)
 				var sprite_name := _directional_sprite(String(pdef.sprite_key), heading)
 				var bob := sin(_time * speed * 2.3 + float(seed % 17)) * 1.4
 				draws.append({"d": pos.x + pos.y + 0.5,
 					"sprite": sprite_name, "fp": Vector2i.ONE, "pos": pos,
 					"bob": bob, "label": pdef.display_name, "small": false,
-					"sick": bool(p.state.get("sick", false))})
+					"sick": bool(p.state.get("sick", false)),
+					"mood": EffectResolver._happiness_model.compute_happiness(region, i),
+					"mood_seed": seed})
 			else:
+				# Habitat dressing draws at a size that matches what it is —
+				# trees tower, rocks squat, shelters read as structures.
+				var wmul := 1.0
+				var small := true
+				var skey := String(pdef.sprite_key)
+				if &"foliage" in pdef.own_tags:
+					small = false
+					wmul = 1.25 if skey.begins_with("tree") else 0.8
+				elif &"rock_item" in pdef.own_tags:
+					small = false
+					wmul = 1.0 if (&"rock_big" in pdef.own_tags) else 0.55
+				elif &"shelter" in pdef.own_tags:
+					small = false
+					wmul = 1.15
+				elif &"enrichment" in pdef.own_tags:
+					small = false
+					wmul = 0.55
 				draws.append({"d": float(home.x + home.y) + 0.4,
-					"sprite": String(pdef.sprite_key), "fp": Vector2i.ONE, "cell": home,
-					"label": pdef.display_name, "small": true})
+					"sprite": skey, "fp": Vector2i.ONE, "cell": home,
+					"label": pdef.display_name, "small": small, "wmul": wmul})
 
 	# Entrance gate: the ticket booth at the gate cell, where guests enter/leave.
 	draws.append({"d": 0.4, "sprite": "ticket_booth", "fp": Vector2i.ONE,
@@ -882,12 +933,24 @@ func _rebuild_scenery() -> void:
 				blocked[inst.position + Vector2i(dx, dy)] = true
 		if def.walkable:
 			path_cells.append(inst.position)
-	# Lamp posts lining the promenade: beside every few path cells, on a free
-	# grass neighbour. Marked blocked so the tree scatter doesn't overlap them.
+	# Promenade furniture beside path cells, on free grass neighbours — lamps,
+	# benches, and flower beds alternating down the path (the ZT1 dressed-
+	# boulevard look). Marked blocked so the tree scatter doesn't overlap them.
 	for c in path_cells:
 		var hp := _hash2(c.x * 5 + 1, c.y * 9 + 2)
-		if (hp % 4) != 0:
-			continue
+		var slot := hp % 4
+		if slot == 3:
+			continue   # leave gaps so the dressing doesn't read as a hedge wall
+		var sprite_name: String
+		var wmul: float
+		match slot:
+			0:
+				sprite_name = "lamp_post"; wmul = 0.7
+			1:
+				sprite_name = "bench"; wmul = 0.55
+			_:
+				sprite_name = "flowers_red" if (hp / 7) % 2 == 0 else "flowers_yellow"
+				wmul = 0.5
 		for off in [Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(1, 0)]:
 			var n: Vector2i = c + off
 			if n.x < 0 or n.y < 0 or n.x >= GROUND_W or n.y >= GROUND_H:
@@ -895,9 +958,25 @@ func _rebuild_scenery() -> void:
 			if blocked.has(n):
 				continue
 			blocked[n] = true
-			_scenery.append({"cell": n, "sprite": "lamp_post", "wmul": 0.7,
+			_scenery.append({"cell": n, "sprite": sprite_name, "wmul": wmul,
 				"jitter": Vector2.ZERO})
 			break
+	# Entrance plaza: flowering shrubs flanking the gate so arrival reads as a
+	# moment (ZT1 dresses its entrance with planters and topiary).
+	for off in [Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1), Vector2i(2, -1),
+			Vector2i(-1, 2), Vector2i(2, 1), Vector2i(1, 2)]:
+		var n: Vector2i = GATE_CELL + off
+		if n.x < 0 or n.y < 0 or n.x >= GROUND_W or n.y >= GROUND_H:
+			continue
+		if blocked.has(n):
+			continue
+		blocked[n] = true
+		var hg := _hash2(n.x * 11 + 3, n.y * 17 + 9)
+		var gate_sprite := "bush_flowering" if hg % 2 == 0 else \
+			("flowers_red" if (hg / 2) % 2 == 0 else "flowers_yellow")
+		_scenery.append({"cell": n, "sprite": gate_sprite,
+			"wmul": 0.7 if gate_sprite == "bush_flowering" else 0.5,
+			"jitter": Vector2.ZERO})
 	var pool: Array = []
 	for name in SCENERY_WEIGHTS:
 		for _w in range(SCENERY_WEIGHTS[name]):
@@ -908,7 +987,7 @@ func _rebuild_scenery() -> void:
 				continue
 			var border := gx < 2 or gy < 2 or gx >= GROUND_W - 2 or gy >= GROUND_H - 2
 			var h := _hash2(gx * 7 + 3, gy * 13 + 5)
-			var threshold := 2 if border else 8
+			var threshold := 2 if border else 5
 			if (h % threshold) != 0:
 				continue
 			var sprite: String = pool[h % pool.size()]
@@ -922,6 +1001,32 @@ func _rebuild_scenery() -> void:
 			var jitter := Vector2(float((h / 7) % 7 - 3) * 0.05, float((h / 11) % 7 - 3) * 0.05)
 			_scenery.append({"cell": Vector2i(gx, gy), "sprite": sprite,
 				"wmul": wmul, "jitter": jitter})
+
+
+# A path cell as light stone pavers: warm-gray fill, faint grout joints that
+# run continuously across adjacent path cells, and a darker curb line wherever
+# the path meets grass — the classic Zoo Tycoon promenade read, procedurally.
+func _draw_path_cell(cell: Vector2i, path_cells: Dictionary) -> void:
+	var ph := _hash2(cell.x * 3 + 7, cell.y * 5 + 11)
+	var pcol := Color("#cfc6ae").lerp(Color("#ded6c0"), float(ph % 5) / 5.0)
+	_fill_diamond(cell.x, cell.y, pcol.darkened(0.03 * float((ph / 5) % 3)))
+	var t := _project(cell.x, cell.y)
+	var top := t
+	var right := t + Vector2(TW * 0.5, TH * 0.5)
+	var bottom := t + Vector2(0, TH)
+	var left := t + Vector2(-TW * 0.5, TH * 0.5)
+	# Paver joints: one line per axis splits the diamond into 2×2 stones; the
+	# split sits at the midpoints, so joints line up across neighbouring cells.
+	var grout := Color(0, 0, 0, 0.09)
+	draw_line(top.lerp(left, 0.5), right.lerp(bottom, 0.5), grout, 1.0)
+	draw_line(top.lerp(right, 0.5), left.lerp(bottom, 0.5), grout, 1.0)
+	# Curb on edges that face non-path ground.
+	var curb := Color("#9a9078")
+	for spec in [[Vector2i(-1, 0), top, left], [Vector2i(0, -1), top, right],
+			[Vector2i(1, 0), right, bottom], [Vector2i(0, 1), left, bottom]]:
+		if path_cells.has(cell + spec[0]):
+			continue
+		draw_line(spec[1], spec[2], curb, 1.5)
 
 
 func _draw_fence_edge(cell: Vector2i, side: String) -> void:
@@ -938,11 +1043,11 @@ func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 		"br": a = right; b = bottom
 		"bl": a = left;  b = bottom
 	var up := Vector2(0, -FENCE_H)
-	var post := Color("#4a3f30")
-	var post_hi := Color("#6f5c45")
-	var rail := Color("#8a7456")
-	var rail_hi := Color("#a88e69")
-	var rail_lo := Color("#5d4d39")
+	var post := Color("#6e5a40")
+	var post_hi := Color("#967a58")
+	var rail := Color("#b59a72")
+	var rail_hi := Color("#d6bf97")
+	var rail_lo := Color("#7d6749")
 	# Ground shadow.
 	draw_line(a + Vector2(1.5, 2.0), b + Vector2(1.5, 2.0), Color(0, 0, 0, 0.28), 3.0)
 	# Two horizontal rails drawn as thick bars (top + middle) so the fence has
@@ -1052,6 +1157,29 @@ func _draw_billboard(dr: Dictionary) -> void:
 		var badge := Vector2(rect.position.x + rect.size.x - 8, rect.position.y + 2)
 		draw_string(font, badge + Vector2(1, 1), "✚", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0, 0, 0, 0.5))
 		draw_string(font, badge, "✚", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("#e76f51"))
+	# Animal mood bubbles — ZT1's smiley/frowny system. Unhappy animals scowl
+	# persistently (the cue to open the exhibit panel); thriving ones float
+	# the occasional heart. The quiet middle stays quiet.
+	elif dr.has("mood"):
+		var mood: float = dr["mood"]
+		var anchor := Vector2(rect.position.x + rect.size.x * 0.5, rect.position.y + 6.0)
+		var t := Time.get_ticks_msec() / 1000.0
+		if mood < 0.45:
+			var pulse := 0.6 + 0.4 * sin(t * 3.0 + float(dr.get("mood_seed", 0) % 13))
+			_draw_mood_chip(anchor, "☹", Color("#d8453a"), pulse)
+		elif mood >= 0.8:
+			var phase := fmod(t * 0.4 + float(dr.get("mood_seed", 0) % 29) * 0.11, 4.0)
+			if phase < 1.2:
+				var alpha := sin(phase / 1.2 * PI)
+				var rise := lerpf(0.0, 7.0, phase / 1.2)
+				var font2 := get_theme_default_font()
+				var glyph := "♥"
+				var sz := font2.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+				var o := anchor + Vector2(-sz.x * 0.5, -4.0 - rise)
+				draw_string(font2, o + Vector2(1, 1), glyph,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0, 0, 0, 0.4 * alpha))
+				draw_string(font2, o, glyph,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.55, 0.6, alpha))
 
 
 # Per-sprite anchoring metadata, computed once from the opaque bounding box:
@@ -1079,17 +1207,25 @@ func _sprite_anchor(name: String) -> Dictionary:
 	return meta
 
 
-# Per-archetype tint + sprite, mirroring MapView so the iso crowd reads the
-# same way (filled halo = mood, ring = archetype, chip = unmet need).
-const ARCH_COLORS := {
-	&"visitor": Color("#dfe6df"), &"child": Color("#f4a261"),
-	&"family": Color("#83c779"), &"enthusiast": Color("#c9a4ff")}
-# All archetypes share the same body sprite so the crowd reads at a uniform
-# scale; the archetype ring (colored arc around the halo) still tells you who
-# is who. Restore per-archetype art once we have a consistent character pack.
-const ARCH_SPRITE := {
-	&"visitor": "visitor", &"child": "visitor",
-	&"family": "visitor", &"enthusiast": "visitor"}
+# Guests draw as little pixel people — the dense, colorful ZT1 crowd — instead
+# of halo-ringed billboards. Outfits are deterministic per agent id so the
+# crowd is varied but stable frame to frame. Archetypes read through body
+# language, not UI rings: children are small, families walk as a pair, and
+# enthusiasts wear their signature purple cap.
+const SHIRT_COLORS := [
+	Color("#d94f3d"), Color("#3d7bd9"), Color("#e8a33d"), Color("#8a4fd9"),
+	Color("#3dbd6e"), Color("#d93d8a"), Color("#3dc4d9"), Color("#f2efe4"),
+	Color("#f4d35e"), Color("#97d348"), Color("#e07b39"), Color("#5a6ed0")]
+const PANTS_COLORS := [
+	Color("#2e3a5c"), Color("#4a3b2a"), Color("#3a3a3a"),
+	Color("#6e7b8a"), Color("#7a6248"), Color("#5c2e3a")]
+const SKIN_TONES := [
+	Color("#f0c8a0"), Color("#e3b285"), Color("#c08850"),
+	Color("#96622f"), Color("#6e4520")]
+const HAIR_COLORS := [
+	Color("#2a2420"), Color("#5c3a1e"), Color("#8a6f4a"),
+	Color("#c9c1b0"), Color("#a33b1f"), Color("#3a3f4a")]
+const ENTHUSIAST_CAP := Color("#9a6fe0")
 const NEED_SHOW_THRESHOLD := 0.4
 const NEED_BUBBLES := {
 	&"hunger":   {"glyph": "H", "color": Color("#e27d60")},
@@ -1100,28 +1236,53 @@ const NEED_BUBBLES := {
 
 func _draw_guest(ag: Agent) -> void:
 	var base := _tile_center(ag.position.x, ag.position.y)
-	# Directional cast shadow + tight contact AO (sun from upper-left), stays put
-	# while the body bobs.
+	# Directional cast shadow + tight contact AO (sun from upper-left).
 	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.55, 0.42), base))
-	draw_circle(Vector2.ZERO, 6.5, Color(0, 0, 0, 0.18))
+	draw_circle(Vector2.ZERO, 5.0, Color(0, 0, 0, 0.16))
 	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 0.42), base))
-	draw_circle(Vector2.ZERO, 4.5, Color(0, 0, 0, 0.22))
+	draw_circle(Vector2.ZERO, 3.5, Color(0, 0, 0, 0.20))
 	draw_set_transform_matrix(_view_xf)
-	var bob := sin(_time * 4.2 + float(ag.agent_id) * 0.83) * 1.2
-	var body := base + Vector2(0, -12.0 + bob)
-	var sat := _satisfaction_color(ag.satisfaction)
-	var arch: Color = ARCH_COLORS.get(ag.agent_type_id, Color("#dfe6df"))
-	# Filled halo = mood; crisp ring = archetype.
-	draw_circle(body, 9.0, Color(sat.r, sat.g, sat.b, 0.38))
-	draw_arc(body, 11.0, 0.0, TAU, 24, arch, 2.0)
-	var sprite := _sprite(ARCH_SPRITE.get(ag.agent_type_id, "visitor"))
-	if sprite != null:
-		var ss := Vector2(26, 26)
-		draw_texture_rect(sprite, Rect2(body - ss * 0.5, ss), false)
+	var person_scale := 0.72 if ag.agent_type_id == &"child" else 1.0
+	_draw_person(base, ag.agent_id, person_scale,
+		ag.agent_type_id == &"enthusiast")
+	# Families walk as a pair — an adult with a small child in tow.
+	if ag.agent_type_id == &"family":
+		_draw_person(base + Vector2(7.0, 2.5), ag.agent_id * 7 + 3, 0.6, false)
+	_draw_visitor_mood(ag, base + Vector2(0, -11.0 * person_scale))
+
+
+# One little pixel person, feet at `feet`: scissoring legs, shirt + pants in
+# deterministic colors, skin-tone head with a hair cap (or the enthusiast's
+# purple cap). ~17 px tall at scale 1 — reads as a person at every zoom.
+func _draw_person(feet: Vector2, id: int, s: float, capped: bool) -> void:
+	var shirt: Color = SHIRT_COLORS[id % SHIRT_COLORS.size()]
+	var pants: Color = PANTS_COLORS[(id / 3) % PANTS_COLORS.size()]
+	var skin: Color = SKIN_TONES[(id / 5) % SKIN_TONES.size()]
+	var hair: Color = HAIR_COLORS[(id / 7) % HAIR_COLORS.size()]
+	var swing := sin(_time * 7.0 + float(id) * 0.83) * 1.6 * s
+	var leg_h := 5.0 * s
+	var hip := feet + Vector2(0, -leg_h)
+	draw_line(hip + Vector2(-1.2 * s, 0), feet + Vector2(-1.2 * s + swing, 0), pants, 1.8 * s)
+	draw_line(hip + Vector2(1.2 * s, 0), feet + Vector2(1.2 * s - swing, 0), pants, 1.8 * s)
+	var torso_h := 6.5 * s
+	var torso_w := 5.5 * s
+	draw_rect(Rect2(hip + Vector2(-torso_w * 0.5, -torso_h), Vector2(torso_w, torso_h)), shirt, true)
+	# Arms swing opposite the legs.
+	var arm_top := hip + Vector2(0, -torso_h + 1.2 * s)
+	draw_line(arm_top + Vector2(-torso_w * 0.5 - 0.4, 0),
+		hip + Vector2(-torso_w * 0.5 - 0.6, -0.8 + swing * 0.4), shirt.darkened(0.12), 1.4 * s)
+	draw_line(arm_top + Vector2(torso_w * 0.5 + 0.4, 0),
+		hip + Vector2(torso_w * 0.5 + 0.6, -0.8 - swing * 0.4), shirt.darkened(0.12), 1.4 * s)
+	var head_c := hip + Vector2(0, -torso_h - 2.6 * s)
+	draw_circle(head_c, 2.7 * s, skin)
+	if capped:
+		draw_circle(head_c + Vector2(0, -1.0 * s), 2.5 * s, ENTHUSIAST_CAP)
+		draw_rect(Rect2(head_c + Vector2(-2.8 * s, -0.8 * s), Vector2(5.6 * s, 1.2 * s)),
+			ENTHUSIAST_CAP, true)
 	else:
-		draw_circle(body, 6.0, arch)
-		draw_circle(body + Vector2(-2, -2), 2.0, Color(1, 1, 1, 0.5))
-	_draw_visitor_mood(ag, body)
+		# Hair: a cap of color across the top of the head.
+		draw_circle(head_c + Vector2(0, -1.1 * s), 2.4 * s, hair)
+		draw_circle(head_c + Vector2(0, 0.5 * s), 2.2 * s, skin)
 
 
 func _satisfaction_color(s: float) -> Color:
@@ -1146,6 +1307,12 @@ func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
 		var pulse := 0.6 + 0.4 * sin(t * 3.0 + float(ag.agent_id) * 0.7)
 		var spec: Dictionary = NEED_BUBBLES[urgent_id]
 		_draw_mood_chip(pos, spec["glyph"], spec["color"], pulse)
+		return
+	# Miserable guests scowl even with no single screaming need — the ZT1 red
+	# frowny. This is the signal the reputation meter is built from.
+	if ag.satisfaction < 0.3:
+		var angry_pulse := 0.6 + 0.4 * sin(t * 3.0 + float(ag.agent_id) * 0.7)
+		_draw_mood_chip(pos, "☹", Color("#d8453a"), angry_pulse)
 		return
 	if ag.satisfaction < 0.75:
 		return

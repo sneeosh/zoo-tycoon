@@ -177,7 +177,7 @@ func _build_region_panel(parent: Control) -> void:
 	_region_panel.offset_left = -300   # extend 300px left of right edge
 	_region_panel.offset_right = 0
 	_region_panel.offset_bottom = 0
-	_region_panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	_region_panel.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	_region_panel.visible = false
 	parent.add_child(_region_panel)
 
@@ -222,7 +222,7 @@ func _refresh_region_panel() -> void:
 	_set_region_panel_visible(true)
 
 	# Header
-	var title := _stat("Exhibit #%d" % region.region_id, 18, Color("#e6e6e6"))
+	var title := _stat("Exhibit #%d" % region.region_id, 18, Color("#efeadb"))
 	_region_panel_body.add_child(title)
 	var subtitle := Label.new()
 	subtitle.text = "%s  ·  %d cells\nProvides: %s" % [
@@ -231,7 +231,7 @@ func _refresh_region_panel() -> void:
 		", ".join(region.provided_zone_tags.map(func(t): return String(t))),
 	]
 	subtitle.add_theme_font_size_override("font_size", 11)
-	subtitle.add_theme_color_override("font_color", Color("#7e9286"))
+	subtitle.add_theme_color_override("font_color", Color("#97a387"))
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_region_panel_body.add_child(subtitle)
 
@@ -259,8 +259,8 @@ func _refresh_region_panel() -> void:
 		suit_label.add_theme_color_override("font_color",
 			_happiness_color(float(pct) / 100.0))
 		_region_panel_body.add_child(suit_label)
-		var rec: String = suit.get("recommendation", "")
-		if rec != "":
+		# The zookeeper's list — up to three fixes, most impactful first.
+		for rec in suit.get("recommendations", []):
 			var rec_label := Label.new()
 			rec_label.text = "→ %s" % rec
 			rec_label.add_theme_font_size_override("font_size", 11)
@@ -273,7 +273,7 @@ func _refresh_region_panel() -> void:
 			var keeper_label := Label.new()
 			keeper_label.text = "Keepers tending: %.1f" % coverage
 			keeper_label.add_theme_font_size_override("font_size", 11)
-			keeper_label.add_theme_color_override("font_color", Color("#a8c4b0"))
+			keeper_label.add_theme_color_override("font_color", Color("#bccaa8"))
 			_region_panel_body.add_child(keeper_label)
 
 	# Path-access warning — guests can't reach an exhibit with no path nearby.
@@ -309,7 +309,7 @@ func _refresh_region_panel() -> void:
 	var placements_header := Label.new()
 	placements_header.text = "INSIDE  (%d)" % region.placements.size()
 	placements_header.add_theme_font_size_override("font_size", 12)
-	placements_header.add_theme_color_override("font_color", Color("#7e9286"))
+	placements_header.add_theme_color_override("font_color", Color("#97a387"))
 	_region_panel_body.add_child(placements_header)
 
 	for i in region.placements.size():
@@ -362,30 +362,45 @@ func _refresh_region_panel() -> void:
 
 	_region_panel_body.add_child(HSeparator.new())
 
-	# Add Placeable section — list every PlaceableDef, grey out the ones
-	# that fail can_add_placement (and surface the reason in the tooltip).
-	var add_header := Label.new()
-	add_header.text = "ADD"
-	add_header.add_theme_font_size_override("font_size", 12)
-	add_header.add_theme_color_override("font_color", Color("#7e9286"))
-	_region_panel_body.add_child(add_header)
-
+	# Add Placeable section — grouped the way you author a ZT1 exhibit:
+	# animals, then the habitat dressing they react to, then care items.
+	# Greyed-out buttons surface the can_add_placement reason in the tooltip.
+	var groups := {"ANIMALS": [], "PLANTS & ROCKS": [], "SHELTER & TOYS": [],
+		"INFRASTRUCTURE": []}
 	for def_id in ContentDB.placeable_defs.keys():
 		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
-		var check := RegionRegistry.can_add_placement(_selected_region_id, def_id)
-		var btn := Button.new()
-		btn.text = "+  %s  $%d" % [def.display_name, def.build_cost]
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		btn.custom_minimum_size = Vector2(0, 32)
-		btn.focus_mode = Control.FOCUS_NONE
-		if not check["ok"]:
-			btn.disabled = true
-			btn.tooltip_text = check["reason"]
-		else:
-			btn.tooltip_text = "%s  ·  upkeep $%d/day" % [
-				def.display_name, def.maintenance_cost]
-			btn.pressed.connect(_on_add_placement.bind(_selected_region_id, def_id))
-		_region_panel_body.add_child(btn)
+		var group := "INFRASTRUCTURE"
+		if not def.appeal_contribution.is_empty():
+			group = "ANIMALS"
+		elif &"foliage" in def.own_tags or &"rock_item" in def.own_tags:
+			group = "PLANTS & ROCKS"
+		elif &"shelter" in def.own_tags or &"enrichment" in def.own_tags:
+			group = "SHELTER & TOYS"
+		groups[group].append(def_id)
+	for group_name in ["ANIMALS", "PLANTS & ROCKS", "SHELTER & TOYS", "INFRASTRUCTURE"]:
+		if groups[group_name].is_empty():
+			continue
+		var add_header := Label.new()
+		add_header.text = "ADD — %s" % group_name
+		add_header.add_theme_font_size_override("font_size", 12)
+		add_header.add_theme_color_override("font_color", Color("#97a387"))
+		_region_panel_body.add_child(add_header)
+		for def_id in groups[group_name]:
+			var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+			var check := RegionRegistry.can_add_placement(_selected_region_id, def_id)
+			var btn := Button.new()
+			btn.text = "+  %s  $%d" % [def.display_name, def.build_cost]
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			btn.custom_minimum_size = Vector2(0, 32)
+			btn.focus_mode = Control.FOCUS_NONE
+			if not check["ok"]:
+				btn.disabled = true
+				btn.tooltip_text = check["reason"]
+			else:
+				btn.tooltip_text = "%s  ·  upkeep $%d/day" % [
+					def.display_name, def.maintenance_cost]
+				btn.pressed.connect(_on_add_placement.bind(_selected_region_id, def_id))
+			_region_panel_body.add_child(btn)
 
 	# Close button at the bottom.
 	_region_panel_body.add_child(HSeparator.new())
@@ -425,7 +440,7 @@ func _build_reports_modal(parent: Control) -> void:
 	card.offset_top = -320
 	card.offset_right = 380
 	card.offset_bottom = 320
-	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	# Stop clicks on the card itself from bubbling to the backdrop.
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_reports_modal.add_child(card)
@@ -533,7 +548,7 @@ func _build_welcome_modal(parent: Control) -> void:
 	card.offset_top = -250
 	card.offset_right = 320
 	card.offset_bottom = 250
-	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_welcome_modal.add_child(card)
 
@@ -557,7 +572,7 @@ func _build_welcome_modal(parent: Control) -> void:
 			lbl.add_theme_color_override("font_color", Color("#f4d35e"))
 		else:
 			lbl.add_theme_font_size_override("font_size", 13)
-			lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+			lbl.add_theme_color_override("font_color", Color("#dde4cf"))
 		col.add_child(lbl)
 
 	var spacer := Control.new()
@@ -569,7 +584,7 @@ func _build_welcome_modal(parent: Control) -> void:
 	_welcome_difficulty_label.text = "Difficulty"
 	_welcome_difficulty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_welcome_difficulty_label.add_theme_font_size_override("font_size", 12)
-	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#7e9286"))
+	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(_welcome_difficulty_label)
 	_welcome_difficulty_row = HBoxContainer.new()
 	_welcome_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -594,12 +609,12 @@ func _refresh_welcome_difficulty() -> void:
 		var btn: Button = _welcome_difficulty_buttons[id]
 		var active: bool = id == _selected_difficulty
 		var style := StyleBoxFlat.new()
-		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.bg_color = Color("#f4d35e") if active else Color("#3a4a2c")
 		style.set_corner_radius_all(4)
 		style.set_content_margin_all(6)
 		btn.add_theme_stylebox_override("normal", style)
 		btn.add_theme_color_override("font_color",
-			Color("#1a241f") if active else Color("#e6e6e6"))
+			Color("#1a241f") if active else Color("#efeadb"))
 
 
 func _on_welcome_start_tutorial() -> void:
@@ -645,7 +660,7 @@ func _build_endgame_modal(parent: Control) -> void:
 	card.offset_top = -180
 	card.offset_right = 280
 	card.offset_bottom = 180
-	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_endgame_modal.add_child(card)
 
@@ -680,7 +695,7 @@ func _endgame_show(won: bool, headline: String, body: String) -> void:
 	var body_label := Label.new()
 	body_label.text = body
 	body_label.add_theme_font_size_override("font_size", 13)
-	body_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	body_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_endgame_body.add_child(body_label)
@@ -692,7 +707,7 @@ func _endgame_show(won: bool, headline: String, body: String) -> void:
 		ProgressionManager.reputation,
 		ZooBootstrap.get_quality_rating()]
 	summary.add_theme_font_size_override("font_size", 13)
-	summary.add_theme_color_override("font_color", Color("#a8c4b0"))
+	summary.add_theme_color_override("font_color", Color("#bccaa8"))
 	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_endgame_body.add_child(summary)
 
@@ -782,7 +797,7 @@ func _build_arena_modal(parent: Control) -> void:
 	card.offset_top = -260
 	card.offset_right = 300
 	card.offset_bottom = 260
-	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_arena_modal.add_child(card)
 
@@ -845,14 +860,14 @@ func _refresh_arena_modal() -> void:
 	var now_label := Label.new()
 	now_label.text = "Now performing"
 	now_label.add_theme_font_size_override("font_size", 12)
-	now_label.add_theme_color_override("font_color", Color("#7e9286"))
+	now_label.add_theme_color_override("font_color", Color("#97a387"))
 	_arena_body.add_child(now_label)
 
 	if booking.is_empty():
 		var none_lbl := Label.new()
 		none_lbl.text = "  (empty — pick an animal below to start a show)"
 		none_lbl.add_theme_font_size_override("font_size", 13)
-		none_lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+		none_lbl.add_theme_color_override("font_color", Color("#dde4cf"))
 		_arena_body.add_child(none_lbl)
 	else:
 		var region: Region = RegionRegistry.get_region(booking["region_id"])
@@ -885,7 +900,7 @@ func _refresh_arena_modal() -> void:
 					ZooBootstrap.SHOW_DAILY_FATIGUE * 100.0,
 					ZooBootstrap.SHOW_REST_RECOVERY * 100.0]
 				rev_lbl.add_theme_font_size_override("font_size", 11)
-				rev_lbl.add_theme_color_override("font_color", Color("#7e9286"))
+				rev_lbl.add_theme_color_override("font_color", Color("#97a387"))
 				rev_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				_arena_body.add_child(rev_lbl)
 
@@ -894,7 +909,7 @@ func _refresh_arena_modal() -> void:
 	var roster := Label.new()
 	roster.text = "Book a performer"
 	roster.add_theme_font_size_override("font_size", 12)
-	roster.add_theme_color_override("font_color", Color("#7e9286"))
+	roster.add_theme_color_override("font_color", Color("#97a387"))
 	_arena_body.add_child(roster)
 
 	# Roster of animals in the park grouped by exhibit.
@@ -919,7 +934,7 @@ func _refresh_arena_modal() -> void:
 				attitude * 100.0, _show_revenue_for(def)]
 			name_lbl.add_theme_font_size_override("font_size", 13)
 			name_lbl.add_theme_color_override("font_color",
-				Color("#cdd6cf") if not booked_here else Color("#f4d35e"))
+				Color("#dde4cf") if not booked_here else Color("#f4d35e"))
 			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			row.add_child(name_lbl)
 			if booked_here:
@@ -940,7 +955,7 @@ func _refresh_arena_modal() -> void:
 		var none := Label.new()
 		none.text = "  (No animals in the park yet. Add one to an exhibit first.)"
 		none.add_theme_font_size_override("font_size", 12)
-		none.add_theme_color_override("font_color", Color("#7e9286"))
+		none.add_theme_color_override("font_color", Color("#97a387"))
 		_arena_body.add_child(none)
 
 
@@ -996,7 +1011,7 @@ func _build_admin_modal(parent: Control) -> void:
 	card.offset_top = -250
 	card.offset_right = 280
 	card.offset_bottom = 250
-	card.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_admin_modal.add_child(card)
 
@@ -1036,7 +1051,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var ticket_label := Label.new()
 	ticket_label.text = "Ticket price"
 	ticket_label.add_theme_font_size_override("font_size", 14)
-	ticket_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	ticket_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	col.add_child(ticket_label)
 
 	_admin_bracket_row = HBoxContainer.new()
@@ -1058,7 +1073,7 @@ func _build_admin_modal(parent: Control) -> void:
 
 	_admin_fee_caption = Label.new()
 	_admin_fee_caption.add_theme_font_size_override("font_size", 11)
-	_admin_fee_caption.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_fee_caption.add_theme_color_override("font_color", Color("#97a387"))
 	_admin_fee_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(_admin_fee_caption)
 
@@ -1071,7 +1086,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var open_label := Label.new()
 	open_label.text = "Park status"
 	open_label.add_theme_font_size_override("font_size", 14)
-	open_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	open_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	open_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	open_row.add_child(open_label)
 	_admin_open_label = Label.new()
@@ -1089,7 +1104,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var open_hint := Label.new()
 	open_hint.text = "Close the park to stop new guest arrivals — useful while you build or save money on a slow day."
 	open_hint.add_theme_font_size_override("font_size", 11)
-	open_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	open_hint.add_theme_color_override("font_color", Color("#97a387"))
 	open_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(open_hint)
 
@@ -1102,7 +1117,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var staff_label := Label.new()
 	staff_label.text = "Zookeepers"
 	staff_label.add_theme_font_size_override("font_size", 14)
-	staff_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	staff_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	staff_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	staff_row.add_child(staff_label)
 	var s_minus := Button.new()
@@ -1127,7 +1142,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var staff_hint := Label.new()
 	staff_hint.text = "Keepers tend your exhibits — each adds welfare to your animals every day. Hire enough to keep them healthy without bleeding cash on wages."
 	staff_hint.add_theme_font_size_override("font_size", 11)
-	staff_hint.add_theme_color_override("font_color", Color("#7e9286"))
+	staff_hint.add_theme_color_override("font_color", Color("#97a387"))
 	staff_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(staff_hint)
 
@@ -1137,7 +1152,7 @@ func _build_admin_modal(parent: Control) -> void:
 	var mkt_label := Label.new()
 	mkt_label.text = "Marketing"
 	mkt_label.add_theme_font_size_override("font_size", 14)
-	mkt_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+	mkt_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	col.add_child(mkt_label)
 	var mkt_row := HBoxContainer.new()
 	mkt_row.add_theme_constant_override("separation", 8)
@@ -1156,7 +1171,7 @@ func _build_admin_modal(parent: Control) -> void:
 		_admin_campaign_buttons[target] = b
 	_admin_campaign_label = Label.new()
 	_admin_campaign_label.add_theme_font_size_override("font_size", 11)
-	_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
+	_admin_campaign_label.add_theme_color_override("font_color", Color("#97a387"))
 	_admin_campaign_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(_admin_campaign_label)
 
@@ -1178,14 +1193,14 @@ func _refresh_admin_modal() -> void:
 		var btn: Button = _admin_bracket_buttons[id]
 		var active: bool = id == ZooBootstrap.ticket_bracket
 		var style := StyleBoxFlat.new()
-		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.bg_color = Color("#f4d35e") if active else Color("#3a4a2c")
 		style.corner_radius_top_left = 4
 		style.corner_radius_top_right = 4
 		style.corner_radius_bottom_left = 4
 		style.corner_radius_bottom_right = 4
 		btn.add_theme_stylebox_override("normal", style)
 		btn.add_theme_color_override("font_color",
-			Color("#1a241f") if active else Color("#e6e6e6"))
+			Color("#1a241f") if active else Color("#efeadb"))
 	var mult := ZooBootstrap.current_demand_multiplier()
 	_admin_fee_caption.text = (
 		"Guests pay $%d at the gate. Cheaper tickets pull a bigger crowd " +
@@ -1242,7 +1257,7 @@ func _refresh_campaign_controls() -> void:
 	else:
 		_admin_campaign_label.text = "Spend $%d to pull more of a guest type for %d days." % [
 			ZooBootstrap.marketing.campaign_cost, ZooBootstrap.marketing.campaign_days]
-		_admin_campaign_label.add_theme_color_override("font_color", Color("#7e9286"))
+		_admin_campaign_label.add_theme_color_override("font_color", Color("#97a387"))
 
 
 func _bump_keepers(delta: int) -> void:
@@ -1323,7 +1338,7 @@ func _build_tutorial_overlay(parent: Control) -> void:
 	_tutorial_overlay.offset_right = -320
 	_tutorial_overlay.custom_minimum_size = Vector2(0, 88)
 	_tutorial_overlay.add_theme_stylebox_override("panel",
-		_panel_box(Color("#2a3324")))
+		_panel_box(Color("#2e3d20")))
 	_tutorial_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tutorial_overlay.visible = false
 	parent.add_child(_tutorial_overlay)
@@ -1355,7 +1370,7 @@ func _build_tutorial_overlay(parent: Control) -> void:
 	_tutorial_prompt.fit_content = true
 	_tutorial_prompt.scroll_active = false
 	_tutorial_prompt.add_theme_font_size_override("normal_font_size", 13)
-	_tutorial_prompt.add_theme_color_override("default_color", Color("#e6e6e6"))
+	_tutorial_prompt.add_theme_color_override("default_color", Color("#efeadb"))
 	_tutorial_prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tutorial_prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(_tutorial_prompt)
@@ -1365,7 +1380,7 @@ func _build_tutorial_overlay(parent: Control) -> void:
 	skip.text = "Skip tutorial"
 	skip.flat = true
 	skip.focus_mode = Control.FOCUS_NONE
-	skip.add_theme_color_override("font_color", Color("#7e9286"))
+	skip.add_theme_color_override("font_color", Color("#97a387"))
 	skip.add_theme_font_size_override("font_size", 11)
 	skip.mouse_filter = Control.MOUSE_FILTER_STOP
 	skip.pressed.connect(_end_tutorial.bind(false))
@@ -1548,7 +1563,7 @@ func _build_mission_section(col: VBoxContainer) -> void:
 
 	_mission_subtitle = Label.new()
 	_mission_subtitle.add_theme_font_size_override("font_size", 11)
-	_mission_subtitle.add_theme_color_override("font_color", Color("#a8c4b0"))
+	_mission_subtitle.add_theme_color_override("font_color", Color("#bccaa8"))
 	_mission_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(_mission_subtitle)
 	_refresh_mission_targets()
@@ -1579,7 +1594,7 @@ func _make_mission_row(col: VBoxContainer) -> Label:
 	var lbl := Label.new()
 	lbl.text = "—"
 	lbl.add_theme_font_size_override("font_size", 11)
-	lbl.add_theme_color_override("font_color", Color("#cdd6cf"))
+	lbl.add_theme_color_override("font_color", Color("#dde4cf"))
 	col.add_child(lbl)
 	return lbl
 
@@ -1601,7 +1616,7 @@ func _build_goals_section(col: VBoxContainer) -> void:
 	var title := Label.new()
 	title.text = "MILESTONES"
 	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color("#7e9286"))
+	title.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(title)
 
 	_goals_box = VBoxContainer.new()
@@ -1613,7 +1628,7 @@ func _build_goals_section(col: VBoxContainer) -> void:
 		var lbl := Label.new()
 		lbl.text = "○  %s" % spec["label"]
 		lbl.add_theme_font_size_override("font_size", 11)
-		lbl.add_theme_color_override("font_color", Color("#a8c4b0"))
+		lbl.add_theme_color_override("font_color", Color("#bccaa8"))
 		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_goals_box.add_child(lbl)
 		_goals_labels[goal_id] = lbl
@@ -1676,16 +1691,16 @@ func _refresh_mission() -> void:
 	_mission_cash_label.text = "  Cash:  $%s / $%s" % [
 		_format_thousands(cash), _format_thousands(s.target_cash)]
 	_mission_cash_label.add_theme_color_override("font_color",
-		Color("#83c779") if cash >= s.target_cash else Color("#cdd6cf"))
+		Color("#83c779") if cash >= s.target_cash else Color("#dde4cf"))
 	_mission_rep_label.text = "  Reputation:  %d / %d" % [rep, s.target_reputation]
 	_mission_rep_label.add_theme_color_override("font_color",
-		Color("#83c779") if rep >= s.target_reputation else Color("#cdd6cf"))
+		Color("#83c779") if rep >= s.target_reputation else Color("#dde4cf"))
 	if days_left <= 5:
 		_mission_days_label.add_theme_color_override("font_color", Color("#e76f51"))
 	elif days_left <= 10:
 		_mission_days_label.add_theme_color_override("font_color", Color("#f4a261"))
 	else:
-		_mission_days_label.add_theme_color_override("font_color", Color("#cdd6cf"))
+		_mission_days_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	_mission_days_label.text = "  Day %d of %d  ·  %d left" % [
 		day_in_progress, s.days_limit, days_left]
 
@@ -1747,7 +1762,7 @@ func _refresh_goal_label(goal_id: String) -> void:
 		lbl.add_theme_color_override("font_color", Color("#83c779"))
 	else:
 		lbl.text = "○  %s" % text
-		lbl.add_theme_color_override("font_color", Color("#a8c4b0"))
+		lbl.add_theme_color_override("font_color", Color("#bccaa8"))
 
 
 func _close_reports() -> void:
@@ -1782,7 +1797,7 @@ func _make_section_header(text: String) -> Label:
 	var l := Label.new()
 	l.text = text.to_upper()
 	l.add_theme_font_size_override("font_size", 14)
-	l.add_theme_color_override("font_color", Color("#7e9286"))
+	l.add_theme_color_override("font_color", Color("#97a387"))
 	return l
 
 
@@ -1790,9 +1805,9 @@ func _make_is_view(d: Dictionary) -> VBoxContainer:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 2)
 	col.add_child(_make_money_row("Revenue", int(d.get("revenue", 0))))
-	col.add_child(_make_money_row("  Cost of services", -int(d.get("cogs", 0)), Color("#a8c4b0")))
+	col.add_child(_make_money_row("  Cost of services", -int(d.get("cogs", 0)), Color("#bccaa8")))
 	col.add_child(_make_money_row("Gross profit", int(d.get("gross_profit", 0)),
-		Color("#e6e6e6"), true))
+		Color("#efeadb"), true))
 	# Per-sub-category lines, summed for the header total.
 	var sub: Dictionary = d.get("operating_expenses", {})
 	var opex_total: int = 0
@@ -1802,10 +1817,10 @@ func _make_is_view(d: Dictionary) -> VBoxContainer:
 	col.add_child(_make_money_row("Operating expenses", -(opex_total + depr)))
 	for label in sub.keys():
 		col.add_child(_make_money_row("  " + String(label),
-			-int(sub[label]), Color("#a8c4b0")))
-	col.add_child(_make_money_row("  Depreciation", -depr, Color("#a8c4b0")))
+			-int(sub[label]), Color("#bccaa8")))
+	col.add_child(_make_money_row("  Depreciation", -depr, Color("#bccaa8")))
 	col.add_child(_make_money_row("Operating income", int(d.get("operating_income", 0)),
-		Color("#e6e6e6"), true))
+		Color("#efeadb"), true))
 	col.add_child(_make_money_row("Other income/(expense)", int(d.get("other", 0))))
 	var net: int = int(d.get("net_income", 0))
 	col.add_child(HSeparator.new())
@@ -1825,10 +1840,10 @@ func _make_bs_view(d: Dictionary) -> VBoxContainer:
 	col.add_child(_make_money_row("  Cash", int(assets.get("cash", 0))))
 	col.add_child(_make_money_row("  PP&E (gross)", int(assets.get("ppe_gross", 0))))
 	col.add_child(_make_money_row("  Accumulated depreciation",
-		-int(assets.get("accumulated_depreciation", 0)), Color("#a8c4b0")))
+		-int(assets.get("accumulated_depreciation", 0)), Color("#bccaa8")))
 	col.add_child(_make_money_row("  PP&E (net)", int(assets.get("ppe_net", 0))))
 	col.add_child(_make_money_row("Total assets", int(assets.get("total_assets", 0)),
-		Color("#e6e6e6"), true))
+		Color("#efeadb"), true))
 
 	col.add_child(_make_section_subheader("Liabilities"))
 	col.add_child(_make_money_row("  Debt", int(liab.get("total_liabilities", 0))))
@@ -1837,7 +1852,7 @@ func _make_bs_view(d: Dictionary) -> VBoxContainer:
 	col.add_child(_make_money_row("  Starting capital", int(equity.get("starting_capital", 0))))
 	col.add_child(_make_money_row("  Retained earnings", int(equity.get("retained_earnings", 0))))
 	col.add_child(_make_money_row("Total equity", int(equity.get("total_equity", 0)),
-		Color("#e6e6e6"), true))
+		Color("#efeadb"), true))
 
 	col.add_child(HSeparator.new())
 	var balances: bool = d.get("balances", true)
@@ -1858,7 +1873,7 @@ func _make_section_subheader(text: String) -> Label:
 
 
 func _make_money_row(label: String, amount: int,
-	color: Color = Color("#e6e6e6"), bold: bool = false) -> HBoxContainer:
+	color: Color = Color("#efeadb"), bold: bool = false) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var name_l := Label.new()
 	name_l.text = label
@@ -1912,7 +1927,7 @@ func _exhibit_suitability(region: Region) -> Dictionary:
 	var model := ZooBootstrap.get_happiness_model()
 	var sum_h: float = 0.0
 	var count: int = 0
-	var worst := {"penalty": -1.0}
+	var issues: Array = []   # {penalty, factor, def, b} across all animals/axes
 	for i in region.placements.size():
 		var def: PlaceableDef = ContentDB.placeable_defs.get(
 			region.placements[i].placeable_def_id)
@@ -1923,19 +1938,34 @@ func _exhibit_suitability(region: Region) -> Dictionary:
 			continue
 		sum_h += float(b["happiness"])
 		count += 1
-		for factor in ["space", "social", "needs"]:
-			if float(b[factor]) > float(worst["penalty"]):
-				worst = {"penalty": float(b[factor]), "factor": factor,
-					"def": def, "b": b}
+		for factor in ["space", "social", "needs", "terrain", "foliage",
+				"rocks", "shelter", "enrichment"]:
+			if float(b.get(factor, 0.0)) > 0.0:
+				issues.append({"penalty": float(b[factor]), "factor": factor,
+					"def": def, "b": b})
 		var att_pen: float = 1.0 - float(b["attitude"])
-		if att_pen > float(worst["penalty"]):
-			worst = {"penalty": att_pen, "factor": "attitude", "def": def, "b": b}
+		if att_pen > 0.0:
+			issues.append({"penalty": att_pen, "factor": "attitude",
+				"def": def, "b": b})
 	if count == 0:
 		return {"has_animals": false}
+	# The zookeeper's list: every distinct fix, most impactful first (ZT1's
+	# exhibit-panel recommendations — §5 divergence #2 says never go silent).
+	issues.sort_custom(func(a, c): return a["penalty"] > c["penalty"])
+	var recs: Array[String] = []
+	for issue in issues:
+		var text := _recommendation_for(issue)
+		if text != "" and not text in recs:
+			recs.append(text)
+		if recs.size() >= 3:
+			break
+	if recs.is_empty():
+		recs.append("Looking great — only marginal gains left.")
 	return {
 		"has_animals": true,
 		"percent": int(round(sum_h / count * 100.0)),
-		"recommendation": _recommendation_for(worst),
+		"recommendation": recs[0],
+		"recommendations": recs,
 	}
 
 
@@ -1961,9 +1991,52 @@ func _recommendation_for(worst: Dictionary) -> String:
 			var missing: Array = b.get("missing_needs", [])
 			var tag: StringName = missing[0] if not missing.is_empty() else &""
 			return "%s for the %s — a need is unmet." % [_need_fix_label(tag), name]
+		"terrain":
+			var detail: Dictionary = b.get("terrain_detail", {})
+			var worst_tag: StringName = &""
+			var worst_gap := 0.0
+			for tag in detail.keys():
+				var gap: float = float(detail[tag]["want"]) - float(detail[tag]["have"])
+				if gap > worst_gap:
+					worst_gap = gap
+					worst_tag = tag
+			if worst_tag == &"":
+				return ""
+			return "Repaint terrain — the %s wants %d%% %s (has %d%%)." % [
+				name, int(round(float(detail[worst_tag]["want"]) * 100.0)),
+				_terrain_tile_label(worst_tag),
+				int(round(float(detail[worst_tag]["have"]) * 100.0))]
+		"foliage":
+			var short := int(ceil(float(b["foliage_target"]) - float(b["foliage_have"])))
+			return "Plant foliage for the %s — about %d more (%s)." % [
+				name, maxi(short, 1), _plant_pref_label(b.get("foliage_pref", &""))]
+		"rocks":
+			var rshort := int(ceil(float(b["rocks_target"]) - float(b["rocks_have"])))
+			return "Add rocks for the %s — about %d more." % [name, maxi(rshort, 1)]
+		"shelter":
+			return "Build a shelter for the %s (Wood Shelter or Rock Cave)." % name
+		"enrichment":
+			return "Add a toy for the %s — it's bored (Play Ball or Climbing Stump)." % name
 		"attitude":
 			return "Let the %s rest — show fatigue is lowering its mood." % name
 	return ""
+
+
+func _terrain_tile_label(tag: StringName) -> String:
+	match tag:
+		&"grass": return "grass tiles"
+		&"rocks": return "rocky tiles"
+		&"water": return "water tiles"
+		&"tall_cage": return "aviary cage tiles"
+	return String(tag)
+
+
+func _plant_pref_label(pref: StringName) -> String:
+	match pref:
+		&"plant_savannah": return "prefers Acacia / Shrub"
+		&"plant_rainforest": return "prefers Palm / Fern"
+		&"plant_conifer": return "prefers Pine / Birch"
+	return "any plants"
 
 
 # Map a missing needs_provided tag to a plain build suggestion.
@@ -2119,7 +2192,7 @@ func _build_ui() -> void:
 	hud.add_child(root)
 
 	var bg := ColorRect.new()
-	bg.color = Color("#141d18")
+	bg.color = Color("#141c11")
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(bg)
 
@@ -2132,7 +2205,7 @@ func _build_top_bar(parent: Control) -> void:
 	var top := PanelContainer.new()
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	top.custom_minimum_size = Vector2(0, 56)
-	top.add_theme_stylebox_override("panel", _panel_box(Color("#23302a")))
+	top.add_theme_stylebox_override("panel", _panel_box(Color("#222e1a")))
 	parent.add_child(top)
 
 	var margin := MarginContainer.new()
@@ -2146,14 +2219,14 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_theme_constant_override("separation", 20)
 	margin.add_child(row)
 
-	_money_label = _stat("$0", 22, Color("#f4d35e"))
-	_day_label = _stat("Day 1", 16, Color("#e6e6e6"))
+	_money_label = _stat("$0", 22, Color("#8ce05a"))
+	_day_label = _stat("Day 1", 16, Color("#efeadb"))
 	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
 	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
-	_agents_label = _stat("0 guests", 16, Color("#a8c4b0"))
-	_weather_label = _stat("", 14, Color("#a8c4b0"))
-	_yesterday_label = _stat("", 12, Color("#7e9286"))
-	_fps_label = _stat("", 11, Color("#5b6f63"))
+	_agents_label = _stat("0 guests", 16, Color("#bccaa8"))
+	_weather_label = _stat("", 14, Color("#bccaa8"))
+	_yesterday_label = _stat("", 12, Color("#97a387"))
+	_fps_label = _stat("", 11, Color("#7c8a6e"))
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
@@ -2230,7 +2303,7 @@ func _add_build_subhead(col: VBoxContainer, text: String) -> void:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.add_theme_font_size_override("font_size", 10)
-	lbl.add_theme_color_override("font_color", Color("#5b6f63"))
+	lbl.add_theme_color_override("font_color", Color("#7c8a6e"))
 	col.add_child(lbl)
 
 
@@ -2322,7 +2395,7 @@ func _build_left_panel(parent: Control) -> void:
 	panel.offset_left = 0
 	panel.offset_bottom = 0
 	panel.custom_minimum_size = Vector2(220, 0)
-	panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	panel.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	parent.add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -2349,7 +2422,7 @@ func _build_left_panel(parent: Control) -> void:
 	var title := Label.new()
 	title.text = "BUILD"
 	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color("#7e9286"))
+	title.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(title)
 
 	# Group entities by zone_kind (zone tiles) vs none (amenities), and
@@ -2408,7 +2481,7 @@ func _build_left_panel(parent: Control) -> void:
 	var hint := Label.new()
 	hint.text = "L-click map: place / select exhibit\nR-click map: sell (½ refund)\nEsc: clear selection\nP: toggle pause"
 	hint.add_theme_font_size_override("font_size", 11)
-	hint.add_theme_color_override("font_color", Color("#7e9286"))
+	hint.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(hint)
 
 
@@ -2445,7 +2518,7 @@ func _build_right_column(parent: Control) -> void:
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
-	log_panel.add_theme_stylebox_override("panel", _panel_box(Color("#1c2823")))
+	log_panel.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	center.add_child(log_panel)
 
 	var log_margin := MarginContainer.new()
@@ -2460,7 +2533,7 @@ func _build_right_column(parent: Control) -> void:
 	_log_text.scroll_active = true
 	_log_text.scroll_following = true
 	_log_text.add_theme_font_size_override("normal_font_size", 12)
-	_log_text.add_theme_color_override("default_color", Color("#a8c4b0"))
+	_log_text.add_theme_color_override("default_color", Color("#bccaa8"))
 	log_margin.add_child(_log_text)
 
 
@@ -2725,14 +2798,14 @@ func _refresh_speed_buttons() -> void:
 		var b: Button = _speed_buttons[key]
 		var active: bool = key == current
 		var style := StyleBoxFlat.new()
-		style.bg_color = Color("#f4d35e") if active else Color("#2c3a32")
+		style.bg_color = Color("#f4d35e") if active else Color("#3a4a2c")
 		style.corner_radius_top_left = 4
 		style.corner_radius_top_right = 4
 		style.corner_radius_bottom_left = 4
 		style.corner_radius_bottom_right = 4
 		b.add_theme_stylebox_override("normal", style)
 		b.add_theme_color_override("font_color",
-			Color("#1a241f") if active else Color("#e6e6e6"))
+			Color("#1a241f") if active else Color("#efeadb"))
 
 
 # ============================================================================
@@ -3115,11 +3188,13 @@ func _push_log(line: String) -> void:
 func _panel_box(color: Color) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = color
-	box.border_color = Color(1, 1, 1, 0.05)
+	# Brass-edged panels — the classic Zoo Tycoon green-and-gold chrome.
+	box.border_color = Color(0.55, 0.48, 0.29, 0.5)
 	box.border_width_top = 1
 	box.border_width_bottom = 1
 	box.border_width_left = 1
 	box.border_width_right = 1
+	box.set_corner_radius_all(3)
 	return box
 
 
