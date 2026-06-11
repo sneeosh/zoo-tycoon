@@ -27,6 +27,22 @@ var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 # Exposed so the UI can show targets, evaluate end-game, etc.
 var scenario: Scenario
 
+# Today's departing-guest verdict, accumulated by VisitorBehavior.on_despawn
+# and settled into reputation once per day (## Reputation in scenario.md —
+# reputation is a rating that drifts toward the daily verdict, not a lifetime
+# tally). need_counts tracks each unhappy departure's most-depleted need so
+# the HUD can say *why* guests left sour ("12 left thirsty"), keyed by need id.
+var departures_happy: int = 0
+var departures_unhappy: int = 0
+var departures_total: int = 0
+var unhappy_need_counts: Dictionary = {}
+# Emitted by record_departure for renderer feedback (verdict floats at the
+# gate). verdict: +1 happy / 0 forgettable / -1 unhappy.
+signal guest_departed(verdict: int, world_pos: Vector2)
+# Emitted after the daily settlement so the HUD can narrate the day's verdict.
+signal reputation_settled(day_score: int, happy: int, unhappy: int,
+	total: int, old_rep: int, new_rep: int)
+
 # Per-need service pricing + spillover (design/tuning/services.md). Read by
 # VisitorBehavior when a guest satisfies a need at a satisfier entity.
 var services: ServiceConfig
@@ -180,6 +196,10 @@ func _ready() -> void:
 	Accounting.register_category(&"animal_loss", Accounting.Category.OPERATING_EXPENSE)
 	EventBus.day_ending.connect(_on_day_ending_for_welfare)
 	EventBus.day_ending.connect(_on_day_ending_for_breeding)
+
+	# Reputation settles from the day's departures after husbandry (so a
+	# death's instant penalty lands first and the drift prices it in).
+	EventBus.day_ending.connect(_on_day_ending_for_reputation)
 
 	# Save/load completeness: the engine persists entities + ledger but NOT
 	# region placements (animals + their welfare/age state) or any zoo-side
@@ -443,6 +463,62 @@ func donations_for_region(region_id: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Reputation — guests render a daily verdict; the rating drifts toward it
+# (## Reputation in scenario.md). Called by VisitorBehavior.on_despawn with
+# the guest's exit mood; `dominant_need` is the guest's most-depleted need at
+# departure ("" when nothing was pressing) so the HUD can name the fix.
+# ---------------------------------------------------------------------------
+
+func record_departure(mood: float, dominant_need: StringName, world_pos: Vector2) -> void:
+	departures_total += 1
+	var verdict: int = 0
+	if scenario == null or mood >= scenario.rep_happy_threshold:
+		verdict = 1
+	elif mood < scenario.rep_unhappy_threshold:
+		verdict = -1
+	match verdict:
+		1:
+			departures_happy += 1
+		-1:
+			departures_unhappy += 1
+			if dominant_need != &"":
+				unhappy_need_counts[dominant_need] = \
+					int(unhappy_need_counts.get(dominant_need, 0)) + 1
+	guest_departed.emit(verdict, world_pos)
+
+
+# The unmet need that drove the most unhappy departures today, or &"" when
+# the books are clean. Used for the "guests are leaving thirsty" coaching.
+func top_unhappy_need() -> StringName:
+	var best: StringName = &""
+	var best_n: int = 0
+	for need_id in unhappy_need_counts.keys():
+		var n: int = unhappy_need_counts[need_id]
+		if n > best_n:
+			best_n = n
+			best = need_id
+	return best
+
+
+func _on_day_ending_for_reputation(_day: int) -> void:
+	if scenario == null:
+		return
+	var old_rep: int = ProgressionManager.reputation
+	var new_rep: int = scenario.settle_reputation(
+		old_rep, departures_happy, departures_unhappy, departures_total)
+	var score: int = scenario.day_score(
+		departures_happy, departures_unhappy, departures_total)
+	if new_rep != old_rep:
+		ProgressionManager.set_reputation(new_rep)
+	reputation_settled.emit(score, departures_happy, departures_unhappy,
+		departures_total, old_rep, new_rep)
+	departures_happy = 0
+	departures_unhappy = 0
+	departures_total = 0
+	unhappy_need_counts.clear()
+
+
+# ---------------------------------------------------------------------------
 # Animal welfare — daily care update + illness/death (roadmap 3.1)
 # ---------------------------------------------------------------------------
 
@@ -695,6 +771,9 @@ func _save_game_state() -> Dictionary:
 		"difficulty": String(scenario.difficulty) if scenario != null else "standard",
 		"campaign_target": String(campaign_target),
 		"campaign_days_left": campaign_days_left,
+		"departures_happy": departures_happy,
+		"departures_unhappy": departures_unhappy,
+		"departures_total": departures_total,
 		"exhibits": exhibits,
 	}
 
@@ -748,6 +827,11 @@ func _load_game_state(data: Dictionary) -> void:
 				"attitude": float(pd.get("attitude", 1.0)),
 			}
 			region.placements.append(p)
+
+	departures_happy = int(data.get("departures_happy", 0))
+	departures_unhappy = int(data.get("departures_unhappy", 0))
+	departures_total = int(data.get("departures_total", 0))
+	unhappy_need_counts.clear()
 
 	donations_by_region.clear()
 	arena_bookings.clear()

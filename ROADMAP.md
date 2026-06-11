@@ -191,6 +191,33 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-11** — **Playability pass: reputation became a rating, and the
+  game now teaches its binding constraint.** Direct response to the
+  2026-06-09 playtest ([report](./design/playtest/fable_report_2026-06-09.md)),
+  whose headline finding was that Standard was unwinnable as players actually
+  play it: reputation (the real win bar) was an unbounded ±1-per-departure
+  counter — a rough opening was permanent debt (−89 by day 30) — and nothing
+  taught or surfaced the mechanic. Changes, all zoo-side: **(1) reputation
+  rework** — departures accumulate into a daily guest verdict and reputation
+  *drifts toward it* (`## Reputation` in `design/tuning/scenario.md`,
+  settled in `ZooBootstrap`); recoverable after a bad open, must be sustained
+  to stay high; instant events (death penalty, rare birth) still land on top
+  and fade. **(2) Teach it** — 5th tutorial step (place drink stand +
+  restroom; unmet needs sink the rating), a one-shot coaching callout the
+  first time the daily verdict goes negative (names the most-failed need and
+  its amenity), a daily verdict line in the log, and a rep tooltip + target
+  in the top bar. **(3) See it** — park-wide unmet-needs strip in the HUD
+  ("12 thirsty · 4 hungry"), ☺/☹ departure floats at the gate, per-axis
+  ✓/✗ end screen (no more "short of the goal" when cash finished over
+  target). **(4) Starter park** re-amenitized for the crowd it actually
+  pulls (2 food / 3 drink / 2 restrooms / 3 benches — was 1/1/2/1).
+  **(5) UX/bug sweep** — zone-tile ghost now says "extends Exhibit #N vs new
+  exhibit" (the iso orphan-tile trap), exhibit panel ADD list moved above
+  INSIDE (reflow misclick), child/family/enthusiast guests now render in
+  top-down (were invisible), top-bar stats stopped drifting the buttons,
+  "Appeal" star labeled, `?` help gained a controls reference, and the
+  gitignored `godot_mcp` autoload no longer ships in the export (boot
+  errors in CI/web builds). Suite 55 → 62 green.
 - **2026-06-07** — **Animals-as-agents direction set (spec authored, not yet
   scheduled).** Decided to pursue promoting animals from static `Placement`
   records to real engine `Agent`s — moving, needs-driven individuals — so their
