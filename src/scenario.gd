@@ -24,6 +24,15 @@ var demand_multiplier: float = 1.0
 # days_limit, demand_multiplier}.
 var difficulties: Array = []
 
+# Reputation-as-rating model (## Reputation). Reputation drifts toward each
+# day's guest verdict instead of accumulating forever — see scenario.md for
+# the rationale (playtest 2026-06-09: the unbounded counter made a rough
+# opening permanent debt and Standard unwinnable).
+var rep_happy_threshold: float = 0.68
+var rep_unhappy_threshold: float = 0.42
+var rep_day_score_scale: float = 125.0
+var rep_daily_adapt_rate: float = 0.35
+
 
 static func load_from_tuning() -> Scenario:
 	var s := Scenario.new()
@@ -38,8 +47,32 @@ static func load_from_tuning() -> Scenario:
 	s.target_reputation = _read_int(section, "target_reputation", s.target_reputation)
 	s.days_limit = _read_int(section, "days_limit", s.days_limit)
 	s.bankruptcy_threshold = _read_int(section, "bankruptcy_threshold", s.bankruptcy_threshold)
+	var rep: Dictionary = parsed["sections"].get("Reputation", {})
+	if not rep.is_empty():
+		s.rep_happy_threshold = _read_float(rep, "happy_threshold", s.rep_happy_threshold)
+		s.rep_unhappy_threshold = _read_float(rep, "unhappy_threshold", s.rep_unhappy_threshold)
+		s.rep_day_score_scale = _read_float(rep, "day_score_scale", s.rep_day_score_scale)
+		s.rep_daily_adapt_rate = _read_float(rep, "daily_adapt_rate", s.rep_daily_adapt_rate)
 	s._load_difficulties(parsed)
 	return s
+
+
+# The daily reputation settlement: where the rating drifts to after one day
+# whose departures split happy/unhappy/total. Pure so tests can probe it.
+func settle_reputation(current_rep: int, happy: int, unhappy: int, total: int) -> int:
+	if total <= 0:
+		return current_rep   # an empty park is no news
+	var day_score := clampf(
+		rep_day_score_scale * float(happy - unhappy) / float(total), -100.0, 100.0)
+	return current_rep + int(round((day_score - float(current_rep)) * rep_daily_adapt_rate))
+
+
+# The day's verdict on its own, for HUD/log display.
+func day_score(happy: int, unhappy: int, total: int) -> int:
+	if total <= 0:
+		return 0
+	return int(round(clampf(
+		rep_day_score_scale * float(happy - unhappy) / float(total), -100.0, 100.0)))
 
 
 func _load_difficulties(parsed: Dictionary) -> void:
@@ -92,6 +125,18 @@ static func _cell_int(row: Dictionary, key: String, fallback: int) -> int:
 static func _cell_float(row: Dictionary, key: String, fallback: float) -> float:
 	var raw := String(row.get(key, "")).strip_edges()
 	return raw.to_float() if raw.is_valid_float() else fallback
+
+
+static func _read_float(section: Dictionary, key: String, fallback: float) -> float:
+	var entry: Dictionary = section["scalars"].get(key, {})
+	if entry.is_empty():
+		push_error("[scenario] missing key '%s'" % key)
+		return fallback
+	var raw: String = entry["raw"]
+	if not raw.is_valid_float():
+		push_error("[scenario] '%s' is not a number: '%s'" % [key, raw])
+		return fallback
+	return raw.to_float()
 
 
 static func _read_int(section: Dictionary, key: String, fallback: int) -> int:

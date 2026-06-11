@@ -28,3 +28,18 @@ var disconnected_regions: Dictionary = {}
 # (cell) coordinates. Default is a safe no-op; concrete views override.
 func force_hover_at_world(_world_pos: Vector2) -> void:
 	pass
+
+
+# When placing a zone tile at `cell`, the region it would MERGE into (4-adjacent
+# region whose kind matches the tile's zone kind), or null if it would start a
+# new exhibit. Both views use this to color the ghost — a tile that LOOKS
+# adjacent but is only diagonal silently created an orphan 1-cell region with
+# zero feedback (playtest 2026-06-09, iso run).
+func zone_merge_region(cell: Vector2i, def: EntityDef) -> Region:
+	if def == null or def.zone_kind == &"":
+		return null
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var r := RegionRegistry.region_at_cell(cell + d)
+		if r != null and r.kind == def.zone_kind:
+			return r
+	return null

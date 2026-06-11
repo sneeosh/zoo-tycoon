@@ -23,6 +23,12 @@ func before_each() -> void:
 	# Game default is now closed-on-start (player opens after first exhibit);
 	# tests presume an open park unless they explicitly close it.
 	ZooBootstrap.set_park_open(true)
+	# Reputation rating + the day's departure verdict start clean.
+	ProgressionManager.set_reputation(0)
+	ZooBootstrap.departures_happy = 0
+	ZooBootstrap.departures_unhappy = 0
+	ZooBootstrap.departures_total = 0
+	ZooBootstrap.unhappy_need_counts.clear()
 
 
 # --- Content loaded from zoo/design/tuning/ -----------------------------
@@ -393,6 +399,88 @@ func test_disconnected_exhibit_detection() -> void:
 		return net.within_engagement_distance(c, far.cells, d))
 	assert_ne(near_cell, INetworkNavigator.NO_STEP, "exhibit beside the path is reachable")
 	assert_eq(far_cell, INetworkNavigator.NO_STEP, "far exhibit has no path access")
+
+
+# --- Reputation as a rating (## Reputation in scenario.md) ----------------
+# Reputation drifts toward each day's guest verdict instead of accumulating
+# ±1 forever — a rough opening is recoverable, and a high rating must be
+# sustained. (Playtest 2026-06-09: the unbounded counter hit −89 by day 30
+# with no way back, making Standard unwinnable.)
+
+func test_reputation_tuning_loaded() -> void:
+	var s := Scenario.load_from_tuning()
+	assert_gt(s.rep_happy_threshold, s.rep_unhappy_threshold,
+		"happy bar sits above unhappy bar")
+	assert_between(s.rep_daily_adapt_rate, 0.01, 1.0, "adapt rate is a sane fraction")
+	assert_gt(s.rep_day_score_scale, 0.0)
+
+
+func test_departures_classify_against_mood_thresholds() -> void:
+	var s: Scenario = ZooBootstrap.scenario
+	ZooBootstrap.record_departure(s.rep_happy_threshold + 0.1, &"", Vector2.ZERO)
+	ZooBootstrap.record_departure(s.rep_unhappy_threshold - 0.1, &"thirst", Vector2.ZERO)
+	ZooBootstrap.record_departure(s.rep_unhappy_threshold - 0.2, &"thirst", Vector2.ZERO)
+	ZooBootstrap.record_departure(s.rep_unhappy_threshold - 0.1, &"hunger", Vector2.ZERO)
+	ZooBootstrap.record_departure(0.5, &"", Vector2.ZERO)   # forgettable middle
+	assert_eq(ZooBootstrap.departures_happy, 1)
+	assert_eq(ZooBootstrap.departures_unhappy, 3)
+	assert_eq(ZooBootstrap.departures_total, 5)
+	assert_eq(ZooBootstrap.top_unhappy_need(), &"thirst",
+		"the most-failed need is reported so the HUD can name the fix")
+
+
+func test_reputation_recovers_from_a_deep_hole() -> void:
+	# The headline-finding fix: −50 reputation plus sustained happy crowds
+	# must climb back above the Standard +50 bar — banked misery is no longer
+	# permanent debt.
+	ProgressionManager.set_reputation(-50)
+	for day in range(15):
+		for i in range(10):
+			ZooBootstrap.record_departure(0.9, &"", Vector2.ZERO)
+		ZooBootstrap._on_day_ending_for_reputation(day)
+	assert_gt(ProgressionManager.reputation, 50,
+		"sustained happy verdicts overcome an early deficit")
+
+
+func test_reputation_decays_when_the_crowd_sours() -> void:
+	ProgressionManager.set_reputation(80)
+	for i in range(5):
+		ZooBootstrap.record_departure(0.9, &"", Vector2.ZERO)
+	for i in range(5):
+		ZooBootstrap.record_departure(0.2, &"thirst", Vector2.ZERO)
+	ZooBootstrap._on_day_ending_for_reputation(0)
+	assert_lt(ProgressionManager.reputation, 80,
+		"a split crowd drags a high rating back down — ratings must be sustained")
+
+
+func test_reputation_unchanged_on_an_empty_day() -> void:
+	ProgressionManager.set_reputation(25)
+	ZooBootstrap._on_day_ending_for_reputation(0)
+	assert_eq(ProgressionManager.reputation, 25, "no departures, no news")
+
+
+func test_settlement_resets_the_daily_counters() -> void:
+	ZooBootstrap.record_departure(0.9, &"", Vector2.ZERO)
+	ZooBootstrap.record_departure(0.1, &"energy", Vector2.ZERO)
+	ZooBootstrap._on_day_ending_for_reputation(0)
+	assert_eq(ZooBootstrap.departures_total, 0)
+	assert_eq(ZooBootstrap.departures_happy, 0)
+	assert_eq(ZooBootstrap.departures_unhappy, 0)
+	assert_eq(ZooBootstrap.top_unhappy_need(), &"")
+
+
+func test_guest_despawn_feeds_the_daily_verdict() -> void:
+	# End-to-end: a guest leaving records a departure (the behavior no longer
+	# pokes reputation directly — the daily settlement owns the rating).
+	var agent_id := AgentPool.spawn(&"visitor", Vector2(2, 2))
+	var agent: Agent = AgentPool.get_agent(agent_id)
+	agent.behavior_state[&"mood"] = 0.95
+	var rep_before := ProgressionManager.reputation
+	AgentPool.despawn(agent_id)
+	assert_eq(ZooBootstrap.departures_total, 1)
+	assert_eq(ZooBootstrap.departures_happy, 1)
+	assert_eq(ProgressionManager.reputation, rep_before,
+		"reputation only moves at the daily settlement")
 
 
 func test_welfare_kills_a_neglected_animal() -> void:

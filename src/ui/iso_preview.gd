@@ -61,11 +61,14 @@ const SCENERY_WEIGHTS := {
 	"bush_large": 3, "bush_small": 3, "bush_flowering": 2, "boulder": 1,
 	"flowers_red": 2, "flowers_yellow": 2}
 
-# Floating "+$N" toasts (ZooBootstrap.money_floated), same model as MapView.
+# Floating toasts ("+$N" payments, departure-verdict ☺/☹ at the gate), same
+# model as MapView: {text, color, world_pos, born_at}.
 const FLOAT_LIFETIME := 1.4
 const FLOAT_RISE := 1.0       # model-space rise (scales with zoom)
 const FLOAT_LIMIT := 40
 var _money_floats: Array = []
+const VERDICT_HAPPY_COLOR := Color(0.51, 0.78, 0.47)
+const VERDICT_UNHAPPY_COLOR := Color(0.91, 0.42, 0.34)
 
 
 func _ready() -> void:
@@ -81,6 +84,7 @@ func _ready() -> void:
 	_ground_noise = _make_ground_noise()
 	resized.connect(_rebuild_view)
 	ZooBootstrap.money_floated.connect(_on_money_floated)
+	ZooBootstrap.guest_departed.connect(_on_guest_departed)
 	# Parkland scenery (trees/rocks/bushes) is deterministic per cell but must
 	# avoid built cells, so rebuild it whenever the world changes.
 	for sig in [EventBus.entity_placed, EventBus.entity_removed,
@@ -124,9 +128,22 @@ func _handle_keyboard_pan(dt: float) -> void:
 
 
 func _on_money_floated(amount: int, world_pos: Vector2) -> void:
+	_push_float("+$%d" % amount, Color(0.96, 0.83, 0.37), world_pos)
+
+
+# A guest left: float their verdict so the reputation meter has a visible
+# heartbeat at the gate. Forgettable departures (verdict 0) stay silent.
+func _on_guest_departed(verdict: int, world_pos: Vector2) -> void:
+	if verdict > 0:
+		_push_float("☺", VERDICT_HAPPY_COLOR, world_pos)
+	elif verdict < 0:
+		_push_float("☹", VERDICT_UNHAPPY_COLOR, world_pos)
+
+
+func _push_float(text: String, color: Color, world_pos: Vector2) -> void:
 	if _money_floats.size() >= FLOAT_LIMIT:
 		_money_floats.pop_front()
-	_money_floats.append({"amount": amount, "world_pos": world_pos,
+	_money_floats.append({"text": text, "color": color, "world_pos": world_pos,
 		"born_at": Time.get_ticks_msec() / 1000.0})
 
 
@@ -399,13 +416,14 @@ func _draw_money_floats() -> void:
 		var alpha := 1.0 - t
 		var base := _tile_center(entry["world_pos"].x, entry["world_pos"].y)
 		var p := Vector2(base.x, base.y - TH - lerpf(0.0, FLOAT_RISE * TH, t))
-		var text := "+$%d" % int(entry["amount"])
+		var text: String = entry["text"]
+		var color: Color = entry["color"]
 		var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 		var o := p - Vector2(sz.x * 0.5, 0)
 		draw_string(font, o + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 			Color(0, 0, 0, 0.55 * alpha))
 		draw_string(font, o, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
-			Color(0.96, 0.83, 0.37, alpha))
+			Color(color.r, color.g, color.b, alpha))
 
 
 # Dusk/night tint — same model as the top-down view: dim toward the edges of
@@ -522,6 +540,30 @@ func _draw_preview() -> void:
 	for dx in def.footprint.x:
 		for dy in def.footprint.y:
 			_preview_cell(_hover_cell.x + dx, _hover_cell.y + dy, fill, stroke)
+	# Zone tiles: show whether this click EXTENDS an exhibit (outline the
+	# would-be-joined region in cyan) or STARTS a new one (gold note). In iso
+	# a diagonal cell looks adjacent, so without this a $60 tile silently
+	# became an orphan 1-cell region (playtest 2026-06-09).
+	if def.zone_kind != &"" and ok:
+		var merge: Region = zone_merge_region(_hover_cell, def)
+		var note: String
+		var note_color: Color
+		if merge != null:
+			note = "+ Exhibit #%d" % merge.region_id
+			note_color = Color(0.55, 0.85, 0.95)
+			for c in merge.cells:
+				_preview_cell(c.x, c.y, Color(0.55, 0.85, 0.95, 0.10),
+					Color(0.55, 0.85, 0.95, 0.65))
+		else:
+			note = "new exhibit"
+			note_color = Color(0.96, 0.83, 0.37)
+		var font := get_theme_default_font()
+		var anchor := _project(_hover_cell.x, _hover_cell.y) + Vector2(0, -8)
+		var sz := font.get_string_size(note, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+		var o := anchor - Vector2(sz.x * 0.5, 0)
+		draw_string(font, o + Vector2(1, 1), note, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+			Color(0, 0, 0, 0.6))
+		draw_string(font, o, note, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, note_color)
 
 
 func _draw_placeable_preview() -> void:

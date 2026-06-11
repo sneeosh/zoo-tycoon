@@ -188,18 +188,23 @@ func on_tick(agent: Agent) -> void:
 
 
 func on_despawn(agent: Agent) -> void:
-	# Reputation impact: a happy visitor tells their friends (+1), a
-	# frustrated one writes a bad review (-1), an in-between one is
-	# forgettable (0). We use the satisfaction snapshot captured at
-	# departure-decision time, not the moment of despawn, because hunger
-	# decay during the walk to the exit would unfairly penalize visitors
-	# who had a great visit but got peckish on the way home.
-	# The guest's review is their recency-weighted mood on the way out.
+	# The guest's review is their recency-weighted mood on the way out —
+	# captured during the visit, not at the exit door, because needs keep
+	# decaying on the walk out and would poison an otherwise-good review.
+	# Departures feed the daily verdict that reputation drifts toward (see
+	# ## Reputation in scenario.md); ZooBootstrap classifies happy/unhappy
+	# against the tuned thresholds and settles the rating at day end.
+	# We also report the guest's most-depleted need so the HUD can say WHY
+	# the crowd is leaving sour ("12 left thirsty → place drink stands").
 	var rating: float = float(agent.behavior_state.get(MOOD, agent.satisfaction))
-	if rating >= 0.68:
-		ProgressionManager.add_reputation(1)
-	elif rating < 0.42:
-		ProgressionManager.add_reputation(-1)
+	var dominant: StringName = &""
+	var lowest: float = 0.5   # only report needs that were genuinely pressing
+	for need_id in agent.need_levels.keys():
+		var lvl: float = float(agent.need_levels[need_id])
+		if lvl < lowest:
+			lowest = lvl
+			dominant = need_id
+	ZooBootstrap.record_departure(rating, dominant, agent.position)
 
 
 # ---------------------------------------------------------------------------

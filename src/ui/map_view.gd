@@ -55,13 +55,16 @@ var _hovering: bool = false
 # Mouse button currently held for drag-paint (LEFT/RIGHT); 0 = nothing held.
 var _drag_button: int = 0
 
-# Floating "+$N" toasts spawned by ZooBootstrap.money_floated. Each entry is
-# {amount: int, world_pos: Vector2, born_at: float}. We tick them in _process
-# and drop them after their lifetime expires.
+# Floating toasts: "+$N" from ZooBootstrap.money_floated, plus a departure
+# verdict glyph at the gate when a guest leaves happy/unhappy (the visible
+# tick of the reputation meter). Each entry is {text, color, world_pos,
+# born_at}; ticked in _process and dropped after their lifetime expires.
 var _money_floats: Array = []
 const FLOAT_LIFETIME: float = 1.4
 const FLOAT_RISE_PX: float = 28.0
 const FLOAT_LIMIT: int = 40           # cap so a fast 4× day doesn't pile up
+const VERDICT_HAPPY_COLOR := Color(0.51, 0.78, 0.47)
+const VERDICT_UNHAPPY_COLOR := Color(0.91, 0.42, 0.34)
 
 
 # Force the hover state from outside — used by the harness so scripted
@@ -89,6 +92,7 @@ func _ready() -> void:
 	clip_contents = true
 	_visitor_sprite = _load_sprite_optional("visitor")
 	ZooBootstrap.money_floated.connect(_on_money_floated)
+	ZooBootstrap.guest_departed.connect(_on_guest_departed)
 	# Static layers (ground, lawn texture, parkland foliage, grid, vignette)
 	# live in a child Control that only redraws on world changes. Drops the
 	# heavy 576-cell loops out of the 60-fps redraw path.
@@ -128,10 +132,24 @@ func _process(_delta: float) -> void:
 
 
 func _on_money_floated(amount: int, world_pos: Vector2) -> void:
+	_push_float("+$%d" % amount, Color(0.96, 0.83, 0.37), world_pos)
+
+
+# A guest left: float their verdict at the gate so reputation has a visible
+# heartbeat. Forgettable departures (verdict 0) stay silent.
+func _on_guest_departed(verdict: int, world_pos: Vector2) -> void:
+	if verdict > 0:
+		_push_float("☺", VERDICT_HAPPY_COLOR, world_pos)
+	elif verdict < 0:
+		_push_float("☹", VERDICT_UNHAPPY_COLOR, world_pos)
+
+
+func _push_float(text: String, color: Color, world_pos: Vector2) -> void:
 	if _money_floats.size() >= FLOAT_LIMIT:
 		_money_floats.pop_front()
 	_money_floats.append({
-		"amount": amount,
+		"text": text,
+		"color": color,
 		"world_pos": world_pos,
 		"born_at": Time.get_ticks_msec() / 1000.0,
 	})
@@ -162,16 +180,17 @@ func _draw_money_floats() -> void:
 		var rise: float = lerpf(0.0, FLOAT_RISE_PX, t)
 		var base := _world_to_screen(entry["world_pos"])
 		var screen_pos := Vector2(base.x, base.y - 12.0 - rise)
-		var text := "+$%d" % int(entry["amount"])
+		var text: String = entry["text"]
+		var color: Color = entry["color"]
 		var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 		var origin := screen_pos - Vector2(sz.x * 0.5, 0)
-		# Black shadow then bright gold text for legibility on any background.
+		# Black shadow then bright text for legibility on any background.
 		draw_string(font, origin + Vector2(1, 1), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(0, 0, 0, 0.55 * alpha))
 		draw_string(font, origin, text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
-			Color(0.96, 0.83, 0.37, alpha))
+			Color(color.r, color.g, color.b, alpha))
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -529,11 +548,14 @@ func _draw_entrance_gate() -> void:
 # ---------------------------------------------------------------------------
 
 func _draw_visitors() -> void:
-	for agent_id in AgentPool.get_agents_by_type(&"visitor"):
-		var ag: Agent = AgentPool.get_agent(agent_id)
-		if ag == null or not ag.alive:
-			continue
-		_draw_one_visitor(ag)
+	# All guest archetypes, not just the adult "visitor" type — child /
+	# family / enthusiast guests were invisible in this view.
+	for guest_type in ZooBootstrap.GUEST_TYPES:
+		for agent_id in AgentPool.get_agents_by_type(guest_type):
+			var ag: Agent = AgentPool.get_agent(agent_id)
+			if ag == null or not ag.alive:
+				continue
+			_draw_one_visitor(ag)
 
 
 func _draw_one_visitor(ag: Agent) -> void:
@@ -691,6 +713,18 @@ func _draw_preview() -> void:
 		col.a = 0.45
 	draw_rect(rect.grow(-3), col, true)
 	draw_rect(rect.grow(-3), Color(1, 1, 1, 0.7), false, 1.5)
+	# Zone tiles: say whether this click extends an existing exhibit or
+	# starts a new one — a diagonal "looks adjacent" tile silently creating
+	# an orphan region was a real-money trap.
+	if def.zone_kind != &"" and can_afford and not collides:
+		var merge := zone_merge_region(_hover_cell, def)
+		var note := "+ Exhibit #%d" % merge.region_id if merge != null else "new exhibit"
+		var note_color := Color(0.55, 0.85, 0.95) if merge != null else Color(0.96, 0.83, 0.37)
+		var font := get_theme_default_font()
+		var origin := rect.position + Vector2(2, -6)
+		draw_string(font, origin + Vector2(1, 1), note,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0, 0, 0, 0.6))
+		draw_string(font, origin, note, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, note_color)
 
 
 func _draw_placeable_preview() -> void:
@@ -798,13 +832,16 @@ func _draw_inspector_card() -> void:
 
 func _inspect_visitor_at(local_pos: Vector2) -> Array[String]:
 	var hit_id: int = 0
-	for agent_id in AgentPool.get_agents_by_type(&"visitor"):
-		var ag: Agent = AgentPool.get_agent(agent_id)
-		if ag == null or not ag.alive:
-			continue
-		var pos := _world_to_screen(ag.position)
-		if pos.distance_to(local_pos) <= VISITOR_HIT_RADIUS_PX:
-			hit_id = agent_id
+	for guest_type in ZooBootstrap.GUEST_TYPES:
+		for agent_id in AgentPool.get_agents_by_type(guest_type):
+			var ag: Agent = AgentPool.get_agent(agent_id)
+			if ag == null or not ag.alive:
+				continue
+			var pos := _world_to_screen(ag.position)
+			if pos.distance_to(local_pos) <= VISITOR_HIT_RADIUS_PX:
+				hit_id = agent_id
+				break
+		if hit_id != 0:
 			break
 	if hit_id == 0:
 		return []

@@ -53,6 +53,7 @@ var _day_label: Label
 var _quality_label: Label
 var _reputation_label: Label
 var _agents_label: Label
+var _needs_label: Label
 var _weather_label: Label
 var _yesterday_label: Label
 var _fps_label: Label
@@ -73,6 +74,7 @@ var _reports_body: VBoxContainer
 var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
 var _welcome_btn_row: HBoxContainer
+var _welcome_controls_label: Label
 var _welcome_difficulty_label: Label
 var _welcome_difficulty_row: HBoxContainer
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
@@ -120,6 +122,19 @@ var _moving_index: int = -1
 # answered (Open or Not Yet) so we never nag again.
 var _park_open_prompted: bool = false
 var _open_park_dialog: ConfirmationDialog
+
+# One-shot coaching: the first day the guest verdict comes back negative we
+# explain the reputation mechanic and name the most-failed need. Without this
+# a new player watches cash climb while a stat they were never taught sinks
+# the run (the 2026-06-09 playtest's headline finding).
+var _rep_coached: bool = false
+# Which amenity fixes which need — used by the coaching line and needs strip.
+const NEED_FIX := {
+	&"hunger":   {"label": "hungry", "amenity": "Food Stand"},
+	&"thirst":   {"label": "thirsty", "amenity": "Drink Stand"},
+	&"restroom": {"label": "queueing for restrooms", "amenity": "Restroom"},
+	&"energy":   {"label": "exhausted", "amenity": "Bench"},
+}
 
 # Tutorial state — set by _start_tutorial. The overlay's only visible while
 # active. Each step has its own advance condition checked via engine signals.
@@ -305,6 +320,51 @@ func _refresh_region_panel() -> void:
 
 	_region_panel_body.add_child(HSeparator.new())
 
+	# Add Placeable section — grouped the way you author a ZT1 exhibit:
+	# animals, then the habitat dressing they react to, then care items.
+	# Greyed-out buttons surface the can_add_placement reason in the tooltip.
+	# ADD comes BEFORE the INSIDE list: each purchase appends an INSIDE row,
+	# and when those rows sat above the buy buttons every purchase shifted
+	# the buttons mid-double-click (playtest misclick trap).
+	var groups := {"ANIMALS": [], "PLANTS & ROCKS": [], "SHELTER & TOYS": [],
+		"INFRASTRUCTURE": []}
+	for def_id in ContentDB.placeable_defs.keys():
+		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+		var group := "INFRASTRUCTURE"
+		if not def.appeal_contribution.is_empty():
+			group = "ANIMALS"
+		elif &"foliage" in def.own_tags or &"rock_item" in def.own_tags:
+			group = "PLANTS & ROCKS"
+		elif &"shelter" in def.own_tags or &"enrichment" in def.own_tags:
+			group = "SHELTER & TOYS"
+		groups[group].append(def_id)
+	for group_name in ["ANIMALS", "PLANTS & ROCKS", "SHELTER & TOYS", "INFRASTRUCTURE"]:
+		if groups[group_name].is_empty():
+			continue
+		var add_header := Label.new()
+		add_header.text = "ADD — %s" % group_name
+		add_header.add_theme_font_size_override("font_size", 12)
+		add_header.add_theme_color_override("font_color", Color("#97a387"))
+		_region_panel_body.add_child(add_header)
+		for def_id in groups[group_name]:
+			var def: PlaceableDef = ContentDB.placeable_defs[def_id]
+			var check := RegionRegistry.can_add_placement(_selected_region_id, def_id)
+			var btn := Button.new()
+			btn.text = "+  %s  $%d" % [def.display_name, def.build_cost]
+			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			btn.custom_minimum_size = Vector2(0, 32)
+			btn.focus_mode = Control.FOCUS_NONE
+			if not check["ok"]:
+				btn.disabled = true
+				btn.tooltip_text = check["reason"]
+			else:
+				btn.tooltip_text = "%s  ·  upkeep $%d/day" % [
+					def.display_name, def.maintenance_cost]
+				btn.pressed.connect(_on_add_placement.bind(_selected_region_id, def_id))
+			_region_panel_body.add_child(btn)
+
+	_region_panel_body.add_child(HSeparator.new())
+
 	# Placements list with remove buttons + happiness bars.
 	var placements_header := Label.new()
 	placements_header.text = "INSIDE  (%d)" % region.placements.size()
@@ -359,48 +419,6 @@ func _refresh_region_panel() -> void:
 		rm.focus_mode = Control.FOCUS_NONE
 		rm.pressed.connect(_on_remove_placement.bind(_selected_region_id, i))
 		row.add_child(rm)
-
-	_region_panel_body.add_child(HSeparator.new())
-
-	# Add Placeable section — grouped the way you author a ZT1 exhibit:
-	# animals, then the habitat dressing they react to, then care items.
-	# Greyed-out buttons surface the can_add_placement reason in the tooltip.
-	var groups := {"ANIMALS": [], "PLANTS & ROCKS": [], "SHELTER & TOYS": [],
-		"INFRASTRUCTURE": []}
-	for def_id in ContentDB.placeable_defs.keys():
-		var def: PlaceableDef = ContentDB.placeable_defs[def_id]
-		var group := "INFRASTRUCTURE"
-		if not def.appeal_contribution.is_empty():
-			group = "ANIMALS"
-		elif &"foliage" in def.own_tags or &"rock_item" in def.own_tags:
-			group = "PLANTS & ROCKS"
-		elif &"shelter" in def.own_tags or &"enrichment" in def.own_tags:
-			group = "SHELTER & TOYS"
-		groups[group].append(def_id)
-	for group_name in ["ANIMALS", "PLANTS & ROCKS", "SHELTER & TOYS", "INFRASTRUCTURE"]:
-		if groups[group_name].is_empty():
-			continue
-		var add_header := Label.new()
-		add_header.text = "ADD — %s" % group_name
-		add_header.add_theme_font_size_override("font_size", 12)
-		add_header.add_theme_color_override("font_color", Color("#97a387"))
-		_region_panel_body.add_child(add_header)
-		for def_id in groups[group_name]:
-			var def: PlaceableDef = ContentDB.placeable_defs[def_id]
-			var check := RegionRegistry.can_add_placement(_selected_region_id, def_id)
-			var btn := Button.new()
-			btn.text = "+  %s  $%d" % [def.display_name, def.build_cost]
-			btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			btn.custom_minimum_size = Vector2(0, 32)
-			btn.focus_mode = Control.FOCUS_NONE
-			if not check["ok"]:
-				btn.disabled = true
-				btn.tooltip_text = check["reason"]
-			else:
-				btn.tooltip_text = "%s  ·  upkeep $%d/day" % [
-					def.display_name, def.maintenance_cost]
-				btn.pressed.connect(_on_add_placement.bind(_selected_region_id, def_id))
-			_region_panel_body.add_child(btn)
 
 	# Close button at the bottom.
 	_region_panel_body.add_child(HSeparator.new())
@@ -575,6 +593,21 @@ func _build_welcome_modal(parent: Control) -> void:
 			lbl.add_theme_color_override("font_color", Color("#dde4cf"))
 		col.add_child(lbl)
 
+	# Controls reference — shown by the in-game "?" button (help mode) where
+	# a returning player actually needs it; hidden on first launch to keep
+	# the welcome card focused.
+	_welcome_controls_label = Label.new()
+	_welcome_controls_label.text = (
+		"Controls\n" +
+		"  L-click — place / select exhibit        R-click — sell (½ refund)\n" +
+		"  Esc — cancel selection                P — pause\n" +
+		"  Mouse wheel — zoom (iso)             Middle-drag / WASD — pan (iso)\n" +
+		"  Click the entrance gate for tickets, staff & marketing.")
+	_welcome_controls_label.add_theme_font_size_override("font_size", 12)
+	_welcome_controls_label.add_theme_color_override("font_color", Color("#bccaa8"))
+	_welcome_controls_label.visible = false
+	col.add_child(_welcome_controls_label)
+
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
@@ -682,7 +715,8 @@ func _build_endgame_modal(parent: Control) -> void:
 	_endgame_body.add_child(_endgame_title)
 
 
-func _endgame_show(won: bool, headline: String, body: String) -> void:
+func _endgame_show(won: bool, headline: String, body: String,
+		results: Array = []) -> void:
 	# Clear any prior body content beyond the title.
 	for child in _endgame_body.get_children():
 		if child != _endgame_title:
@@ -699,6 +733,18 @@ func _endgame_show(won: bool, headline: String, body: String) -> void:
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_endgame_body.add_child(body_label)
+
+	# Per-axis scoreboard: ✓/✗ per mission target so a split result reads as
+	# "you crushed cash, reputation is what to fix next run".
+	for r in results:
+		var row := Label.new()
+		var met: bool = r["met"]
+		row.text = "%s  %s:  %s" % ["✓" if met else "✗", r["label"], r["text"]]
+		row.add_theme_font_size_override("font_size", 15)
+		row.add_theme_color_override("font_color",
+			Color("#83c779") if met else Color("#e76f51"))
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_endgame_body.add_child(row)
 
 	# Summary stats so the player can read the run at a glance.
 	var summary := Label.new()
@@ -1309,20 +1355,27 @@ func _toggle_park_open() -> void:
 
 const TUTORIAL_STEPS: Array = [
 	{
-		"title": "Step 1 of 4 — Build an exhibit",
+		"title": "Step 1 of 5 — Build an exhibit",
 		"body": "Click [color=#f4d35e]Grass Enclosure[/color] in the BUILD panel on the left, then click the map [color=#f4d35e]two or three times[/color] in a row to lay down tiles. Adjacent tiles merge into one exhibit automatically.",
 	},
 	{
-		"title": "Step 2 of 4 — Add an animal",
+		"title": "Step 2 of 5 — Add an animal",
 		"body": "[color=#f4d35e]Click the green tiles[/color] you just placed to open the Manage Exhibit panel on the right. Then click [color=#f4d35e]+ Lion[/color] in the ADD section.",
 	},
 	{
-		"title": "Step 3 of 4 — Lay a path",
+		"title": "Step 3 of 5 — Lay a path",
 		"body": "Click [color=#f4d35e]Path[/color] under PATHS, then click a line of tiles from the [color=#f4d35e]entrance gate[/color] out toward your exhibit. Guests walk the paths you build — an exhibit with a path within view draws a crowd.",
 	},
 	{
-		"title": "Step 4 of 4 — Speed time, watch them pay",
+		"title": "Step 4 of 5 — Speed time, watch them pay",
 		"body": "Click [color=#f4d35e]4x[/color] at the top right. Guests will walk in along your path and pay — watch for the [color=#f4d35e]+$[/color] floats above their heads.",
+	},
+	{
+		# The step that wins or loses the scenario. Money is the easy half;
+		# reputation — fed by happy departures, starved by unmet needs — is
+		# the binding constraint (playtest 2026-06-09 headline finding).
+		"title": "Step 5 of 5 — Serve the crowd",
+		"body": "Guests have needs — the [color=#e27d60]H[/color]/[color=#5aa9e6]T[/color]/[color=#41b3a3]R[/color]/[color=#c9a4ff]Z[/color] bubbles mean hungry, thirsty, restroom, tired. Guests who leave with unmet needs [color=#e76f51]drag your reputation down[/color] — and reputation is half your mission. Place a [color=#f4d35e]Drink Stand[/color] and a [color=#f4d35e]Restroom[/color] beside your path.",
 	},
 ]
 
@@ -1446,6 +1499,20 @@ func _check_tutorial_advance() -> void:
 			if Ledger.get_balance() >= _tutorial_step3_floor + 10:
 				_advance_tutorial()
 				return
+		4:
+			# Done when the park serves both thirst and restrooms — the two
+			# needs that crater reputation fastest on a fresh park.
+			var has_drink := false
+			var has_restroom := false
+			for inst_id in EntityRegistry.instances.keys():
+				var inst: EntityInstance = EntityRegistry.instances[inst_id]
+				if inst.entity_def_id == &"drink_stand":
+					has_drink = true
+				elif inst.entity_def_id == &"restroom":
+					has_restroom = true
+			if has_drink and has_restroom:
+				_advance_tutorial()
+				return
 
 
 func _advance_tutorial() -> void:
@@ -1462,7 +1529,11 @@ func _end_tutorial(completed: bool) -> void:
 	if _tutorial_overlay != null:
 		_tutorial_overlay.visible = false
 	if completed:
-		_push_log("[color=#f4d35e]★ Tutorial complete. Keep building — you're aiming for $20k and 50 rep in 30 days.[/color]")
+		var s: Scenario = ZooBootstrap.scenario
+		_push_log(("[color=#f4d35e]★ Tutorial complete.[/color] Keep building — " +
+			"you're aiming for $%s cash and %d reputation in %d days. Happy " +
+			"departures raise reputation; unmet needs sink it.") % [
+			_format_thousands(s.target_cash), s.target_reputation, s.days_limit])
 	else:
 		_push_log("[color=#7e9286]Tutorial skipped.[/color]")
 
@@ -1500,6 +1571,9 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 	# Difficulty selector — only on first launch (not the "?" help re-open).
 	_welcome_difficulty_label.visible = initial_launch
 	_welcome_difficulty_row.visible = initial_launch
+	# Controls reference — only in help mode (the "?" button).
+	if _welcome_controls_label != null:
+		_welcome_controls_label.visible = not initial_launch
 	for child in _welcome_difficulty_row.get_children():
 		child.queue_free()
 	_welcome_difficulty_buttons.clear()
@@ -1724,23 +1798,47 @@ func _check_endgame(settled_day: int) -> void:
 	if cash >= s.target_cash and rep >= s.target_reputation:
 		_resolve_endgame(true, "Zoo of the Year!",
 			"You hit $%s and %d reputation by the end of day %d. The zoo is a success!" % [
-				_format_thousands(cash), rep, settled_day + 1])
+				_format_thousands(cash), rep, settled_day + 1],
+			_mission_results(cash, rep, s))
 		return
-	# Timeout: 30 days elapsed without meeting the target.
+	# Timeout: the day limit elapsed without meeting the target. Per-axis
+	# results below tell the player which half they actually missed — lumping
+	# them ("short of the $20k / 50 goal" when cash finished OVER target)
+	# reads as the game gaslighting the player.
 	if settled_day + 1 >= s.days_limit:
+		var cash_met := cash >= s.target_cash
+		var rep_met := rep >= s.target_reputation
+		var coaching: String
+		if cash_met and not rep_met:
+			coaching = "The books are strong — the guests weren't charmed. Watch the need bubbles and the daily guest verdict: happy departures are what move reputation."
+		elif rep_met and not cash_met:
+			coaching = "The guests love you — the books didn't keep up. Nudge ticket prices up at the gate, book arena shows, and add donation boxes at your best exhibits."
+		else:
+			coaching = "Both targets slipped. Start small: one great exhibit, paths to it, and enough food, drink, restrooms and benches to keep the crowd smiling."
 		_resolve_endgame(false, "Time's up",
-			"Day %d closed at $%s cash and %d reputation — short of the $%s / %d goal. Closer next run!" % [
-				settled_day + 1, _format_thousands(cash), rep,
-				_format_thousands(s.target_cash), s.target_reputation])
+			"Day %d closed. %s" % [settled_day + 1, coaching],
+			_mission_results(cash, rep, s))
 		return
 
 
-func _resolve_endgame(won: bool, headline: String, body: String) -> void:
+# Per-axis scoreboard rows for the end screen: label, value vs target, met?
+func _mission_results(cash: int, rep: int, s: Scenario) -> Array:
+	return [
+		{"label": "Cash", "text": "$%s / $%s" % [
+			_format_thousands(cash), _format_thousands(s.target_cash)],
+			"met": cash >= s.target_cash},
+		{"label": "Reputation", "text": "%+d / %d" % [rep, s.target_reputation],
+			"met": rep >= s.target_reputation},
+	]
+
+
+func _resolve_endgame(won: bool, headline: String, body: String,
+		results: Array = []) -> void:
 	_endgame_resolved = true
 	SimClock.pause()
 	_refresh_speed_buttons()
 	if _endgame_modal != null:
-		_endgame_show(won, headline, body)
+		_endgame_show(won, headline, body, results)
 	# Log line so the event log carries the outcome too.
 	var color := "#83c779" if won else "#e76f51"
 	_push_log("[color=%s][b]%s[/b][/color] %s" % [color, headline, body])
@@ -2221,18 +2319,40 @@ func _build_top_bar(parent: Control) -> void:
 
 	_money_label = _stat("$0", 22, Color("#8ce05a"))
 	_day_label = _stat("Day 1", 16, Color("#efeadb"))
-	_quality_label = _stat("0.0★", 16, Color("#f4d35e"))
+	_quality_label = _stat("Appeal 0.0★", 16, Color("#f4d35e"))
 	_reputation_label = _stat("Rep 0", 16, Color("#c9a4ff"))
 	_agents_label = _stat("0 guests", 16, Color("#bccaa8"))
+	_needs_label = _stat("", 13, Color("#f4a261"))
 	_weather_label = _stat("", 14, Color("#bccaa8"))
 	_yesterday_label = _stat("", 12, Color("#97a387"))
 	_fps_label = _stat("", 11, Color("#7c8a6e"))
+	# Fixed min widths so the right-hand button cluster doesn't drift as the
+	# stat text widths change (playtest: Save moved ~50px between clicks).
+	_money_label.custom_minimum_size = Vector2(96, 0)
+	_day_label.custom_minimum_size = Vector2(150, 0)
+	_quality_label.custom_minimum_size = Vector2(110, 0)
+	_reputation_label.custom_minimum_size = Vector2(110, 0)
+	_agents_label.custom_minimum_size = Vector2(80, 0)
+	_needs_label.custom_minimum_size = Vector2(120, 0)
+	_yesterday_label.custom_minimum_size = Vector2(190, 0)
+	# Tooltips decode the two stats playtesters couldn't (the unlabeled star
+	# and the win-bar half nobody is taught). PASS keeps clicks flowing.
+	_quality_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_quality_label.tooltip_text = "Average exhibit appeal — drives how many guests arrive."
+	_reputation_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_reputation_label.tooltip_text = (
+		"Your zoo's rating — half the mission. Each day it drifts toward the\n" +
+		"guests' verdict: happy departures pull it up, unhappy ones down.\n" +
+		"Serve the H/T/R/Z need bubbles to keep departures happy.")
+	_needs_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_needs_label.tooltip_text = "Guests with an urgent unmet need right now — build the matching amenity."
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
 	row.add_child(_quality_label)
 	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
+	row.add_child(_needs_label)
 	row.add_child(_v_sep())
 	row.add_child(_weather_label)
 	row.add_child(_v_sep())
@@ -2479,7 +2599,7 @@ func _build_left_panel(parent: Control) -> void:
 	col.add_child(HSeparator.new())
 
 	var hint := Label.new()
-	hint.text = "L-click map: place / select exhibit\nR-click map: sell (½ refund)\nEsc: clear selection\nP: toggle pause"
+	hint.text = "L-click map: place / select exhibit\nR-click map: sell (½ refund)\nEsc: clear selection\nP: toggle pause\nWheel: zoom · MMB / WASD: pan (iso)"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(hint)
@@ -2579,6 +2699,7 @@ func _wire_engine_signals() -> void:
 			_refresh_region_panel())
 	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
 	ZooBootstrap.animal_born.connect(_on_animal_born)
+	ZooBootstrap.reputation_settled.connect(_on_reputation_settled)
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
@@ -2628,13 +2749,22 @@ func _stage_starter_park() -> void:
 
 	# --- Amenities, each adjacent to the concourse so guests reach them.
 	# The starter park covers all four guest needs (food / drink / restroom /
-	# rest) so a first-time player sees a contented crowd before they learn
-	# to balance them. ---
+	# rest) at a density sized for the ~40–50 guest crowd this park actually
+	# pulls by day 6 — not one-of-each. The 2026-06-09 playtest measured the
+	# one-of-each layout leaving 27/47 guests thirsty, and the resulting
+	# unhappy departures sank reputation unrecoverably. Doing nothing should
+	# be a slow drift, not a death spiral; thirst gets the most capacity
+	# because drink demand peaks first. ---
 	EntityRegistry.place(&"food_stand",  Vector2i(13, 11))  # touches (13,10)/(14,10)
+	EntityRegistry.place(&"food_stand",  Vector2i(1, 8))    # 2nd food, gate end; touches (1,10)/(2,10) via (1,9)/(2,9)
 	EntityRegistry.place(&"drink_stand", Vector2i(11, 11))  # touches (11,10)
+	EntityRegistry.place(&"drink_stand", Vector2i(6, 9))    # mid-concourse, touches (6,10)
+	EntityRegistry.place(&"drink_stand", Vector2i(9, 11))   # touches (9,10)
 	EntityRegistry.place(&"restroom",    Vector2i(4, 11))   # touches (4,10)
 	EntityRegistry.place(&"restroom",    Vector2i(8, 11))   # 2nd restroom (spillover bottleneck)
 	EntityRegistry.place(&"bench",       Vector2i(2, 11))   # touches (2,10)
+	EntityRegistry.place(&"bench",       Vector2i(12, 11))  # touches (12,10)
+	EntityRegistry.place(&"bench",       Vector2i(3, 9))    # touches (3,10)
 
 	# --- Lion + its infrastructure. ---
 	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 7))
@@ -2681,12 +2811,15 @@ func _refresh_hud() -> void:
 	var clock_icon := "☀" if ZooBootstrap.is_within_open_hours() else "🌙"
 	_day_label.text = "Day %d  ·  %02d:%02d %s" % [
 		SimClock.current_day + 1, mins / 60, mins % 60, clock_icon]
-	_quality_label.text = "%.1f★" % quality
+	_quality_label.text = "Appeal %.1f★" % quality
 	var rep := ProgressionManager.reputation
 	var rep_color := Color("#c9a4ff") if rep >= 0 else Color("#e76f51")
-	_reputation_label.text = "Rep %+d" % rep
+	var rep_target: int = ZooBootstrap.scenario.target_reputation \
+		if ZooBootstrap.scenario != null else 0
+	_reputation_label.text = "Rep %+d / %d" % [rep, rep_target]
 	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	_refresh_needs_strip()
 	if _weather_label != null and ZooBootstrap.weather_cfg != null:
 		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(ZooBootstrap.current_weather)
 		var season: Dictionary = ZooBootstrap.current_season()
@@ -2701,6 +2834,44 @@ func _refresh_hud() -> void:
 	_refresh_mission()
 	_refresh_build_locks()
 	_recompute_path_access()
+
+
+# Park-wide unmet-need counter — converts the invisible churn ("lots of
+# bubbles") into one actionable line: "12 thirsty · 4 hungry". A need counts
+# when it's a guest's lowest and urgent (same 0.4 bar the bubbles use), so
+# this is the HUD sum of what the crowd is showing. Empty when all's well.
+const NEEDS_STRIP_URGENT: float = 0.4
+
+func _refresh_needs_strip() -> void:
+	if _needs_label == null:
+		return
+	var counts := {}
+	for guest_type in ZooBootstrap.GUEST_TYPES:
+		for agent_id in AgentPool.get_agents_by_type(guest_type):
+			var ag: Agent = AgentPool.get_agent(agent_id)
+			if ag == null or not ag.alive:
+				continue
+			var worst: StringName = &""
+			var lowest: float = NEEDS_STRIP_URGENT
+			for need_id in ag.need_levels.keys():
+				var lvl: float = float(ag.need_levels[need_id])
+				if lvl < lowest:
+					lowest = lvl
+					worst = need_id
+			if worst != &"":
+				counts[worst] = int(counts.get(worst, 0)) + 1
+	if counts.is_empty():
+		_needs_label.text = ""
+		return
+	# Show the top two, worst first.
+	var ordered: Array = counts.keys()
+	ordered.sort_custom(func(a, b): return int(counts[a]) > int(counts[b]))
+	var bits: Array[String] = []
+	for i in mini(2, ordered.size()):
+		var nid: StringName = ordered[i]
+		var label: String = NEED_FIX[nid]["label"] if NEED_FIX.has(nid) else String(nid)
+		bits.append("%d %s" % [int(counts[nid]), label])
+	_needs_label.text = "⚠ " + " · ".join(bits)
 
 
 # Find populated exhibits that no gate-reachable path cell can see. Only
@@ -3160,6 +3331,30 @@ func _on_day_settled(day: int, income: int, expense: int) -> void:
 	_push_log("[b]Day %d closed.[/b] [color=%s]Net $%d[/color]  (+$%d / −$%d)" %
 		[day + 1, color, net, income, expense])
 	_check_endgame(day)
+
+
+# The day's guest verdict, narrated so the reputation mechanic is legible:
+# what the crowd thought, and which way the rating moved because of it.
+func _on_reputation_settled(score: int, happy: int, unhappy: int,
+		total: int, old_rep: int, new_rep: int) -> void:
+	if total == 0:
+		return
+	var arrow := "▲" if new_rep > old_rep else ("▼" if new_rep < old_rep else "—")
+	var color := "#83c779" if new_rep > old_rep \
+		else ("#e76f51" if new_rep < old_rep else "#bccaa8")
+	_push_log("[color=%s]%s Guest verdict: %d happy / %d unhappy of %d → reputation %+d → %+d[/color]" %
+		[color, arrow, happy, unhappy, total, old_rep, new_rep])
+	# First negative verdict: teach the binding constraint, and name the fix.
+	if score < 0 and not _rep_coached:
+		_rep_coached = true
+		var need := ZooBootstrap.top_unhappy_need()
+		var why := ""
+		if NEED_FIX.has(need):
+			why = " Most left %s — place a %s beside a path." % [
+				NEED_FIX[need]["label"], NEED_FIX[need]["amenity"]]
+		_push_log(("[color=#f4d35e][b]⚠ Guests are leaving unhappy and your " +
+			"reputation is sinking.[/b][/color] Unmet needs (the H/T/R/Z bubbles) " +
+			"drive bad reviews; reputation is half your mission.%s") % why)
 
 
 func _on_entity_placed(inst_id: int) -> void:
