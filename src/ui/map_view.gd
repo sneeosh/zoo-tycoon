@@ -9,16 +9,19 @@ class_name MapView
 # The build/place/remove signals, preview_def_id, entity_colors, and
 # disconnected_regions live on BaseMapView (shared with the iso view).
 
-const TILE_SIZE: int = 36
+# Tile size adapts to the plot: full 36px when the plot fits the view (the
+# classic look on the default 32x18 land), shrinking on bigger plots so the
+# whole buildable grid stays on screen (this view has no camera).
+const MAX_TILE_PX: int = 36
+const MIN_TILE_PX: int = 10
 const GRID_ORIGIN: Vector2 = Vector2(28, 28)
-const BUILDABLE_TILES: Vector2i = Vector2i(32, 18)
+var tile_size: int = MAX_TILE_PX
 # Footprints with width below this skip the inline name and show a centred
 # letter instead — full text doesn't fit and clipping looks broken.
 const MIN_TILES_FOR_LABEL: int = 3
 
-# The entrance gate visually anchors visitor spawn/exit at world (0,0).
-# Without it, visitors clustering at one corner reads as a bug.
-const GATE_TILE: Vector2i = Vector2i(0, 17)
+# The entrance gate visually anchors visitor spawn/exit (bottom-left of the
+# active plot). Without it, visitors clustering at one corner reads as a bug.
 const GATE_COLOR: Color = Color("#f4d35e")
 const GATE_POST_COLOR: Color = Color("#e6b32f")
 
@@ -49,6 +52,7 @@ const ARCHETYPE_SPRITE := {
 	&"enthusiast": "visitor",
 }
 
+var _bg: MapBackground
 var _hover_cell: Vector2i = Vector2i.ZERO
 var _hover_pos: Vector2 = Vector2.ZERO
 var _hovering: bool = false
@@ -96,13 +100,13 @@ func _ready() -> void:
 	# Static layers (ground, lawn texture, parkland foliage, grid, vignette)
 	# live in a child Control that only redraws on world changes. Drops the
 	# heavy 576-cell loops out of the 60-fps redraw path.
-	var bg := MapBackground.new()
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bg = MapBackground.new()
+	_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# CanvasItem children draw on top of the parent by default — we want the
 	# background to sit *behind* MapView's foreground (entities, visitors,
 	# floats), so flip show_behind_parent.
-	bg.show_behind_parent = true
-	add_child(bg)
+	_bg.show_behind_parent = true
+	add_child(_bg)
 	_shadow_box = StyleBoxFlat.new()
 	_shadow_box.bg_color = Color(0, 0, 0, 0.35)
 	_shadow_box.corner_radius_top_left = 6
@@ -227,7 +231,24 @@ func _notification(what: int) -> void:
 		_hovering = false
 
 
+# Fit the active plot into the available rect, capped at the classic 36px.
+# Cheap arithmetic, so it runs at the top of every _draw; pushing the result
+# into the static background child only when it actually changes keeps that
+# child's redraws rare.
+func _update_tile_size() -> void:
+	var plot := ZooBootstrap.plot_size()
+	var avail := size - GRID_ORIGIN * 2.0
+	var fit := int(floor(minf(avail.x / float(plot.x), avail.y / float(plot.y))))
+	var t := clampi(fit, MIN_TILE_PX, MAX_TILE_PX)
+	if t != tile_size:
+		tile_size = t
+		if _bg != null:
+			_bg.tile_size = t
+			_bg.queue_redraw()
+
+
 func _draw() -> void:
+	_update_tile_size()
 	# Static layers (ground, grass, foliage, region auras, grid, vignette)
 	# are drawn by the MapBackground child Control; they re-render only on
 	# world events, not every frame.
@@ -275,21 +296,21 @@ func _draw_placements() -> void:
 			var wander := Vector2.ZERO
 			if not def.appeal_contribution.is_empty():
 				var phase := float(region.region_id) * 1.7 + float(i) * 0.91
-				var radius := float(TILE_SIZE) * 0.30
+				var radius := float(tile_size) * 0.30
 				wander = Vector2(
 					sin(t * 0.65 + phase) * radius,
 					cos(t * 0.48 + phase * 1.3) * radius)
 			var sprite := _load_sprite_optional(String(def.sprite_key))
 			var anchor_screen := _cell_to_screen(anchor)
-			var sprite_size: float = float(TILE_SIZE) * 1.1  # slight overflow ok
+			var sprite_size: float = float(tile_size) * 1.1  # slight overflow ok
 			var rect := Rect2(
 				anchor_screen + Vector2(
-					(TILE_SIZE - sprite_size) * 0.5,
-					(TILE_SIZE - sprite_size) * 0.5) + wander,
+					(tile_size - sprite_size) * 0.5,
+					(tile_size - sprite_size) * 0.5) + wander,
 				Vector2(sprite_size, sprite_size))
 			# Shadow stays anchored to the ground; only the sprite hops.
 			draw_circle(
-				anchor_screen + Vector2(TILE_SIZE * 0.5, TILE_SIZE * 0.5 + 3) \
+				anchor_screen + Vector2(tile_size * 0.5, tile_size * 0.5 + 3) \
 					+ Vector2(wander.x, 0.0),
 				sprite_size * 0.45, Color(0, 0, 0, 0.30))
 			if sprite != null:
@@ -326,7 +347,7 @@ func _draw_path_warnings() -> void:
 		for c in region.cells:
 			sum += Vector2(c)
 		var center_cell := sum / float(region.cells.size())
-		var screen := GRID_ORIGIN + (center_cell + Vector2(0.5, 0.5)) * TILE_SIZE
+		var screen := GRID_ORIGIN + (center_cell + Vector2(0.5, 0.5)) * tile_size
 		var glyph := "⚠"
 		var fs := 22
 		var sz := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
@@ -362,27 +383,27 @@ func _draw_paths() -> void:
 	var edge := Color("#8d7c57")
 	for c in cells:
 		var s: Vector2 = _cell_to_screen(c)
-		draw_rect(Rect2(s, Vector2(TILE_SIZE, TILE_SIZE)), fill, true)
+		draw_rect(Rect2(s, Vector2(tile_size, tile_size)), fill, true)
 		# top highlight strip for a touch of depth.
-		draw_rect(Rect2(s, Vector2(TILE_SIZE, 4)), hi, true)
+		draw_rect(Rect2(s, Vector2(tile_size, 4)), hi, true)
 		# deterministic pebble speckle.
 		var hsh := _hash2(c.x, c.y)
 		for k in 4:
 			var hk := hsh ^ (k * 911)
-			var px := s.x + float(hk % TILE_SIZE)
-			var py := s.y + float((hk / 7) % TILE_SIZE)
+			var px := s.x + float(hk % tile_size)
+			var py := s.y + float((hk / 7) % tile_size)
 			draw_circle(Vector2(px, py), 1.0, Color(0.55, 0.50, 0.38, 0.5))
 	# Darker edge where a path cell borders a non-path cell.
 	for c in cells:
 		var s: Vector2 = _cell_to_screen(c)
 		if not cells.has(c + Vector2i(0, -1)):
-			draw_line(s, s + Vector2(TILE_SIZE, 0), edge, 2.0)
+			draw_line(s, s + Vector2(tile_size, 0), edge, 2.0)
 		if not cells.has(c + Vector2i(0, 1)):
-			draw_line(s + Vector2(0, TILE_SIZE), s + Vector2(TILE_SIZE, TILE_SIZE), edge, 2.0)
+			draw_line(s + Vector2(0, tile_size), s + Vector2(tile_size, tile_size), edge, 2.0)
 		if not cells.has(c + Vector2i(-1, 0)):
-			draw_line(s, s + Vector2(0, TILE_SIZE), edge, 2.0)
+			draw_line(s, s + Vector2(0, tile_size), edge, 2.0)
 		if not cells.has(c + Vector2i(1, 0)):
-			draw_line(s + Vector2(TILE_SIZE, 0), s + Vector2(TILE_SIZE, TILE_SIZE), edge, 2.0)
+			draw_line(s + Vector2(tile_size, 0), s + Vector2(tile_size, tile_size), edge, 2.0)
 
 
 func _hash2(a: int, b: int) -> int:
@@ -401,10 +422,10 @@ func _draw_water_shimmer() -> void:
 			var hsh := _hash2(c.x, c.y)
 			for k in 2:
 				var phase: float = t * 0.7 + float(hsh ^ (k * 53)) * 0.001
-				var yy: float = s.y + (0.32 + 0.42 * k) * TILE_SIZE + sin(phase) * 2.0
-				var xoff: float = (sin(phase * 1.3) + 1.0) * 0.5 * (TILE_SIZE * 0.35)
+				var yy: float = s.y + (0.32 + 0.42 * k) * tile_size + sin(phase) * 2.0
+				var xoff: float = (sin(phase * 1.3) + 1.0) * 0.5 * (tile_size * 0.35)
 				var x0: float = s.x + 4.0 + xoff
-				draw_line(Vector2(x0, yy), Vector2(x0 + TILE_SIZE * 0.4, yy),
+				draw_line(Vector2(x0, yy), Vector2(x0 + tile_size * 0.4, yy),
 					Color(1, 1, 1, 0.16), 1.5)
 
 
@@ -425,7 +446,7 @@ func _draw_entities() -> void:
 			var booking := ZooBootstrap.get_booking(inst_id)
 			if not booking.is_empty():
 				var center := _cell_to_screen(inst.position) + Vector2(
-					def.footprint.x * TILE_SIZE * 0.5, -10)
+					def.footprint.x * tile_size * 0.5, -10)
 				draw_string(font, center - Vector2(7, 0),
 					"★", HORIZONTAL_ALIGNMENT_LEFT, -1, 22,
 					Color(0.96, 0.83, 0.37, 0.95))
@@ -434,7 +455,7 @@ func _draw_entities() -> void:
 func _draw_one_entity(inst: EntityInstance, def: EntityDef, font: Font) -> void:
 	var rect := Rect2(
 		_cell_to_screen(inst.position),
-		Vector2(def.footprint) * TILE_SIZE)
+		Vector2(def.footprint) * tile_size)
 	# Drop shadow underneath every entity, sprite or fallback.
 	var shadow_rect := rect.grow(-3).grow(2)
 	shadow_rect.position += Vector2(2, 3)
@@ -508,15 +529,15 @@ func _style_for(def_id: StringName) -> StyleBoxFlat:
 
 func _draw_entrance_gate() -> void:
 	# Sits at world (0,0) where VisitorBehavior spawns and exits.
-	var p := _cell_to_screen(GATE_TILE)
+	var p := _cell_to_screen(ZooBootstrap.gate_cell())
 	var sprite := _load_sprite_optional("entrance_gate")
 	if sprite != null:
 		# Render slightly larger than a single tile so the gate has visual
 		# weight and the "ZOO" sign is readable.
-		var gate_size := Vector2(TILE_SIZE * 1.6, TILE_SIZE * 1.6)
+		var gate_size := Vector2(tile_size * 1.6, tile_size * 1.6)
 		var gate_origin := p + Vector2(
-			(TILE_SIZE - gate_size.x) * 0.5,
-			(TILE_SIZE - gate_size.y) * 0.5)
+			(tile_size - gate_size.x) * 0.5,
+			(tile_size - gate_size.y) * 0.5)
 		# Soft shadow underneath.
 		var shadow_rect := Rect2(gate_origin, gate_size).grow(-3)
 		shadow_rect.position += Vector2(2, 4)
@@ -525,20 +546,20 @@ func _draw_entrance_gate() -> void:
 		return
 	# Fallback: primitive gate (the pre-sprite version).
 	var post_w := 5.0
-	var post_h := TILE_SIZE * 1.4
+	var post_h := tile_size * 1.4
 	draw_rect(Rect2(p + Vector2(-post_w * 0.5, -2), Vector2(post_w, post_h)),
 		GATE_POST_COLOR, true)
-	draw_rect(Rect2(p + Vector2(TILE_SIZE - post_w * 0.5, -2), Vector2(post_w, post_h)),
+	draw_rect(Rect2(p + Vector2(tile_size - post_w * 0.5, -2), Vector2(post_w, post_h)),
 		GATE_POST_COLOR, true)
-	draw_rect(Rect2(p + Vector2(-post_w * 0.5, -2), Vector2(TILE_SIZE + post_w, 5)),
+	draw_rect(Rect2(p + Vector2(-post_w * 0.5, -2), Vector2(tile_size + post_w, 5)),
 		GATE_COLOR, true)
-	draw_rect(Rect2(p, Vector2(TILE_SIZE, TILE_SIZE)),
+	draw_rect(Rect2(p, Vector2(tile_size, tile_size)),
 		Color(1, 1, 1, 0.08), true)
 	var font := get_theme_default_font()
 	var label := "ENTRANCE"
 	var fs := 10
 	var sz := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
-	var label_pos := p + Vector2((TILE_SIZE - sz.x) * 0.5, post_h + 12)
+	var label_pos := p + Vector2((tile_size - sz.x) * 0.5, post_h + 12)
 	draw_string(font, label_pos, label,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, GATE_COLOR)
 
@@ -702,11 +723,17 @@ func _draw_preview() -> void:
 	if def == null:
 		return
 	var rect := Rect2(_cell_to_screen(_hover_cell),
-		Vector2(def.footprint) * TILE_SIZE)
+		Vector2(def.footprint) * tile_size)
 	var can_afford := Ledger.get_balance() >= def.build_cost
 	var collides := _would_collide(_hover_cell, def.footprint)
+	# Outside the plot you bought — red ghost, same as a collision (main
+	# rejects the click too).
+	var plot := ZooBootstrap.plot_size()
+	var in_plot: bool = _hover_cell.x >= 0 and _hover_cell.y >= 0 \
+		and _hover_cell.x + def.footprint.x <= plot.x \
+		and _hover_cell.y + def.footprint.y <= plot.y
 	var col: Color
-	if not can_afford or collides:
+	if not can_afford or collides or not in_plot:
 		col = Color(0.85, 0.25, 0.25, 0.45)
 	else:
 		col = entity_colors.get(preview_def_id, Color.WHITE)
@@ -716,7 +743,7 @@ func _draw_preview() -> void:
 	# Zone tiles: say whether this click extends an existing exhibit or
 	# starts a new one — a diagonal "looks adjacent" tile silently creating
 	# an orphan region was a real-money trap.
-	if def.zone_kind != &"" and can_afford and not collides:
+	if def.zone_kind != &"" and can_afford and not collides and in_plot:
 		var merge := zone_merge_region(_hover_cell, def)
 		var note := "+ Exhibit #%d" % merge.region_id if merge != null else "new exhibit"
 		var note_color := Color(0.55, 0.85, 0.95) if merge != null else Color(0.96, 0.83, 0.37)
@@ -733,7 +760,7 @@ func _draw_placeable_preview() -> void:
 		# Tile-sized warning rectangle on the hover cell so the player sees
 		# they need to aim at an exhibit.
 		var rect := Rect2(_cell_to_screen(_hover_cell),
-			Vector2(TILE_SIZE, TILE_SIZE))
+			Vector2(tile_size, tile_size))
 		draw_rect(rect.grow(-3), Color(0.85, 0.25, 0.25, 0.30), true)
 		return
 	var check := RegionRegistry.can_add_placement(region.region_id, preview_def_id)
@@ -748,7 +775,7 @@ func _draw_placeable_preview() -> void:
 	# Paint every cell of the region so an L-shaped exhibit reads correctly.
 	for c in region.cells:
 		var rect := Rect2(_cell_to_screen(c),
-			Vector2(TILE_SIZE, TILE_SIZE))
+			Vector2(tile_size, tile_size))
 		draw_rect(rect, fill, true)
 	# Trace the same perimeter MapBackground uses for region auras, in our
 	# accept/reject color so the player sees which exhibit they're targeting.
@@ -758,9 +785,9 @@ func _draw_placeable_preview() -> void:
 	for c in region.cells:
 		var s := _cell_to_screen(c)
 		var p0 := s
-		var p1 := s + Vector2(TILE_SIZE, 0)
-		var p2 := s + Vector2(TILE_SIZE, TILE_SIZE)
-		var p3 := s + Vector2(0, TILE_SIZE)
+		var p1 := s + Vector2(tile_size, 0)
+		var p2 := s + Vector2(tile_size, tile_size)
+		var p3 := s + Vector2(0, tile_size)
 		if not cell_set.has(c + Vector2i(0, -1)):
 			draw_line(p0, p1, stroke, 2.5)
 		if not cell_set.has(c + Vector2i(1, 0)):
@@ -776,19 +803,19 @@ func _draw_placeable_preview() -> void:
 # ---------------------------------------------------------------------------
 
 func _to_grid(local_pos: Vector2) -> Vector2i:
-	var p := (local_pos - GRID_ORIGIN) / float(TILE_SIZE)
+	var p := (local_pos - GRID_ORIGIN) / float(tile_size)
 	return Vector2i(int(floor(p.x)), int(floor(p.y)))
 
 
 func _cell_to_screen(cell: Vector2i) -> Vector2:
-	return GRID_ORIGIN + Vector2(cell) * TILE_SIZE
+	return GRID_ORIGIN + Vector2(cell) * tile_size
 
 
 func _world_to_screen(world_pos: Vector2) -> Vector2:
 	# Agents live in cell coordinates; a guest "on" cell (x,y) should render at
 	# that tile's CENTRE, not its top-left corner — otherwise path-walkers
 	# (which sit at integer cells) spill half a sprite off the tile edge.
-	return GRID_ORIGIN + (world_pos + Vector2(0.5, 0.5)) * TILE_SIZE
+	return GRID_ORIGIN + (world_pos + Vector2(0.5, 0.5)) * tile_size
 
 
 func _satisfaction_color(s: float) -> Color:

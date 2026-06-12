@@ -191,6 +191,23 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-12** — **Zoo land types: selectable plots (climate × size ×
+  price) + sell-to-relocate.** New game now picks a land plot on the
+  welcome screen (`design/tuning/zoo_types.md`): each plot is a climate
+  (biases the daily weather roll and scales demand), a buildable grid
+  size, and a purchase price paid from the difficulty's starting cash.
+  Park Admin grows a "Land & relocation" section that sells the whole
+  zoo (75% of land price + the standard ½ sell-back on buildings and
+  animals, posted through the engine's normal refund paths) to fund a
+  move to a different plot. Consequences: the world size and gate cell
+  are now runtime state on `ZooBootstrap` (`plot_size()` / `gate_cell()`)
+  — nothing may hardcode 32×18 / (0,17) anymore; the top-down view gained
+  fit-to-plot tile scaling (it has no camera); the iso lawn now matches
+  the buildable plot exactly (it was 28 cols vs the buildable 32 — a
+  latent bug); save payload bumped to v3 (`zoo_type`, older saves resolve
+  to the free default plot). The default plot is free and identical to
+  the old hardcoded world, so the canonical Standard winnability arc is
+  untouched.
 - **2026-06-12** — **Roadmap sweep: perf static-layer split (1.4), audio
   (2.1), touch first-pass (2.2), save versioning (2.5), winnability
   regression test (toward 1.5).** (1) The iso view's static world layers

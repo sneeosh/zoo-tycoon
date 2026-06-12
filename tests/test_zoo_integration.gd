@@ -352,7 +352,8 @@ func test_guest_walks_only_on_paths_to_reach_food() -> void:
 	# With a path network present, a guest sticks to it: lay a straight path
 	# from the gate to a food stand and assert the guest's cell is ALWAYS a
 	# path cell across its whole visit, and that it still reaches and buys food.
-	# Gate now lives at (0,17) (see GATE_TILE in main.gd); the path runs east
+	# The default plot's gate lives at (0,17) (ZooBootstrap.gate_cell() —
+	# bottom-left of the 32x18 default land); the path runs east
 	# from there and the food stand sits one cell north of it.
 	for x in range(0, 9):
 		EntityRegistry.place(&"path", Vector2i(x, 17))

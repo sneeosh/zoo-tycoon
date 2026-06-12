@@ -17,8 +17,6 @@ class_name IsoBackground
 # Projection constants — must match IsoPreview's (the parent asserts at setup).
 const TW := 64
 const TH := 32
-const GROUND_W := 28
-const GROUND_H := 18
 const GROUND_TEX_SCALE := 96.0
 
 # Set by IsoPreview before first draw.
@@ -36,6 +34,8 @@ func _ready() -> void:
 	for sig in [EventBus.entity_placed, EventBus.entity_removed,
 			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
 		sig.connect(func(_arg = null): queue_redraw())
+	# Buying/selling land changes the lawn footprint.
+	ZooBootstrap.zoo_type_changed.connect(func(_id): queue_redraw())
 
 
 func _draw() -> void:
@@ -96,8 +96,9 @@ func _grass_color(gx: int, gy: int) -> Color:
 
 
 func _draw_ground() -> void:
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
+	var ground := ZooBootstrap.plot_size()
+	for gy in range(ground.y):
+		for gx in range(ground.x):
 			_fill_diamond(gx, gy, _grass_color(gx, gy))
 
 
@@ -237,8 +238,9 @@ func _draw_ground_scatter() -> void:
 		var def := inst.get_def()
 		if def != null and def.walkable:
 			blocked[inst.position] = true
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
+	var ground := ZooBootstrap.plot_size()
+	for gy in range(ground.y):
+		for gx in range(ground.x):
 			if blocked.has(Vector2i(gx, gy)):
 				continue
 			var h := _hash2(gx + 31, gy + 17)

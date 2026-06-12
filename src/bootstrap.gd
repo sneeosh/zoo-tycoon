@@ -73,6 +73,16 @@ var weather_cfg: WeatherConfig
 var current_weather: StringName = &""
 signal weather_changed(weather_id: StringName, season_id: StringName)
 
+# Zoo land plots + climates (design/tuning/zoo_types.md). The selected plot
+# sets the buildable grid size, the gate cell, and a climate that biases the
+# daily weather roll and scales demand. Picked at the welcome screen; traded
+# mid-run via relocate_zoo (Park Admin → Land & relocation).
+var zoo_types: ZooTypeConfig
+var current_zoo_type: StringName = &""
+signal zoo_type_changed(id: StringName)
+# Fallback when zoo_types fails to load — the historical hardcoded grid.
+const DEFAULT_PLOT_SIZE := Vector2i(32, 18)
+
 # Marketing campaigns (roadmap 4.2). Spend cash to bias arrivals toward an
 # archetype for a few days by boosting its spawn weight. One at a time.
 var marketing: MarketingConfig
@@ -184,9 +194,15 @@ func _ready() -> void:
 		_base_spawn_weights[at_id] = (ContentDB.agent_types[at_id] as AgentType).spawn_weight
 	Accounting.register_category(&"marketing", Accounting.Category.OPERATING_EXPENSE)
 	EventBus.day_ended.connect(_tick_campaign)
+	# Land plots — start on the default (free) plot; the welcome screen may
+	# switch it (and charge for it) before play begins. Must load before the
+	# weather seed so the climate biases the very first roll.
+	zoo_types = ZooTypeConfig.load_from_tuning()
+	if zoo_types != null:
+		current_zoo_type = zoo_types.default_plot
 	# Seed today's weather, then re-roll each new day.
 	if weather_cfg != null and not weather_cfg.weathers.is_empty():
-		current_weather = weather_cfg.pick_weather(SimClock.rng)
+		current_weather = weather_cfg.pick_weather(SimClock.rng, climate_weather_weights())
 	EventBus.day_ended.connect(_roll_weather)
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
@@ -392,22 +408,145 @@ func current_season() -> Dictionary:
 	return weather_cfg.season_for_day(SimClock.current_day)
 
 
-# Combined weather × season demand multiplier (1.0 if weather isn't loaded).
+# Combined weather × season × climate demand multiplier.
 func environment_multiplier() -> float:
+	var cm: float = float(current_climate().get("demand_multiplier", 1.0))
 	if weather_cfg == null:
-		return 1.0
+		return cm
 	var wm: float = float(weather_cfg.weather_by_id(current_weather).get("mult", 1.0))
 	var sm: float = float(current_season().get("mult", 1.0))
-	return wm * sm
+	return wm * sm * cm
 
 
 # Re-roll the weather for the day that just started, then re-apply demand.
 func _roll_weather(_day: int) -> void:
 	if weather_cfg == null or weather_cfg.weathers.is_empty():
 		return
-	current_weather = weather_cfg.pick_weather(SimClock.rng)
+	current_weather = weather_cfg.pick_weather(SimClock.rng, climate_weather_weights())
 	_apply_spawn_rate()
 	weather_changed.emit(current_weather, current_season().get("id", &""))
+
+
+# ---------------------------------------------------------------------------
+# Land plots — zoo type selection, purchase, sale & relocation
+# ---------------------------------------------------------------------------
+
+# The selected plot's record from zoo_types.md, or {} if config failed.
+func current_plot() -> Dictionary:
+	return zoo_types.plot(current_zoo_type) if zoo_types != null else {}
+
+
+# Buildable grid of the current plot. Views, the gate, and main's placement
+# bounds all read this — nothing else may hardcode the world size.
+func plot_size() -> Vector2i:
+	var p := current_plot()
+	return p["size"] if not p.is_empty() else DEFAULT_PLOT_SIZE
+
+
+# The entrance gate hugs the bottom-left corner of whatever plot we're on:
+# guests spawn/exit here and the path network roots here.
+func gate_cell() -> Vector2i:
+	return Vector2i(0, plot_size().y - 1)
+
+
+# Climate record of the current plot ({} when config is missing).
+func current_climate() -> Dictionary:
+	var p := current_plot()
+	if zoo_types == null or p.is_empty():
+		return {}
+	return zoo_types.climate(p["climate"])
+
+
+# Weather-weight multipliers of the current climate (for WeatherConfig).
+func climate_weather_weights() -> Dictionary:
+	return current_climate().get("weather_weights", {})
+
+
+# Switch to plot `id`. charge_cost posts the land price as an expense (a new
+# game buying its plot; relocation). Loading a save passes false — the
+# restored ledger already reflects every purchase.
+func set_zoo_type(id: StringName, charge_cost: bool = false) -> bool:
+	if zoo_types == null:
+		return false
+	var p: Dictionary = zoo_types.plot(id)
+	if p.is_empty():
+		push_warning("[zoo] unknown zoo type '%s'" % id)
+		return false
+	current_zoo_type = id
+	if charge_cost and int(p["cost"]) > 0:
+		Ledger.post_expense(int(p["cost"]), "Land purchase — %s" % p["label"], &"land")
+	_apply_spawn_rate()
+	zoo_type_changed.emit(id)
+	return true
+
+
+# What selling up right now recovers, before any demolition happens:
+#   land    — resale_fraction of the plot's purchase price
+#   assets  — the engine's standard sell-back on every building
+#             (refund_fraction of invested) and animal/infrastructure
+#             placement (half build cost, mirroring remove_placement)
+# The estimate matches relocate_zoo's actual postings exactly (same int
+# truncation), so the admin UI can show it as a firm offer.
+func zoo_sale_value() -> Dictionary:
+	var land: int = 0
+	if zoo_types != null:
+		land = int(round(float(current_plot().get("cost", 0)) * zoo_types.resale_fraction))
+	var assets: int = 0
+	for inst_id in EntityRegistry.instances.keys():
+		var inst: EntityInstance = EntityRegistry.instances[inst_id]
+		assets += int(inst.get_total_invested() * EntityRegistry.refund_fraction)
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null:
+				assets += int(def.build_cost * 0.5)
+	return {"land": land, "assets": assets, "total": land + assets}
+
+
+# Sell the whole zoo and move to plot `new_id`: liquidate every placement and
+# entity through the engine's normal refund paths (so the books stay honest),
+# post the land resale, send the crowd home, then buy the new plot. Fails
+# (no-op) when the proceeds plus cash can't cover the new land.
+func relocate_zoo(new_id: StringName) -> bool:
+	if zoo_types == null or new_id == current_zoo_type:
+		return false
+	var dest: Dictionary = zoo_types.plot(new_id)
+	if dest.is_empty():
+		return false
+	var sale := zoo_sale_value()
+	if Ledger.get_balance() + int(sale["total"]) < int(dest["cost"]):
+		return false
+	var old_label: String = String(current_plot().get("label", "old grounds"))
+	# Animals/infrastructure first (each posts its half-cost refund), then the
+	# grid entities (each posts refund_fraction of invested; zone-tile removal
+	# dissolves the regions and the nav network reacts via the normal events).
+	for region: Region in RegionRegistry.all_regions():
+		for i in range(region.placements.size() - 1, -1, -1):
+			RegionRegistry.remove_placement(region.region_id, i)
+	for inst_id in EntityRegistry.instances.keys():
+		EntityRegistry.remove(inst_id)
+	if int(sale["land"]) > 0:
+		Ledger.post_income(int(sale["land"]), "Sold land — %s" % old_label, &"land")
+	# Clear the crowd. Moving isn't a review event — despawn runs the normal
+	# exit path (which files a verdict), so snapshot the day's counters and
+	# restore them after.
+	var snap_happy := departures_happy
+	var snap_unhappy := departures_unhappy
+	var snap_total := departures_total
+	var snap_needs := unhappy_need_counts.duplicate()
+	for guest_type in GUEST_TYPES:
+		for agent_id in AgentPool.get_agents_by_type(guest_type):
+			AgentPool.despawn(agent_id)
+	departures_happy = snap_happy
+	departures_unhappy = snap_unhappy
+	departures_total = snap_total
+	unhappy_need_counts = snap_needs
+	donations_by_region.clear()
+	arena_bookings.clear()
+	park_open = false   # an empty plot has nothing to admit guests to
+	set_zoo_type(new_id, true)
+	admin_changed.emit()
+	return true
 
 
 # Fraction of the current day elapsed, in [0,1) — derived from SimClock.
@@ -752,7 +891,8 @@ func animal_age(region: Region, index: int) -> int:
 # handle older shapes in _migrate_game_state:
 #   1 — original provider (settings + exhibits)
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
-const SAVE_VERSION: int = 2
+#   3 — adds the zoo type (land plot + climate selection)
+const SAVE_VERSION: int = 3
 
 
 func _save_game_state() -> Dictionary:
@@ -773,6 +913,7 @@ func _save_game_state() -> Dictionary:
 		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
 	return {
 		"version": SAVE_VERSION,
+		"zoo_type": String(current_zoo_type),
 		"ticket_bracket": String(ticket_bracket),
 		"park_open": park_open,
 		"hired_keepers": hired_keepers,
@@ -798,10 +939,17 @@ func _migrate_game_state(data: Dictionary) -> void:
 			% [version, SAVE_VERSION])
 	# v1 → v2: departure counters didn't exist; the day restarts its verdict
 	# from zero (defaults below). No reshapes yet.
+	# v2 → v3: zoo_type didn't exist; older saves were all built on the
+	# default plot, which is exactly what the reader below falls back to.
 
 
 func _load_game_state(data: Dictionary) -> void:
 	_migrate_game_state(data)
+	# Land first — the plot decides the grid size and gate cell the views and
+	# the rebuilt nav network anchor on. No charge: the restored ledger
+	# already paid for it.
+	if zoo_types != null:
+		set_zoo_type(StringName(data.get("zoo_type", String(zoo_types.default_plot))), false)
 	# The engine restored entities + ledger but left the reactive registries
 	# stale (it doesn't re-emit entity_placed on load). Rebuild regions + the
 	# nav network from the restored entities.

@@ -15,10 +15,19 @@ class_name IsoPreview
 
 const TW := 64           # iso tile width  (2 : 1)
 const TH := 32           # iso tile height
-const GATE_CELL: Vector2i = Vector2i(0, 17)   # entrance — bottom-left corner
 const FENCE_H := 16
-const GROUND_W := 28     # cells of ground to draw
-const GROUND_H := 18
+
+
+# The drawn ground is the buyable plot (selectable per design/tuning/
+# zoo_types.md), with the entrance gate at its bottom-left corner — so
+# neither can be a constant anymore.
+static func _ground() -> Vector2i:
+	return ZooBootstrap.plot_size()
+
+
+static func _gate() -> Vector2i:
+	return ZooBootstrap.gate_cell()
+
 
 var origin := Vector2(660, 70)
 var _sprites := {}       # name -> Texture2D | null
@@ -106,8 +115,7 @@ func _ready() -> void:
 	_background.show_behind_parent = true
 	_background.origin = origin
 	_background.ground_noise = _ground_noise
-	assert(IsoBackground.TW == TW and IsoBackground.TH == TH \
-		and IsoBackground.GROUND_W == GROUND_W and IsoBackground.GROUND_H == GROUND_H,
+	assert(IsoBackground.TW == TW and IsoBackground.TH == TH,
 		"IsoBackground projection constants must match IsoPreview's")
 	add_child(_background)
 	resized.connect(_rebuild_view)
@@ -118,6 +126,10 @@ func _ready() -> void:
 	for sig in [EventBus.entity_placed, EventBus.entity_removed,
 			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
 		sig.connect(_mark_scenery_dirty)
+	# A new plot means new ground bounds: refit the camera and rescatter.
+	ZooBootstrap.zoo_type_changed.connect(func(_id):
+		_mark_scenery_dirty()
+		_rebuild_view())
 	_card_box = StyleBoxFlat.new()
 	_card_box.bg_color = Color("#1d2b16")
 	_card_box.border_color = Color(0.55, 0.48, 0.29, 0.6)   # brass, matches HUD
@@ -180,8 +192,9 @@ func _tick_money_floats() -> void:
 
 # Model-space bounding rect of the drawn ground (its four diamond corners).
 func _ground_model_rect() -> Rect2:
-	var pts := [_project(0, 0), _project(GROUND_W, 0),
-		_project(GROUND_W, GROUND_H), _project(0, GROUND_H)]
+	var g := _ground()
+	var pts := [_project(0, 0), _project(g.x, 0),
+		_project(g.x, g.y), _project(0, g.y)]
 	var r := Rect2(pts[0], Vector2.ZERO)
 	for p in pts:
 		r = r.expand(p)
@@ -515,7 +528,8 @@ func _draw_night_glows(darkness: float) -> void:
 		if sc["sprite"] == "lamp_post":
 			var c: Vector2i = sc["cell"]
 			_glow(_view_xf * (_tile_center(c.x, c.y) + Vector2(0, -10)), 30.0 * z, lamp, darkness)
-	_glow(_view_xf * (_tile_center(GATE_CELL.x, GATE_CELL.y) + Vector2(0, -10)),
+	var gate := _gate()
+	_glow(_view_xf * (_tile_center(gate.x, gate.y) + Vector2(0, -10)),
 		28.0 * z, lamp, darkness)
 	for inst_id in EntityRegistry.instances.keys():
 		var inst: EntityInstance = EntityRegistry.instances[inst_id]
@@ -775,7 +789,7 @@ func _draw_sorted_objects() -> void:
 
 	# Entrance gate: the ticket booth at the gate cell, where guests enter/leave.
 	draws.append({"d": 0.4, "sprite": "ticket_booth", "fp": Vector2i.ONE,
-		"pos": Vector2(GATE_CELL), "wmul": 1.3, "small": false})
+		"pos": Vector2(_gate()), "wmul": 1.3, "small": false})
 
 	# Parkland scenery.
 	if _scenery_dirty:
@@ -814,7 +828,9 @@ func _mark_scenery_dirty(_arg = null) -> void:
 func _rebuild_scenery() -> void:
 	_scenery_dirty = false
 	_scenery.clear()
-	var blocked := {GATE_CELL: true}   # entrance gate
+	var ground := _ground()
+	var gate := _gate()
+	var blocked := {gate: true}   # entrance gate
 	var path_cells: Array = []
 	for region: Region in RegionRegistry.all_regions():
 		for c in region.cells:
@@ -849,7 +865,7 @@ func _rebuild_scenery() -> void:
 				wmul = 0.5
 		for off in [Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(1, 0)]:
 			var n: Vector2i = c + off
-			if n.x < 0 or n.y < 0 or n.x >= GROUND_W or n.y >= GROUND_H:
+			if n.x < 0 or n.y < 0 or n.x >= ground.x or n.y >= ground.y:
 				continue
 			if blocked.has(n):
 				continue
@@ -861,8 +877,8 @@ func _rebuild_scenery() -> void:
 	# moment (ZT1 dresses its entrance with planters and topiary).
 	for off in [Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1), Vector2i(2, -1),
 			Vector2i(-1, 2), Vector2i(2, 1), Vector2i(1, 2)]:
-		var n: Vector2i = GATE_CELL + off
-		if n.x < 0 or n.y < 0 or n.x >= GROUND_W or n.y >= GROUND_H:
+		var n: Vector2i = gate + off
+		if n.x < 0 or n.y < 0 or n.x >= ground.x or n.y >= ground.y:
 			continue
 		if blocked.has(n):
 			continue
@@ -877,11 +893,11 @@ func _rebuild_scenery() -> void:
 	for name in SCENERY_WEIGHTS:
 		for _w in range(SCENERY_WEIGHTS[name]):
 			pool.append(name)
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
+	for gy in range(ground.y):
+		for gx in range(ground.x):
 			if blocked.has(Vector2i(gx, gy)):
 				continue
-			var border := gx < 2 or gy < 2 or gx >= GROUND_W - 2 or gy >= GROUND_H - 2
+			var border := gx < 2 or gy < 2 or gx >= ground.x - 2 or gy >= ground.y - 2
 			var h := _hash2(gx * 7 + 3, gy * 13 + 5)
 			var threshold := 2 if border else 5
 			if (h % threshold) != 0:
