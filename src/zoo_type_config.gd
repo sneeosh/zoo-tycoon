@@ -2,6 +2,8 @@ extends RefCounted
 class_name ZooTypeConfig
 # Land plots + climates from design/tuning/zoo_types.md.
 # Game-side; purchase/sale/relocation logic lives in src/bootstrap.gd.
+# New plots/climates are added by editing the markdown only — see
+# design/zoo_types_guide.md for the catalog + authoring rules this enforces.
 
 const TUNING_PATH := "res://design/tuning/zoo_types.md"
 
@@ -36,6 +38,9 @@ static func load_from_tuning() -> ZooTypeConfig:
 		var cid := StringName(String(row.get("id", "")).strip_edges())
 		if cid == &"":
 			continue
+		if z.climates.has(cid):
+			push_error("[zoo_types] duplicate climate id '%s', skipping" % cid)
+			continue
 		var weights := {}
 		for key in row.keys():
 			if key in ["id", "label", "demand_multiplier"]:
@@ -51,6 +56,9 @@ static func load_from_tuning() -> ZooTypeConfig:
 	for row: Dictionary in _rows(parsed, "Plots"):
 		var id := StringName(String(row.get("id", "")).strip_edges())
 		if id == &"":
+			continue
+		if not z.plot(id).is_empty():
+			push_error("[zoo_types] duplicate plot id '%s', skipping" % id)
 			continue
 		var w := int(_to_f(row.get("plot_w", "0")))
 		var h := int(_to_f(row.get("plot_h", "0")))

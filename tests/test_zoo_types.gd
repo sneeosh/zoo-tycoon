@@ -39,16 +39,22 @@ func after_each() -> void:
 func test_zoo_types_tuning_loaded() -> void:
 	var zt: ZooTypeConfig = ZooBootstrap.zoo_types
 	assert_not_null(zt)
-	assert_true(zt.plots.size() >= 2, "need at least two plots to trade between")
+	# The shipped catalog is 12 plots; ≥10 leaves room to retire one without
+	# churning this test while still catching a gutted/unparsed file.
+	assert_true(zt.plots.size() >= 10, "the shipped catalog should survive parsing")
 	assert_ne(zt.default_plot, &"", "a default plot must exist")
 	assert_eq(int(zt.plot(zt.default_plot)["cost"]), 0,
 		"the default plot must be free — it's what old saves and the canonical Standard run sit on")
+	var seen_ids := {}
 	for plot in zt.plots:
 		var size: Vector2i = plot["size"]
 		assert_true(size.x >= ZooTypeConfig.MIN_PLOT_W and size.y >= ZooTypeConfig.MIN_PLOT_H,
 			"plot %s must fit the starter park" % plot["id"])
 		assert_false(zt.climate(plot["climate"]).is_empty(),
 			"plot %s must name a known climate" % plot["id"])
+		assert_false(seen_ids.has(plot["id"]),
+			"plot id %s must be unique (the loader should have rejected the dupe)" % plot["id"])
+		seen_ids[plot["id"]] = true
 
 
 func test_plots_differ_in_climate_size_and_cost() -> void:

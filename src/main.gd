@@ -78,7 +78,7 @@ var _welcome_difficulty_row: HBoxContainer
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
 var _selected_difficulty: StringName = &"standard"
 var _welcome_plot_label: Label
-var _welcome_plot_row: HBoxContainer
+var _welcome_plot_row: HFlowContainer              # wraps — the catalog is long
 var _welcome_plot_buttons: Dictionary = {}         # id (StringName) -> Button
 var _welcome_plot_caption: Label
 var _selected_zoo_type: StringName = &""           # set when the modal builds
@@ -577,9 +577,9 @@ func _build_welcome_modal(parent: Control) -> void:
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
 	card.offset_left = -320
-	card.offset_top = -310
+	card.offset_top = -360
 	card.offset_right = 320
-	card.offset_bottom = 310
+	card.offset_bottom = 360
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_welcome_modal.add_child(card)
@@ -647,9 +647,10 @@ func _build_welcome_modal(parent: Control) -> void:
 	_welcome_plot_label.add_theme_font_size_override("font_size", 12)
 	_welcome_plot_label.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(_welcome_plot_label)
-	_welcome_plot_row = HBoxContainer.new()
-	_welcome_plot_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_welcome_plot_row.add_theme_constant_override("separation", 8)
+	_welcome_plot_row = HFlowContainer.new()
+	_welcome_plot_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	_welcome_plot_row.add_theme_constant_override("h_separation", 6)
+	_welcome_plot_row.add_theme_constant_override("v_separation", 6)
 	col.add_child(_welcome_plot_row)
 	_welcome_plot_caption = Label.new()
 	_welcome_plot_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1318,15 +1319,16 @@ func _build_admin_modal(parent: Control) -> void:
 	land_label.add_theme_font_size_override("font_size", 14)
 	land_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	col.add_child(land_label)
-	var land_row := HBoxContainer.new()
-	land_row.add_theme_constant_override("separation", 8)
+	var land_row := HFlowContainer.new()
+	land_row.add_theme_constant_override("h_separation", 6)
+	land_row.add_theme_constant_override("v_separation", 6)
 	col.add_child(land_row)
 	if ZooBootstrap.zoo_types != null:
 		for plot in ZooBootstrap.zoo_types.plots:
 			var pid: StringName = plot["id"]
 			var pb := Button.new()
-			pb.custom_minimum_size = Vector2(0, 46)
-			pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			pb.custom_minimum_size = Vector2(160, 44)
+			pb.add_theme_font_size_override("font_size", 11)
 			pb.focus_mode = Control.FOCUS_NONE
 			pb.pressed.connect(_on_relocate_pressed.bind(pid))
 			land_row.add_child(pb)
@@ -1840,8 +1842,9 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 			var pbtn := Button.new()
 			var cost_line: String = "Included" if int(plot["cost"]) == 0 \
 				else "$%s" % _format_thousands(int(plot["cost"]))
-			pbtn.text = "  %s\n%s  " % [plot["label"], cost_line]
-			pbtn.custom_minimum_size = Vector2(0, 44)
+			pbtn.text = "%s\n%s" % [plot["label"], cost_line]
+			pbtn.custom_minimum_size = Vector2(136, 40)
+			pbtn.add_theme_font_size_override("font_size", 11)
 			pbtn.focus_mode = Control.FOCUS_NONE
 			var pclimate: Dictionary = ZooBootstrap.zoo_types.climate(plot["climate"])
 			var psize: Vector2i = plot["size"]

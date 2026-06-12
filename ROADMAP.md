@@ -207,7 +207,14 @@ the failure mode the whole architecture exists to prevent.
   latent bug); save payload bumped to v3 (`zoo_type`, older saves resolve
   to the free default plot). The default plot is free and identical to
   the old hardcoded world, so the canonical Standard winnability arc is
-  untouched.
+  untouched. *Same day:* catalog expanded from 4 to 12 plots across 9
+  climates (one — Crownleaf Estate — priced beyond any starting bankroll
+  on purpose, a relocation goal), both plot selectors became wrapping
+  flow containers so the catalog can keep growing, and the system is
+  documented as data-driven: `design/zoo_types_guide.md` describes every
+  type and the authoring rules for adding new ones by editing
+  `design/tuning/zoo_types.md` alone (the loader rejects bad rows —
+  duplicate ids, unknown climates, sub-16×18 plots — loudly).
 - **2026-06-12** — **Roadmap sweep: perf static-layer split (1.4), audio
   (2.1), touch first-pass (2.2), save versioning (2.5), winnability
   regression test (toward 1.5).** (1) The iso view's static world layers
