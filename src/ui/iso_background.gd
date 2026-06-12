@@ -39,15 +39,67 @@ func _ready() -> void:
 
 
 func _draw() -> void:
-	# Deep park green backdrop (screen space), then the world under the
-	# camera transform.
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#2c4420"), true)
+	# Horizon-gradient backdrop (screen space), then the world under the
+	# camera transform. The park sits in a clearing: a forest-floor apron
+	# fades out from the lawn so the playable diamond doesn't float on void.
+	_draw_backdrop()
 	draw_set_transform_matrix(view_xf)
+	_draw_apron()
 	_draw_ground()
 	_draw_region_fills()
 	_draw_paths()
 	_draw_ground_scatter()
 	draw_set_transform_matrix(Transform2D())
+
+
+# Sky-to-understory gradient: darkest at the top of the screen, easing toward
+# the apron's outer green at the bottom, so the world reads as receding forest
+# instead of a flat backdrop color.
+func _draw_backdrop() -> void:
+	var top := Color("#16240f")
+	var bottom := Color("#243a1b")
+	draw_polygon(
+		PackedVector2Array([Vector2.ZERO, Vector2(size.x, 0), size, Vector2(0, size.y)]),
+		PackedColorArray([top, top, bottom, bottom]))
+
+
+# Forest clearing around the playable ground: four gradient quads from the
+# lawn's edge color out to the backdrop, textured with the same ground grain.
+# Four draws total — deliberately not per-cell diamonds, to keep the static
+# layer cheap while the camera pans (engine/CLAUDE.md §7).
+const APRON_DEPTH := 7.0
+
+func _draw_apron() -> void:
+	var e := APRON_DEPTH
+	var g := Vector2(ZooBootstrap.plot_size())   # apron rings whatever plot we own
+	var inner: Array[Vector2] = [_project(0, 0), _project(g.x, 0),
+		_project(g.x, g.y), _project(0, g.y)]
+	var outer: Array[Vector2] = [_project(-e, -e), _project(g.x + e, -e),
+		_project(g.x + e, g.y + e), _project(-e, g.y + e)]
+	var near := Color("#3b5e26")    # forest floor right at the clearing's edge
+	var far := Color("#243a1b")     # melts into the backdrop
+	for i in 4:
+		var j := (i + 1) % 4
+		var pts := PackedVector2Array([inner[i], inner[j], outer[j], outer[i]])
+		var cols := PackedColorArray([near, near, far, far])
+		if ground_noise != null:
+			var uvs := PackedVector2Array([
+				pts[0] / GROUND_TEX_SCALE, pts[1] / GROUND_TEX_SCALE,
+				pts[2] / GROUND_TEX_SCALE, pts[3] / GROUND_TEX_SCALE])
+			draw_polygon(pts, cols, uvs, ground_noise)
+		else:
+			draw_polygon(pts, cols)
+	# A soft shade band just inside the apron so lawn→forest reads as a real
+	# boundary (canopy shade), not a color seam.
+	for i in 4:
+		var j := (i + 1) % 4
+		var a: Vector2 = inner[i]
+		var b: Vector2 = inner[j]
+		var a2 := a + (outer[i] - a) * 0.12
+		var b2 := b + (outer[j] - b) * 0.12
+		draw_polygon(PackedVector2Array([a, b, b2, a2]),
+			PackedColorArray([Color(0, 0, 0, 0.18), Color(0, 0, 0, 0.18),
+				Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.0)]))
 
 
 # --- Projection helpers (model space; the view transform maps to screen) ----
@@ -92,7 +144,33 @@ func _grass_color(gx: int, gy: int) -> Color:
 	var col := base.lerp(Color("#68a93b"), v)
 	if (h / 7) % 4 == 0:
 		col = col.darkened(0.02)
+	# Low-frequency meadow patches: broad sunny and deep drifts across the
+	# lawn so a big park reads as parkland, not one flat fill.
+	var n := _meadow_noise(float(gx) / 5.5, float(gy) / 5.5)
+	if n > 0.5:
+		col = col.lerp(Color("#74b440"), (n - 0.5) * 0.9)
+	else:
+		col = col.lerp(Color("#54932f"), (0.5 - n) * 0.9)
+	# Faint mowing bands along the iso rows — the groundskeeper was here.
+	if ((gx + gy) >> 1) & 1:
+		col = col.lightened(0.025)
 	return col
+
+
+# Smooth 2D value noise over an unbounded lattice (for meadow patches; doesn't
+# need to tile — the ground-noise texture handles fine grain).
+func _meadow_noise(fx: float, fy: float) -> float:
+	var x0 := int(floor(fx))
+	var y0 := int(floor(fy))
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	tx = tx * tx * (3.0 - 2.0 * tx)
+	ty = ty * ty * (3.0 - 2.0 * ty)
+	var v00 := float(_hash2(x0 + 211, y0 + 89) % 1000) / 1000.0
+	var v10 := float(_hash2(x0 + 212, y0 + 89) % 1000) / 1000.0
+	var v01 := float(_hash2(x0 + 211, y0 + 90) % 1000) / 1000.0
+	var v11 := float(_hash2(x0 + 212, y0 + 90) % 1000) / 1000.0
+	return lerpf(lerpf(v00, v10, tx), lerpf(v01, v11, tx), ty)
 
 
 func _draw_ground() -> void:
@@ -124,6 +202,7 @@ func _zone_tile_floor_color(def: EntityDef, gx: int, gy: int) -> Color:
 
 func _draw_region_fills() -> void:
 	var painted := {}
+	var water_cells: Array = []
 	for inst_id in EntityRegistry.instances.keys():
 		var inst: EntityInstance = EntityRegistry.instances[inst_id]
 		var def := inst.get_def()
@@ -132,6 +211,8 @@ func _draw_region_fills() -> void:
 		var c: Vector2i = inst.position
 		_fill_diamond(c.x, c.y, _zone_tile_floor_color(def, c.x, c.y))
 		painted[c] = true
+		if &"water" in def.zone_tags:
+			water_cells.append(c)
 	# Defensive: any region cells without a painted zone tile (e.g., loaded
 	# from an older save) still get a sensible fill.
 	for region: Region in RegionRegistry.all_regions():
@@ -139,7 +220,26 @@ func _draw_region_fills() -> void:
 			if painted.has(c):
 				continue
 			_fill_diamond(c.x, c.y, _region_fallback_color(region, c.x, c.y))
+			if &"water" in region.provided_zone_tags:
+				water_cells.append(c)
+	for c in water_cells:
+		_draw_water_depth(c)
 	_draw_region_fringe()
+
+
+# Concentric darker diamonds toward each pool cell's centre, so water reads
+# as having depth instead of sitting on the lawn like a flat sticker. The
+# per-frame shimmer in IsoPreview animates on top of this.
+func _draw_water_depth(cell: Vector2i) -> void:
+	var c := _tile_center(cell.x, cell.y)
+	var deep := Color(0.10, 0.32, 0.52)
+	for spec in [[0.62, 0.10], [0.34, 0.14]]:
+		var hw: float = TW * 0.5 * spec[0]
+		var hh: float = TH * 0.5 * spec[0]
+		draw_colored_polygon(PackedVector2Array([
+			c + Vector2(0, -hh), c + Vector2(hw, 0),
+			c + Vector2(0, hh), c + Vector2(-hw, 0)]),
+			Color(deep.r, deep.g, deep.b, spec[1]))
 
 
 func _region_fallback_color(region: Region, gx: int, gy: int) -> Color:

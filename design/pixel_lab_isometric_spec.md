@@ -1,10 +1,10 @@
 # Isometric Direction — validation, plan, and Pixel Lab art spec
 
-**Status:** Functional parity reached 2026-06-07. The isometric view
+**Status:** Functional parity reached 2026-06-07; **iso became the shipping
+default in the 2026-06-12 art-direction pass.** The isometric view
 (`src/ui/iso_preview.gd`) is a real, interactive view — build/place/sell,
-camera (fit/zoom/pan), and all legibility systems — behind the `TYCOON_ISO`
-env var. The shipping default stays top-down until iso is promoted to a
-player-facing toggle. See the progress checklist in "code work remaining".
+camera (fit/zoom/pan), and all legibility systems. The legacy top-down view
+remains available via the top-bar **View** toggle or `TYCOON_TOPDOWN=1`.
 
 ---
 
@@ -20,8 +20,8 @@ player-facing toggle. See the progress checklist in "code work remaining".
   **not** need to redraw every animal/building for a first iso pass. The main
   art gap is the **ground**.
 
-(Render it yourself: `TYCOON_ISO=1` then run the game, or the screenshot
-harness `TYCOON_ISO=1 TYCOON_SHOT=/tmp/iso.png:300`.)
+(Render it yourself: run the game (iso is the default), or the screenshot
+harness `TYCOON_SHOT=/tmp/iso.png:300`.)
 
 ---
 
@@ -112,8 +112,8 @@ Remaining is polish / promotion, not parity:
 > rule, the directional facing convention) are in
 > [`pixel_lab_briefs.md`](./pixel_lab_briefs.md).
 
-- [ ] **Player-facing toggle.** Iso is still behind the `TYCOON_ISO` env var;
-      it could become a settings/HUD toggle now that it's a full view.
+- [x] **Player-facing toggle.** Done — the top-bar **View** button flips
+      projections at runtime, and iso is the launch default (2026-06-12).
 - [ ] **Weather visuals.** Neither view renders weather today (it only scales
       demand). Rain/snow particles would be a net-new enhancement for *both*
       views, not an iso port.

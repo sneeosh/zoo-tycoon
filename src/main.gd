@@ -38,9 +38,11 @@ const WEATHER_ICONS := {
 var _selected_def_id: StringName = &""
 var _selected_region_id: int = -1   # -1 = no region selected; manage panel hidden
 var _map_view: BaseMapView
-# Which projection is active. Initial mode honors TYCOON_ISO; the top-bar View
+# Which projection is active. Isometric is the shipping default (it's the
+# view all the art lives in); TYCOON_TOPDOWN forces the legacy top-down view
+# at launch, and the top-bar View
 # button flips it at runtime by rebuilding the view in place.
-var _use_iso: bool = OS.get_environment("TYCOON_ISO") != ""
+var _use_iso: bool = OS.get_environment("TYCOON_TOPDOWN") == ""
 var _view_container: VBoxContainer
 var _view_btn: Button
 # region_id -> true for populated exhibits with no gate-reachable path cell
@@ -2894,7 +2896,7 @@ func _build_right_column(parent: Control) -> void:
 
 	# Top-down vs isometric. Both share BaseMapView so main drives either
 	# identically; the player flips between them at runtime with the View
-	# button in the top bar (initial mode honors the TYCOON_ISO env var).
+	# button in the top bar (TYCOON_TOPDOWN forces top-down at launch).
 	_view_container = center
 	_map_view = _make_view()
 	center.add_child(_map_view)

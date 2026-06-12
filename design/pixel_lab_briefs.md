@@ -1,6 +1,6 @@
 # Pixel Lab generation briefs — closing the isometric look
 
-The iso view (`TYCOON_ISO` / the in-game **View** toggle) is code-complete for
+The iso view (the shipping default; **View** toggle for top-down) is code-complete for
 the visual push. Two art passes remain: **directional animal sprites**
 (Brief 2) and the **ZT1 hero objects** (Brief 3 — entrance arch, fountain,
 ¾-iso buildings, fence sprites). The renderer is already wired to consume

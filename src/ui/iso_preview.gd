@@ -1,8 +1,8 @@
 extends BaseMapView
 class_name IsoPreview
-# Isometric view — a real, interactive view (behind the TYCOON_ISO env var
-# while it reaches parity with the top-down MapView). The shipping default is
-# still top-down.
+# Isometric view — the shipping default since the 2026-06 art pass (the
+# top-down MapView remains available via the top-bar View toggle and the
+# TYCOON_TOPDOWN env var).
 #
 # The point this proves: the simulation is projection-agnostic. This reads the
 # exact same EntityRegistry / RegionRegistry / AgentPool the top-down view
@@ -359,6 +359,7 @@ func _draw() -> void:
 	draw_set_transform_matrix(_view_xf)
 	_draw_water_shimmer()
 	_draw_sorted_objects()
+	_draw_cloud_shadows()
 	_draw_money_floats()
 	_draw_path_warnings()
 	_draw_preview()
@@ -498,24 +499,64 @@ func _draw_money_floats() -> void:
 			Color(color.r, color.g, color.b, alpha))
 
 # Dusk/night tint — same model as the top-down view: dim toward the edges of
-# the open day, darker once the park has closed.
+# the open day, darker once the park has closed. A warm amber wash leads the
+# cool dark in and out, so dawn and dusk read as golden hour rather than the
+# navy overlay simply fading up.
 func _draw_day_night() -> void:
 	if ZooBootstrap.services == null:
 		return
 	var f := ZooBootstrap.time_of_day_fraction()
 	var open_end: float = ZooBootstrap.services.open_end
 	var darkness: float
+	var daylight := 0.0
 	if f >= open_end or open_end <= 0.0:
 		darkness = 0.45
 	else:
 		var p := f / open_end
-		darkness = 0.30 * (1.0 - sin(p * PI))
+		daylight = sin(p * PI)
+		darkness = 0.30 * (1.0 - daylight)
+	# Golden hour: strongest when the sun is low but still up.
+	var warm := clampf(1.0 - daylight * 2.2, 0.0, 1.0) if daylight > 0.0 else 0.0
+	if warm > 0.01:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(1.0, 0.58, 0.22, 0.13 * warm), true)
 	if darkness <= 0.01:
 		return
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.10, 0.28, darkness), true)
 	# Lamps and lit buildings push back the dark (OpenRCT2-style light sources).
 	if darkness >= 0.18:
 		_draw_night_glows(darkness)
+
+# Soft cloud umbrae drifting diagonally across the park — ambient motion over
+# the big lawns, RCT-style. World-locked (model space), a handful of circles
+# per frame, and faded out as night falls so the dark stays clean.
+const CLOUD_COUNT := 3
+func _draw_cloud_shadows() -> void:
+	if ZooBootstrap.services == null:
+		return
+	var f := ZooBootstrap.time_of_day_fraction()
+	var open_end: float = ZooBootstrap.services.open_end
+	if open_end <= 0.0 or f >= open_end:
+		return
+	var daylight := sin(f / open_end * PI)
+	var alpha := 0.055 * clampf(daylight * 2.0, 0.0, 1.0)
+	if alpha <= 0.005:
+		return
+	var gr := _ground_model_rect().grow(TW * 2.0)
+	for i in CLOUD_COUNT:
+		var h := _hash2(i * 131 + 7, i * 37 + 3)
+		var speed := 9.0 + float(h % 5) * 2.0          # model px / sec
+		var span := gr.size.x + 360.0
+		var x := gr.position.x - 180.0 + fposmod(float(h % 997) * 3.1 + _time * speed, span)
+		var y := gr.position.y + gr.size.y * (0.18 + 0.64 * float((h / 7) % 100) * 0.01) \
+			+ sin(_time * 0.05 + float(i) * 2.1) * 30.0
+		var r := 70.0 + float((h / 11) % 40)
+		# Iso-squashed blob cluster: circles under a 2:1 vertical scale.
+		draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0),
+			Vector2(0.0, 0.5), Vector2(x, y)))
+		draw_circle(Vector2.ZERO, r, Color(0.05, 0.09, 0.03, alpha))
+		draw_circle(Vector2(r * 0.75, r * 0.30), r * 0.72, Color(0.05, 0.09, 0.03, alpha))
+		draw_circle(Vector2(-r * 0.65, r * 0.25), r * 0.6, Color(0.05, 0.09, 0.03, alpha))
+	draw_set_transform_matrix(_view_xf)
 
 # Warm pools of light at lamp posts, the entrance gate, and building windows
 # once it's dark enough. Drawn in screen space (after the dusk overlay) by
@@ -791,13 +832,14 @@ func _draw_sorted_objects() -> void:
 	draws.append({"d": 0.4, "sprite": "ticket_booth", "fp": Vector2i.ONE,
 		"pos": Vector2(_gate()), "wmul": 1.3, "small": false})
 
-	# Parkland scenery.
+	# Parkland scenery (including the apron treeline outside the bounds).
 	if _scenery_dirty:
 		_rebuild_scenery()
 	for sc in _scenery:
 		var p: Vector2 = Vector2(sc["cell"]) + sc["jitter"]
 		draws.append({"d": p.x + p.y + 0.3, "sprite": sc["sprite"], "fp": Vector2i.ONE,
-			"pos": p, "wmul": sc["wmul"], "small": false})
+			"pos": p, "wmul": sc["wmul"], "small": false,
+			"tint": sc.get("tint", Color.WHITE), "flat": sc.get("flat", false)})
 
 	# Guests.
 	for aid in AgentPool.get_agents_by_type(&"visitor"):
@@ -913,6 +955,44 @@ func _rebuild_scenery() -> void:
 			var jitter := Vector2(float((h / 7) % 7 - 3) * 0.05, float((h / 11) % 7 - 3) * 0.05)
 			_scenery.append({"cell": Vector2i(gx, gy), "sprite": sprite,
 				"wmul": wmul, "jitter": jitter})
+	_scatter_treeline()
+
+# Silhouette forest ringing the clearing, on the apron just outside the
+# playable bounds. Depth-sorted with everything else (south-side canopies
+# correctly overlap the lawn edge) but tinted toward the understory and drawn
+# without shadows, so it reads as backdrop, not playable scenery. The gate
+# corner keeps a clearing so arrivals stay visible.
+const TREELINE_RINGS := [
+	{"keep": 3, "wmul": 1.6, "tint": Color(0.64, 0.72, 0.58)},   # keep 3 in 4
+	{"keep": 2, "wmul": 1.35, "tint": Color(0.46, 0.55, 0.44)}]  # keep 2 in 4
+
+func _scatter_treeline() -> void:
+	var ground := _ground()
+	var gate := _gate()
+	for d in TREELINE_RINGS.size():
+		var ring: Dictionary = TREELINE_RINGS[d]
+		var lo_x := -1 - d
+		var hi_x := ground.x + d
+		var lo_y := -1 - d
+		var hi_y := ground.y + d
+		var cells: Array = []
+		for gx in range(lo_x, hi_x + 1):
+			cells.append(Vector2i(gx, lo_y))
+			cells.append(Vector2i(gx, hi_y))
+		for gy in range(lo_y + 1, hi_y):
+			cells.append(Vector2i(lo_x, gy))
+			cells.append(Vector2i(hi_x, gy))
+		for c in cells:
+			if Vector2(c).distance_to(Vector2(gate)) < 3.5:
+				continue
+			var h := _hash2(c.x * 13 + 5, c.y * 19 + 1)
+			if (h % 4) >= int(ring["keep"]):
+				continue
+			var sprite := "tree_pine" if h % 5 < 3 else ("tree_oak" if h % 5 == 3 else "tree_birch")
+			var jitter := Vector2(float((h / 7) % 9 - 4) * 0.06, float((h / 11) % 9 - 4) * 0.06)
+			_scenery.append({"cell": c, "sprite": sprite,
+				"wmul": float(ring["wmul"]) * (0.9 + 0.2 * float((h / 13) % 3) * 0.5),
+				"jitter": jitter, "tint": ring["tint"], "flat": true})
 
 func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 	var t := _project(cell.x, cell.y)
@@ -1019,14 +1099,15 @@ func _draw_billboard(dr: Dictionary) -> void:
 	# from the upper-left) plus a tight contact-AO blob right at the base, so the
 	# object sits in the world instead of on it. Compose the squash with the view
 	# transform, then restore to the view (not identity).
-	var shadow_w: float = w * meta["wfrac"]
-	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.55, 0.42), base))
-	draw_circle(Vector2.ZERO, shadow_w * 0.44, Color(0, 0, 0, 0.20))
-	draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 0.42), base))
-	draw_circle(Vector2.ZERO, shadow_w * 0.32, Color(0, 0, 0, 0.24))
-	draw_set_transform_matrix(_view_xf)
+	if not dr.get("flat", false):
+		var shadow_w: float = w * meta["wfrac"]
+		draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.55, 0.42), base))
+		draw_circle(Vector2.ZERO, shadow_w * 0.44, Color(0, 0, 0, 0.20))
+		draw_set_transform_matrix(_view_xf * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 0.42), base))
+		draw_circle(Vector2.ZERO, shadow_w * 0.32, Color(0, 0, 0, 0.24))
+		draw_set_transform_matrix(_view_xf)
 	if sprite != null:
-		draw_texture_rect(sprite, rect, false)
+		draw_texture_rect(sprite, rect, false, dr.get("tint", Color.WHITE))
 	else:
 		var col := Color("#9a8f7d")
 		draw_rect(rect, col, true)
