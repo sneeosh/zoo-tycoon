@@ -483,6 +483,37 @@ func test_guest_despawn_feeds_the_daily_verdict() -> void:
 		"reputation only moves at the daily settlement")
 
 
+func test_starter_park_arc_is_not_a_death_spiral() -> void:
+	# The new-player path: "Skip — pre-built zoo", then watch. The 2026-06-09
+	# playtest showed this exact flow marching to an unrecoverable loss
+	# (−45 reputation banked by day 11, −89 by day 30) while cash climbed.
+	# With the re-amenitized park + the reputation-as-rating model, an
+	# untended starter park must hold reputation near break-even — a slow
+	# drift the player can read and react to, not a hole they can't escape.
+	Ledger.reset(ContentDB.balance_config.starting_cash)
+	StarterPark.stage()
+	var worst_rep: int = 0
+	for i in range(8 * SimClock.ticks_per_day):
+		SimClock.advance_tick()
+		worst_rep = mini(worst_rep, ProgressionManager.reputation)
+	assert_eq(SimClock.current_day, 8, "eight untended days elapsed without a crash")
+	assert_gt(Ledger.get_balance(), 0, "the starter park never goes bankrupt untended")
+	assert_gt(worst_rep, -25,
+		"reputation never craters into an unrecoverable hole (was −45 by day 11)")
+	# Recoverability is the core claim of the rating model: whatever hole an
+	# untended week dug must be climbable. Simulate a player fixing the park
+	# (sustained happy crowds) and require the Standard bar within the
+	# remaining 22 days of the scenario.
+	var s: Scenario = ZooBootstrap.scenario
+	var rep: int = ProgressionManager.reputation
+	for day in range(22):
+		rep = s.settle_reputation(rep, 10, 0, 12)   # a well-served day's verdict
+		if rep >= 50:
+			break
+	assert_true(rep >= 50,
+		"a turned-around park reaches the Standard +50 bar within the scenario window")
+
+
 func test_welfare_kills_a_neglected_animal() -> void:
 	# A cramped lion with no food/water troughs has poor care quality, so its
 	# welfare declines day over day until it dies and is removed.
@@ -786,6 +817,34 @@ func test_saveload_round_trips_the_whole_zoo() -> void:
 	# Restore defaults for any later tests.
 	ZooBootstrap.set_difficulty(&"standard")
 	ZooBootstrap.set_park_open(true)
+	ZooBootstrap.set_ticket_bracket(&"standard")
+	ZooBootstrap.set_hired_keepers(0)
+
+
+func test_v1_save_payload_loads_forward() -> void:
+	# Roadmap 2.5 — the zoo payload is versioned (ZooBootstrap.SAVE_VERSION)
+	# and older shapes must keep loading. A v1 payload has no "version" key
+	# and no departure counters; it must restore settings and start the day's
+	# verdict clean rather than erroring.
+	ZooBootstrap.departures_happy = 7   # dirty state a load must clear
+	var v1 := {
+		"ticket_bracket": "premium",
+		"park_open": true,
+		"hired_keepers": 2,
+		"current_weather": "sunny",
+		"difficulty": "easy",
+		"campaign_target": "",
+		"campaign_days_left": 0,
+		"exhibits": [],
+	}
+	ZooBootstrap._load_game_state(v1)
+	assert_eq(ZooBootstrap.ticket_bracket, &"premium", "v1 settings restore")
+	assert_eq(ZooBootstrap.hired_keepers, 2)
+	assert_eq(ZooBootstrap.scenario.difficulty, &"easy")
+	assert_eq(ZooBootstrap.departures_total, 0, "verdict counters default clean")
+	assert_eq(ZooBootstrap.departures_happy, 0)
+	# Restore defaults for later tests.
+	ZooBootstrap.scenario.apply_difficulty(&"standard")
 	ZooBootstrap.set_ticket_bracket(&"standard")
 	ZooBootstrap.set_hired_keepers(0)
 

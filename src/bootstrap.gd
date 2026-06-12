@@ -747,6 +747,14 @@ func animal_age(region: Region, index: int) -> int:
 # Save / load — completes the engine's save with region placements + zoo state
 # ---------------------------------------------------------------------------
 
+# Zoo save payload version (roadmap 2.5 — saves are where tycoon games die;
+# catch the migration seam early). Bump when the payload shape changes and
+# handle older shapes in _migrate_game_state:
+#   1 — original provider (settings + exhibits)
+#   2 — adds the mid-day departure-verdict counters (reputation rework)
+const SAVE_VERSION: int = 2
+
+
 func _save_game_state() -> Dictionary:
 	var exhibits: Array = []
 	for region: Region in RegionRegistry.all_regions():
@@ -764,6 +772,7 @@ func _save_game_state() -> Dictionary:
 		# Anchor on a cell so we can find the rebuilt region after load.
 		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
 	return {
+		"version": SAVE_VERSION,
 		"ticket_bracket": String(ticket_bracket),
 		"park_open": park_open,
 		"hired_keepers": hired_keepers,
@@ -778,7 +787,21 @@ func _save_game_state() -> Dictionary:
 	}
 
 
+# Forward-migrate an older zoo payload to the current shape, in place.
+# Every reader below also defaults defensively, so migration only needs to
+# handle *renames/reshapes*, not additions. Unknown FUTURE versions load
+# best-effort with a warning (a newer build's save in an older build).
+func _migrate_game_state(data: Dictionary) -> void:
+	var version: int = int(data.get("version", 1))
+	if version > SAVE_VERSION:
+		push_warning("[zoo] save is version %d, this build writes %d — loading best-effort"
+			% [version, SAVE_VERSION])
+	# v1 → v2: departure counters didn't exist; the day restarts its verdict
+	# from zero (defaults below). No reshapes yet.
+
+
 func _load_game_state(data: Dictionary) -> void:
+	_migrate_game_state(data)
 	# The engine restored entities + ledger but left the reactive registries
 	# stale (it doesn't re-emit entity_placed on load). Rebuild regions + the
 	# nav network from the restored entities.
