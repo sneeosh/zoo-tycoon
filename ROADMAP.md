@@ -191,6 +191,35 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-12** — **Roadmap sweep: perf static-layer split (1.4), audio
+  (2.1), touch first-pass (2.2), save versioning (2.5), winnability
+  regression test (toward 1.5).** (1) The iso view's static world layers
+  (lawn, exhibit floors + fringes, path pavers, scatter — ~600 textured
+  polygons) moved into `IsoBackground`, redrawing only on world/camera
+  change, mirroring the top-down `MapBackground` split. This is the fps
+  budget work *and* the prime suspect for the playtest's WebGL
+  object-handle exhaustion; needs re-verification in a long browser
+  session. (2) **Audio shipped zoo-side** — the "likely engine seam"
+  flagged for 2.1 doesn't exist; sound is presentation like the renderers.
+  SFX + ambient loop are synthesized at build time
+  (`tools/generate_audio.py`) and committed; `src/audio.gd` wires them to
+  the same signals the HUD uses; mute in the top bar, volume in Park
+  Admin. (3) **Touch**: emulated-mouse taps drive the HUD; the iso view
+  adds tap-on-release placement (a pinch can't accidentally build),
+  one-finger pan, two-finger pinch-zoom. Portrait HUD still open.
+  (4) **Save payloads are versioned** (`ZooBootstrap.SAVE_VERSION`, v1
+  loads forward). (5) The starter park moved to `src/starter_park.gd` and
+  an 8-day untended arc test locks the winnability fix (rep never below
+  −25; turnaround reaches +50 in-window). *Status notes:* the engine
+  walkable-fix commit `a80350a` **is now on the engine remote** (earlier
+  "needs pushing" note is stale) but **no v0.6.x tag exists there** —
+  tagging + CHANGELOG is engine-repo maintainer work. The live-deploy fix
+  (tuning files in the export include filter) is complete on the branch
+  and goes live when it merges to `main`. Deliberately not started:
+  telemetry (2.4, needs a where-does-data-go decision), accessibility
+  audit (2.3), portrait HUD, external playtests (humans required), and
+  all Phase 3 deepening/Phase 4 work (gated per this roadmap). Suite
+  62 → 64 green.
 - **2026-06-11** — **Playability pass: reputation became a rating, and the
   game now teaches its binding constraint.** Direct response to the
   2026-06-09 playtest ([report](./design/playtest/fable_report_2026-06-09.md)),
