@@ -191,6 +191,26 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-12 (b)** — **Art-direction pass: iso is the shipping default,
+  and the park now sits in a world.** (1) **Default view flipped to
+  isometric** — it's where all the art investment lives; the top-down view
+  stays reachable via the **View** toggle and `TYCOON_TOPDOWN=1` (the old
+  `TYCOON_ISO` var is retired). (2) **World framing**: horizon-gradient
+  backdrop, a forest-floor apron fading out from the lawn (4 gradient
+  quads, not per-cell — pan-redraw stays cheap), and a depth-sorted
+  silhouette treeline ringing the bounds with a clearing at the gate. The
+  playable diamond no longer floats on void. (3) **Lawn life**:
+  low-frequency meadow patches + faint mowing bands so big lawns read as
+  parkland, not one flat fill. (4) **Water depth**: concentric depth
+  shading per pool cell under the existing shimmer/foam. (5) **Golden
+  hour**: a warm amber wash leads the night tint in and out at dawn/dusk;
+  lamp glows unchanged. (6) **Cloud shadows** drift across the park by
+  day (a handful of circles/frame). All view-layer, all art-free, engine
+  untouched; before/after captures in `design/playtest/art_pass_*`.
+  Suite stays 64 green. Remaining art asks tracked in
+  `design/pixel_lab_briefs.md` (Brief 2 directional animals, Brief 3 hero
+  objects) — sprites, not 3D; Blender models would need a render-to-pixel
+  pipeline we don't have, so crisp ¾-iso PNGs remain the format.
 - **2026-06-12** — **Roadmap sweep: perf static-layer split (1.4), audio
   (2.1), touch first-pass (2.2), save versioning (2.5), winnability
   regression test (toward 1.5).** (1) The iso view's static world layers
