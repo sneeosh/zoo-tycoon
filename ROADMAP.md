@@ -191,6 +191,30 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-12 (c)** — **Zoo land types: selectable plots (climate × size ×
+  price) + sell-to-relocate.** New game now picks a land plot on the
+  welcome screen (`design/tuning/zoo_types.md`): each plot is a climate
+  (biases the daily weather roll and scales demand), a buildable grid
+  size, and a purchase price paid from the difficulty's starting cash.
+  Park Admin grows a "Land & relocation" section that sells the whole
+  zoo (75% of land price + the standard ½ sell-back on buildings and
+  animals, posted through the engine's normal refund paths) to fund a
+  move to a different plot. Consequences: the world size and gate cell
+  are now runtime state on `ZooBootstrap` (`plot_size()` / `gate_cell()`)
+  — nothing may hardcode 32×18 / (0,17) anymore; the top-down view gained
+  fit-to-plot tile scaling (it has no camera); the iso lawn now matches
+  the buildable plot exactly (it was 28 cols vs the buildable 32 — a
+  latent bug); save payload bumped to v3 (`zoo_type`, older saves resolve
+  to the free default plot). The default plot is free and identical to
+  the old hardcoded world, so the canonical Standard winnability arc is
+  untouched. *Same day:* catalog expanded from 4 to 12 plots across 9
+  climates (one — Crownleaf Estate — priced beyond any starting bankroll
+  on purpose, a relocation goal), both plot selectors became wrapping
+  flow containers so the catalog can keep growing, and the system is
+  documented as data-driven: `design/zoo_types_guide.md` describes every
+  type and the authoring rules for adding new ones by editing
+  `design/tuning/zoo_types.md` alone (the loader rejects bad rows —
+  duplicate ids, unknown climates, sub-16×18 plots — loudly).
 - **2026-06-12 (b)** — **Art-direction pass: iso is the shipping default,
   and the park now sits in a world.** (1) **Default view flipped to
   isometric** — it's where all the art investment lives; the top-down view

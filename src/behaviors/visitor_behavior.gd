@@ -82,9 +82,10 @@ const ST_BROWSING := &"browsing"
 const ST_SEEKING := &"seeking"
 const ST_LEAVING := &"leaving"
 
-# Exit point. When zoo design grows a proper entrance/exit tile, point
-# this at it. Bottom-left of the grid — matches the MapView gate.
-const EXIT_POSITION := Vector2(0.0, 17.0)
+# Exit point — the entrance gate, bottom-left of whatever plot is active
+# (the plot is selectable now, so this can't be a constant).
+static func _exit_position() -> Vector2:
+	return Vector2(ZooBootstrap.gate_cell())
 
 # --- Path navigation (engine v0.6.1 WalkableNetwork) ------------------------
 # Guests prefer to walk the player-built path network. When a usable route
@@ -94,7 +95,6 @@ const EXIT_POSITION := Vector2(0.0, 17.0)
 # game still works with zero paths (and the existing economic-loop tests stay
 # green). This is the sanctioned rollout step — free-roam is the fallback
 # until paths are proven, not a parallel system.
-const GATE_CELL := Vector2i(0, 17)        # network root / exit (entrance gate)
 const AMENITY_ENGAGE_D := 1               # must stand next to a stand to use it
 # _path_move outcomes.
 const PATH_MOVING := 0                     # stepping along the network
@@ -113,7 +113,7 @@ func on_spawn(agent: Agent) -> void:
 	# Snap auto-spawns onto the actual gate cell so guests visibly enter
 	# through the ticket booth.
 	if agent.position == Vector2.ZERO:
-		agent.position = Vector2(GATE_CELL)
+		agent.position = Vector2(ZooBootstrap.gate_cell())
 	var fee := _value_model.compute_entry_fee(agent)
 	Ledger.post_income(fee, "Ticket", &"entry")
 	ZooBootstrap.money_floated.emit(fee, agent.position)
@@ -213,7 +213,7 @@ func on_despawn(agent: Agent) -> void:
 
 # Leaving: head for the entrance gate on the path, then despawn.
 func _nav_leave(agent: Agent) -> void:
-	var anchors: Array[Vector2i] = [GATE_CELL]
+	var anchors: Array[Vector2i] = [ZooBootstrap.gate_cell()]
 	match _path_move(agent, anchors, 0):
 		PATH_ARRIVED:
 			AgentPool.despawn(agent.agent_id)
@@ -713,7 +713,7 @@ func _region_centroid(region: Region) -> Vector2:
 
 
 func _step_toward_exit(agent: Agent) -> void:
-	var to_exit := EXIT_POSITION - agent.position
+	var to_exit := _exit_position() - agent.position
 	if to_exit.length() <= REACH_DISTANCE:
 		AgentPool.despawn(agent.agent_id)
 		return

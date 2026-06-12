@@ -8,10 +8,9 @@ class_name MapBackground
 # those cells). MapView's foreground _draw still runs every frame, but the
 # heavy 576-cell loops live here and run rarely, not 60 times per second.
 
-const TILE_SIZE: int = 36
 const GRID_ORIGIN: Vector2 = Vector2(28, 28)
-const BUILDABLE_TILES: Vector2i = Vector2i(32, 18)
-const GATE_TILE: Vector2i = Vector2i(0, 17)
+# Set by the parent MapView, which owns the fit-to-plot computation.
+var tile_size: int = 36
 
 
 func _ready() -> void:
@@ -23,6 +22,8 @@ func _ready() -> void:
 	EventBus.region_created.connect(func(_rid): queue_redraw())
 	EventBus.region_destroyed.connect(func(_rid): queue_redraw())
 	EventBus.region_changed.connect(func(_rid): queue_redraw())
+	# Buying/selling land changes the lawn footprint and the gate cell.
+	ZooBootstrap.zoo_type_changed.connect(func(_id): queue_redraw())
 	resized.connect(func(): queue_redraw())
 
 
@@ -57,7 +58,7 @@ func _draw_region_auras() -> void:
 			cell_set[c] = true
 		for c in region.cells:
 			var rect := Rect2(_cell_to_screen(c),
-				Vector2(TILE_SIZE, TILE_SIZE))
+				Vector2(tile_size, tile_size))
 			var cell_def: EntityDef = tile_at_cell.get(c, null)
 			var col := _zone_tile_tint(cell_def) if cell_def != null else region_color
 			draw_rect(rect, Color(col.r, col.g, col.b, 0.30), true)
@@ -85,8 +86,8 @@ func _draw_region_decor(region: Region) -> void:
 			if (hk % 3) != 0:
 				continue
 			var p := s + Vector2(
-				6.0 + float((hk / 7) % (TILE_SIZE - 12)),
-				6.0 + float((hk / 13) % (TILE_SIZE - 12)))
+				6.0 + float((hk / 7) % (tile_size - 12)),
+				6.0 + float((hk / 13) % (tile_size - 12)))
 			var kind := hk % 5
 			if rocky and kind < 2:
 				_draw_pebble(p, hk)
@@ -132,8 +133,8 @@ func _draw_region_fence(region: Region, cell_set: Dictionary) -> void:
 	var posts := {}   # corner (Vector2i) -> true, to dedupe shared corners
 	for c in region.cells:
 		var s := _cell_to_screen(c)
-		var corners := [s, s + Vector2(TILE_SIZE, 0),
-			s + Vector2(TILE_SIZE, TILE_SIZE), s + Vector2(0, TILE_SIZE)]
+		var corners := [s, s + Vector2(tile_size, 0),
+			s + Vector2(tile_size, tile_size), s + Vector2(0, tile_size)]
 		var edges := [
 			[Vector2i(0, -1), 0, 1],   # top
 			[Vector2i(1, 0), 1, 2],    # right
@@ -188,7 +189,7 @@ func _zone_tile_tint(def: EntityDef) -> Color:
 func _draw_ground() -> void:
 	var s := size
 	draw_rect(Rect2(Vector2.ZERO, s), Color("#0c1410"), true)
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
+	var build_rect := Rect2(GRID_ORIGIN, Vector2(ZooBootstrap.plot_size()) * tile_size)
 	draw_rect(build_rect, Color("#24402a"), true)
 	draw_rect(build_rect.grow(-2), Color("#3c5e36"), true)
 	# Gentle top-to-bottom light banding for depth (lighter near the top).
@@ -202,15 +203,16 @@ func _draw_ground() -> void:
 
 
 func _draw_grass_texture() -> void:
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
+	var plot := ZooBootstrap.plot_size()
+	for cx in plot.x:
+		for cy in plot.y:
 			var h := _hash2(cx, cy)
 			if (h % 6) != 0:
 				continue
 			var origin := _cell_to_screen(Vector2i(cx, cy))
 			var ox := float(h % 23) / 23.0
 			var oy := float((h / 23) % 19) / 19.0
-			var center := origin + Vector2(ox * TILE_SIZE, oy * TILE_SIZE)
+			var center := origin + Vector2(ox * tile_size, oy * tile_size)
 			var variant := (h / 100) % 3
 			var radius := 5.0 + float(h % 5)
 			match variant:
@@ -223,8 +225,8 @@ func _draw_grass_texture() -> void:
 				_:
 					draw_circle(center, radius * 0.85,
 						Color(0.38, 0.40, 0.22, 0.16))
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
+	for cx in plot.x:
+		for cy in plot.y:
 			var h2 := _hash2(cx * 7 + 13, cy * 11 + 5)
 			for sub in 3:
 				var hs := h2 ^ (sub * 137)
@@ -233,7 +235,7 @@ func _draw_grass_texture() -> void:
 				var origin := _cell_to_screen(Vector2i(cx, cy))
 				var dx := float(hs % 19) / 19.0
 				var dy := float((hs / 19) % 17) / 17.0
-				var p := origin + Vector2(dx * TILE_SIZE, dy * TILE_SIZE)
+				var p := origin + Vector2(dx * tile_size, dy * tile_size)
 				var bright: bool = (hs % 13) == 0
 				if bright:
 					draw_circle(p, 1.0, Color(0.55, 0.65, 0.30, 0.45))
@@ -252,17 +254,18 @@ func _draw_decorative_foliage() -> void:
 			for dy in def.footprint.y:
 				occupied[inst.position + Vector2i(dx, dy)] = true
 
-	for cx in BUILDABLE_TILES.x:
-		for cy in BUILDABLE_TILES.y:
+	var plot := ZooBootstrap.plot_size()
+	for cx in plot.x:
+		for cy in plot.y:
 			if occupied.has(Vector2i(cx, cy)):
 				continue
 			var h := _hash2(cx + 31, cy + 17)
 			var on_border := cx < 2 or cy < 2 \
-				or cx >= BUILDABLE_TILES.x - 2 or cy >= BUILDABLE_TILES.y - 2
+				or cx >= plot.x - 2 or cy >= plot.y - 2
 			var threshold: int = 2 if on_border else 48
 			if (h % threshold) != 0:
 				continue
-			if Vector2i(cx, cy) == GATE_TILE:
+			if Vector2i(cx, cy) == ZooBootstrap.gate_cell():
 				continue
 			if RegionRegistry.region_at_cell(Vector2i(cx, cy)) != null:
 				continue
@@ -270,11 +273,11 @@ func _draw_decorative_foliage() -> void:
 			var dx := float((h / 7) % 19) / 19.0
 			var dy := float((h / 13) % 17) / 17.0
 			var center := origin + Vector2(
-				(0.15 + 0.7 * dx) * TILE_SIZE,
-				(0.15 + 0.7 * dy) * TILE_SIZE)
+				(0.15 + 0.7 * dx) * tile_size,
+				(0.15 + 0.7 * dy) * tile_size)
 			_draw_foliage(center, h)
 
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
+	var build_rect := Rect2(GRID_ORIGIN, Vector2(ZooBootstrap.plot_size()) * tile_size)
 	var canvas := Rect2(Vector2.ZERO, size)
 	var step: int = 24
 	for px in range(0, int(canvas.size.x), step):
@@ -318,16 +321,17 @@ func _draw_foliage(center: Vector2, h: int) -> void:
 
 
 func _draw_grid() -> void:
-	var build_rect := Rect2(GRID_ORIGIN, Vector2(BUILDABLE_TILES) * TILE_SIZE)
+	var plot := ZooBootstrap.plot_size()
+	var build_rect := Rect2(GRID_ORIGIN, Vector2(plot) * tile_size)
 	var major := Color(1, 1, 1, 0.045)
-	for c in range(0, BUILDABLE_TILES.x + 1, 5):
-		var x := GRID_ORIGIN.x + c * TILE_SIZE
+	for c in range(0, plot.x + 1, 5):
+		var x := GRID_ORIGIN.x + c * tile_size
 		draw_line(Vector2(x, GRID_ORIGIN.y),
-			Vector2(x, GRID_ORIGIN.y + BUILDABLE_TILES.y * TILE_SIZE), major, 1.0)
-	for r in range(0, BUILDABLE_TILES.y + 1, 5):
-		var y := GRID_ORIGIN.y + r * TILE_SIZE
+			Vector2(x, GRID_ORIGIN.y + plot.y * tile_size), major, 1.0)
+	for r in range(0, plot.y + 1, 5):
+		var y := GRID_ORIGIN.y + r * tile_size
 		draw_line(Vector2(GRID_ORIGIN.x, y),
-			Vector2(GRID_ORIGIN.x + BUILDABLE_TILES.x * TILE_SIZE, y), major, 1.0)
+			Vector2(GRID_ORIGIN.x + plot.x * tile_size, y), major, 1.0)
 	draw_rect(build_rect, Color("#6a5132").darkened(0.1), false, 2.0)
 
 
@@ -370,7 +374,7 @@ func _draw_vignette() -> void:
 # ---------------------------------------------------------------------------
 
 func _cell_to_screen(cell: Vector2i) -> Vector2:
-	return GRID_ORIGIN + Vector2(cell) * TILE_SIZE
+	return GRID_ORIGIN + Vector2(cell) * tile_size
 
 
 func _hash2(a: int, b: int) -> int:

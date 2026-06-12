@@ -17,8 +17,6 @@ class_name IsoBackground
 # Projection constants — must match IsoPreview's (the parent asserts at setup).
 const TW := 64
 const TH := 32
-const GROUND_W := 28
-const GROUND_H := 18
 const GROUND_TEX_SCALE := 96.0
 
 # Set by IsoPreview before first draw.
@@ -36,6 +34,8 @@ func _ready() -> void:
 	for sig in [EventBus.entity_placed, EventBus.entity_removed,
 			EventBus.region_created, EventBus.region_destroyed, EventBus.region_changed]:
 		sig.connect(func(_arg = null): queue_redraw())
+	# Buying/selling land changes the lawn footprint.
+	ZooBootstrap.zoo_type_changed.connect(func(_id): queue_redraw())
 
 
 func _draw() -> void:
@@ -71,10 +71,11 @@ const APRON_DEPTH := 7.0
 
 func _draw_apron() -> void:
 	var e := APRON_DEPTH
-	var inner: Array[Vector2] = [_project(0, 0), _project(GROUND_W, 0),
-		_project(GROUND_W, GROUND_H), _project(0, GROUND_H)]
-	var outer: Array[Vector2] = [_project(-e, -e), _project(GROUND_W + e, -e),
-		_project(GROUND_W + e, GROUND_H + e), _project(-e, GROUND_H + e)]
+	var g := Vector2(ZooBootstrap.plot_size())   # apron rings whatever plot we own
+	var inner: Array[Vector2] = [_project(0, 0), _project(g.x, 0),
+		_project(g.x, g.y), _project(0, g.y)]
+	var outer: Array[Vector2] = [_project(-e, -e), _project(g.x + e, -e),
+		_project(g.x + e, g.y + e), _project(-e, g.y + e)]
 	var near := Color("#3b5e26")    # forest floor right at the clearing's edge
 	var far := Color("#243a1b")     # melts into the backdrop
 	for i in 4:
@@ -173,8 +174,9 @@ func _meadow_noise(fx: float, fy: float) -> float:
 
 
 func _draw_ground() -> void:
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
+	var ground := ZooBootstrap.plot_size()
+	for gy in range(ground.y):
+		for gx in range(ground.x):
 			_fill_diamond(gx, gy, _grass_color(gx, gy))
 
 
@@ -336,8 +338,9 @@ func _draw_ground_scatter() -> void:
 		var def := inst.get_def()
 		if def != null and def.walkable:
 			blocked[inst.position] = true
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
+	var ground := ZooBootstrap.plot_size()
+	for gy in range(ground.y):
+		for gx in range(ground.x):
 			if blocked.has(Vector2i(gx, gy)):
 				continue
 			var h := _hash2(gx + 31, gy + 17)

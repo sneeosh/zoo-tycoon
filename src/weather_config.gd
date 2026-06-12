@@ -51,18 +51,21 @@ func weather_by_id(id: StringName) -> Dictionary:
 
 
 # Weighted pick of a weather id using the supplied (seeded) RNG.
-func pick_weather(rng: RandomNumberGenerator) -> StringName:
+# weight_mults (weather id -> multiplier) lets the zoo's climate bias the
+# roll — desert plots barely see rain, tropical ones see plenty
+# (design/tuning/zoo_types.md ## Climates).
+func pick_weather(rng: RandomNumberGenerator, weight_mults: Dictionary = {}) -> StringName:
 	if weathers.is_empty():
 		return &""
 	var total := 0.0
 	for wx in weathers:
-		total += float(wx["weight"])
+		total += float(wx["weight"]) * float(weight_mults.get(wx["id"], 1.0))
 	if total <= 0.0:
 		return weathers[0]["id"]
 	var pick := rng.randf() * total
 	var accum := 0.0
 	for wx in weathers:
-		accum += float(wx["weight"])
+		accum += float(wx["weight"]) * float(weight_mults.get(wx["id"], 1.0))
 		if pick <= accum:
 			return wx["id"]
 	return weathers[weathers.size() - 1]["id"]

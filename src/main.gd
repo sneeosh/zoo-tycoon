@@ -8,7 +8,6 @@ extends Node
 # This script is GAME CODE — not engine. The engine drives ticks, spawning,
 # satisfaction, etc.; this just stages content and observes/dispatches input.
 
-const GATE_TILE: Vector2i = Vector2i(0, 17)
 const REGION_PANEL_W: int = 300   # width of the right-side Manage Exhibit panel
 const HUD_REFRESH_SECONDS: float = 0.2
 const LOG_MAX_LINES: int = 60
@@ -80,6 +79,11 @@ var _welcome_difficulty_label: Label
 var _welcome_difficulty_row: HBoxContainer
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
 var _selected_difficulty: StringName = &"standard"
+var _welcome_plot_label: Label
+var _welcome_plot_row: HFlowContainer              # wraps — the catalog is long
+var _welcome_plot_buttons: Dictionary = {}         # id (StringName) -> Button
+var _welcome_plot_caption: Label
+var _selected_zoo_type: StringName = &""           # set when the modal builds
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
 var _goals_state: Dictionary = {       # one-way: true once completed
@@ -108,6 +112,10 @@ var _admin_open_label: Label
 var _admin_staff_value: Label
 var _admin_campaign_label: Label
 var _admin_campaign_buttons: Dictionary = {}   # archetype id -> Button
+var _admin_land_caption: Label
+var _admin_land_buttons: Dictionary = {}       # plot id (StringName) -> Button
+var _relocate_dialog: ConfirmationDialog
+var _pending_relocate_id: StringName = &""     # plot awaiting sell+move confirm
 var _arena_modal: Control
 var _arena_body: VBoxContainer
 var _arena_subject_id: int = 0   # entity_instance_id of the open arena
@@ -571,9 +579,9 @@ func _build_welcome_modal(parent: Control) -> void:
 	var card := PanelContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
 	card.offset_left = -320
-	card.offset_top = -250
+	card.offset_top = -360
 	card.offset_right = 320
-	card.offset_bottom = 250
+	card.offset_bottom = 360
 	card.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_welcome_modal.add_child(card)
@@ -632,6 +640,27 @@ func _build_welcome_modal(parent: Control) -> void:
 	_welcome_difficulty_row.add_theme_constant_override("separation", 8)
 	col.add_child(_welcome_difficulty_row)
 
+	# Land selector (first-launch only) — which plot the zoo is built on.
+	# Plots differ in climate, grid size, and price; the price comes out of
+	# the difficulty's starting cash (design/tuning/zoo_types.md).
+	_welcome_plot_label = Label.new()
+	_welcome_plot_label.text = "Choose your land"
+	_welcome_plot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_plot_label.add_theme_font_size_override("font_size", 12)
+	_welcome_plot_label.add_theme_color_override("font_color", Color("#97a387"))
+	col.add_child(_welcome_plot_label)
+	_welcome_plot_row = HFlowContainer.new()
+	_welcome_plot_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	_welcome_plot_row.add_theme_constant_override("h_separation", 6)
+	_welcome_plot_row.add_theme_constant_override("v_separation", 6)
+	col.add_child(_welcome_plot_row)
+	_welcome_plot_caption = Label.new()
+	_welcome_plot_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_plot_caption.add_theme_font_size_override("font_size", 11)
+	_welcome_plot_caption.add_theme_color_override("font_color", Color("#bccaa8"))
+	_welcome_plot_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_welcome_plot_caption)
+
 	_welcome_btn_row = HBoxContainer.new()
 	_welcome_btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_welcome_btn_row.add_theme_constant_override("separation", 12)
@@ -643,6 +672,58 @@ func _build_welcome_modal(parent: Control) -> void:
 func _on_pick_difficulty(id: StringName) -> void:
 	_selected_difficulty = id
 	_refresh_welcome_difficulty()
+	# Starting cash changed, so which plots are affordable changed too.
+	_refresh_welcome_plots()
+
+
+func _on_pick_plot(id: StringName) -> void:
+	_selected_zoo_type = id
+	_refresh_welcome_plots()
+
+
+# Starting cash of the difficulty currently picked on the welcome screen.
+func _selected_starting_cash() -> int:
+	var s: Scenario = ZooBootstrap.scenario
+	if s == null:
+		return 0
+	var d := s.difficulty_preset(_selected_difficulty)
+	return int(d["starting_cash"]) if not d.is_empty() else s.starting_cash
+
+
+func _refresh_welcome_plots() -> void:
+	var zt: ZooTypeConfig = ZooBootstrap.zoo_types
+	if zt == null:
+		return
+	var cash := _selected_starting_cash()
+	# A plot is offered only when buying it leaves enough working capital to
+	# actually build a park (staging the pre-built starter zoo costs ~$5,100).
+	for id in _welcome_plot_buttons.keys():
+		var btn: Button = _welcome_plot_buttons[id]
+		var plot: Dictionary = zt.plot(id)
+		var affordable: bool = cash - int(plot["cost"]) >= zt.min_cash_after_purchase
+		btn.disabled = not affordable
+		if not affordable and id == _selected_zoo_type:
+			_selected_zoo_type = zt.default_plot
+	for id in _welcome_plot_buttons.keys():
+		var btn: Button = _welcome_plot_buttons[id]
+		var active: bool = id == _selected_zoo_type
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#f4d35e") if active else Color("#3a4a2c")
+		style.set_corner_radius_all(4)
+		style.set_content_margin_all(6)
+		btn.add_theme_stylebox_override("normal", style)
+		btn.add_theme_color_override("font_color",
+			Color("#1a241f") if active else Color("#efeadb"))
+	if _welcome_plot_caption != null:
+		var plot: Dictionary = zt.plot(_selected_zoo_type)
+		if not plot.is_empty():
+			var climate: Dictionary = zt.climate(plot["climate"])
+			var size_v: Vector2i = plot["size"]
+			var cost_text: String = "included" if int(plot["cost"]) == 0 \
+				else "$%s of your starting cash" % _format_thousands(int(plot["cost"]))
+			_welcome_plot_caption.text = "%s — %s climate, %dx%d tiles, %s.\n%s" % [
+				plot["label"], climate.get("label", "?"), size_v.x, size_v.y,
+				cost_text, plot["blurb"]]
 
 
 func _refresh_welcome_difficulty() -> void:
@@ -660,6 +741,7 @@ func _refresh_welcome_difficulty() -> void:
 
 func _on_welcome_start_tutorial() -> void:
 	ZooBootstrap.set_difficulty(_selected_difficulty)
+	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
 	_start_tutorial()
 	SimClock.play()
@@ -668,6 +750,7 @@ func _on_welcome_start_tutorial() -> void:
 
 func _on_welcome_skip_tutorial() -> void:
 	ZooBootstrap.set_difficulty(_selected_difficulty)
+	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
 	_stage_starter_park()
 	# Starter park ships with populated exhibits, so open the gates immediately
@@ -1231,6 +1314,35 @@ func _build_admin_modal(parent: Control) -> void:
 
 	col.add_child(HSeparator.new())
 
+	# Land & relocation — sell the whole zoo and move to a different plot
+	# (climate + grid size + price from design/tuning/zoo_types.md).
+	var land_label := Label.new()
+	land_label.text = "Land & relocation"
+	land_label.add_theme_font_size_override("font_size", 14)
+	land_label.add_theme_color_override("font_color", Color("#dde4cf"))
+	col.add_child(land_label)
+	var land_row := HFlowContainer.new()
+	land_row.add_theme_constant_override("h_separation", 6)
+	land_row.add_theme_constant_override("v_separation", 6)
+	col.add_child(land_row)
+	if ZooBootstrap.zoo_types != null:
+		for plot in ZooBootstrap.zoo_types.plots:
+			var pid: StringName = plot["id"]
+			var pb := Button.new()
+			pb.custom_minimum_size = Vector2(160, 44)
+			pb.add_theme_font_size_override("font_size", 11)
+			pb.focus_mode = Control.FOCUS_NONE
+			pb.pressed.connect(_on_relocate_pressed.bind(pid))
+			land_row.add_child(pb)
+			_admin_land_buttons[pid] = pb
+	_admin_land_caption = Label.new()
+	_admin_land_caption.add_theme_font_size_override("font_size", 11)
+	_admin_land_caption.add_theme_color_override("font_color", Color("#97a387"))
+	_admin_land_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_land_caption)
+
+	col.add_child(HSeparator.new())
+
 	# Sound — master volume (the top-bar ♪ button is the quick mute).
 	var snd_row := HBoxContainer.new()
 	snd_row.add_theme_constant_override("separation", 10)
@@ -1294,6 +1406,88 @@ func _refresh_admin_modal() -> void:
 		_admin_staff_value.text = "%d  ·  $%d/day" % [
 			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
 	_refresh_campaign_controls()
+	_refresh_land_controls()
+
+
+func _refresh_land_controls() -> void:
+	var zt: ZooTypeConfig = ZooBootstrap.zoo_types
+	if zt == null or _admin_land_caption == null:
+		return
+	var sale: Dictionary = ZooBootstrap.zoo_sale_value()
+	var balance := Ledger.get_balance()
+	for pid in _admin_land_buttons.keys():
+		var btn: Button = _admin_land_buttons[pid]
+		var plot: Dictionary = zt.plot(pid)
+		var climate: Dictionary = zt.climate(plot["climate"])
+		var psize: Vector2i = plot["size"]
+		var is_current: bool = pid == ZooBootstrap.current_zoo_type
+		if is_current:
+			btn.text = "%s\n(current)" % plot["label"]
+			btn.disabled = true
+		else:
+			var net: int = int(sale["total"]) - int(plot["cost"])
+			btn.text = "%s\nnet %s$%s" % [plot["label"],
+				"+" if net >= 0 else "−", _format_thousands(absi(net))]
+			btn.disabled = balance + int(sale["total"]) < int(plot["cost"])
+		btn.tooltip_text = "%s climate - %dx%d tiles - land price $%s\n%s" % [
+			climate.get("label", "?"), psize.x, psize.y,
+			_format_thousands(int(plot["cost"])), plot["blurb"]]
+	var cur: Dictionary = ZooBootstrap.current_plot()
+	var cur_climate: Dictionary = ZooBootstrap.current_climate()
+	var cur_size: Vector2i = ZooBootstrap.plot_size()
+	_admin_land_caption.text = (
+		"You're on %s — %s climate, %dx%d tiles. Selling up recovers ~$%s " +
+		"(%d%% of the land price plus the usual ½ sell-back on every building " +
+		"and animal), then everything is demolished and you start the new " +
+		"plot empty.") % [
+		cur.get("label", "?"), cur_climate.get("label", "?"),
+		cur_size.x, cur_size.y, _format_thousands(int(sale["total"])),
+		int(round(zt.resale_fraction * 100.0))]
+
+
+# A relocation button was pressed: confirm before demolishing a whole zoo.
+func _on_relocate_pressed(pid: StringName) -> void:
+	var zt: ZooTypeConfig = ZooBootstrap.zoo_types
+	if zt == null or _relocate_dialog == null:
+		return
+	var plot: Dictionary = zt.plot(pid)
+	if plot.is_empty():
+		return
+	_pending_relocate_id = pid
+	var sale: Dictionary = ZooBootstrap.zoo_sale_value()
+	_relocate_dialog.dialog_text = (
+		"Sell %s and move to %s?\n\n" +
+		"Sale proceeds:  $%s  (land $%s + assets $%s)\n" +
+		"New land cost:  $%s\n\n" +
+		"Your whole zoo is demolished — exhibits, buildings and animals are " +
+		"sold off and your guests go home. There's no undo.") % [
+		ZooBootstrap.current_plot().get("label", "?"), plot["label"],
+		_format_thousands(int(sale["total"])), _format_thousands(int(sale["land"])),
+		_format_thousands(int(sale["assets"])), _format_thousands(int(plot["cost"]))]
+	_relocate_dialog.popup_centered()
+
+
+func _on_relocate_confirmed() -> void:
+	var pid := _pending_relocate_id
+	_pending_relocate_id = &""
+	if pid == &"":
+		return
+	var zt: ZooTypeConfig = ZooBootstrap.zoo_types
+	var sale: Dictionary = ZooBootstrap.zoo_sale_value()
+	var old_label: String = String(ZooBootstrap.current_plot().get("label", "?"))
+	if not ZooBootstrap.relocate_zoo(pid):
+		_push_log("[color=#e76f51]The move fell through — not enough cash to buy that land.[/color]")
+		return
+	var plot: Dictionary = zt.plot(pid)
+	_selected_region_id = -1
+	_refresh_region_panel()
+	_park_open_prompted = false   # re-offer opening once they rebuild
+	_close_admin_modal()
+	_push_log(("[color=#f4d35e][b]Moved to %s.[/b][/color] Sold %s for $%s, " +
+		"paid $%s for the new land. The park is closed while you rebuild.") % [
+		plot["label"], old_label, _format_thousands(int(sale["total"])),
+		_format_thousands(int(plot["cost"]))])
+	_refresh_hud()
 
 
 func _on_pick_ticket_bracket(id: StringName) -> void:
@@ -1349,6 +1543,16 @@ func _bump_keepers(delta: int) -> void:
 		else:
 			_push_log("[color=#7e9286]Let a zookeeper go.[/color] Now %d on staff." % now)
 	_refresh_admin_modal()
+
+
+func _build_relocate_dialog(parent: Control) -> void:
+	_relocate_dialog = ConfirmationDialog.new()
+	_relocate_dialog.title = "Sell zoo & relocate?"
+	_relocate_dialog.ok_button_text = "Sell & move"
+	_relocate_dialog.cancel_button_text = "Stay"
+	_relocate_dialog.confirmed.connect(_on_relocate_confirmed)
+	_relocate_dialog.canceled.connect(func(): _pending_relocate_id = &"")
+	parent.add_child(_relocate_dialog)
 
 
 func _build_open_park_dialog(parent: Control) -> void:
@@ -1487,8 +1691,9 @@ func _start_tutorial() -> void:
 # somewhere to step onto the moment the park opens. Used by every fresh start;
 # the skip-tutorial starter park already lays its full spine and ignores this.
 func _lay_starter_gate_paths() -> void:
-	EntityRegistry.place(&"path", GATE_TILE)                          # gate cell
-	EntityRegistry.place(&"path", GATE_TILE + Vector2i(0, -1))        # one step in
+	var gate := ZooBootstrap.gate_cell()
+	EntityRegistry.place(&"path", gate)                               # gate cell
+	EntityRegistry.place(&"path", gate + Vector2i(0, -1))             # one step in
 
 
 func _show_tutorial_step() -> void:
@@ -1600,15 +1805,22 @@ func _close_welcome() -> void:
 func _render_welcome_buttons(initial_launch: bool) -> void:
 	for child in _welcome_btn_row.get_children():
 		child.queue_free()
-	# Difficulty selector — only on first launch (not the "?" help re-open).
+	# Difficulty + land selectors — only on first launch (not the "?" help
+	# re-open).
 	_welcome_difficulty_label.visible = initial_launch
 	_welcome_difficulty_row.visible = initial_launch
+	_welcome_plot_label.visible = initial_launch
+	_welcome_plot_row.visible = initial_launch
+	_welcome_plot_caption.visible = initial_launch
 	# Controls reference — only in help mode (the "?" button).
 	if _welcome_controls_label != null:
 		_welcome_controls_label.visible = not initial_launch
 	for child in _welcome_difficulty_row.get_children():
 		child.queue_free()
 	_welcome_difficulty_buttons.clear()
+	for child in _welcome_plot_row.get_children():
+		child.queue_free()
+	_welcome_plot_buttons.clear()
 	if initial_launch and ZooBootstrap.scenario != null:
 		for d in ZooBootstrap.scenario.difficulties:
 			var id: StringName = d["id"]
@@ -1624,6 +1836,26 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 			_welcome_difficulty_row.add_child(btn)
 			_welcome_difficulty_buttons[id] = btn
 		_refresh_welcome_difficulty()
+	if initial_launch and ZooBootstrap.zoo_types != null:
+		if _selected_zoo_type == &"":
+			_selected_zoo_type = ZooBootstrap.zoo_types.default_plot
+		for plot in ZooBootstrap.zoo_types.plots:
+			var pid: StringName = plot["id"]
+			var pbtn := Button.new()
+			var cost_line: String = "Included" if int(plot["cost"]) == 0 \
+				else "$%s" % _format_thousands(int(plot["cost"]))
+			pbtn.text = "%s\n%s" % [plot["label"], cost_line]
+			pbtn.custom_minimum_size = Vector2(136, 40)
+			pbtn.add_theme_font_size_override("font_size", 11)
+			pbtn.focus_mode = Control.FOCUS_NONE
+			var pclimate: Dictionary = ZooBootstrap.zoo_types.climate(plot["climate"])
+			var psize: Vector2i = plot["size"]
+			pbtn.tooltip_text = "%s climate - %dx%d tiles\n%s" % [
+				pclimate.get("label", "?"), psize.x, psize.y, plot["blurb"]]
+			pbtn.pressed.connect(_on_pick_plot.bind(pid))
+			_welcome_plot_row.add_child(pbtn)
+			_welcome_plot_buttons[pid] = pbtn
+		_refresh_welcome_plots()
 	if initial_launch:
 		var tutorial_btn := Button.new()
 		tutorial_btn.text = "  Start tutorial  "
@@ -2677,6 +2909,7 @@ func _build_right_column(parent: Control) -> void:
 	_build_admin_modal(parent)
 	_build_arena_modal(parent)
 	_build_open_park_dialog(parent)
+	_build_relocate_dialog(parent)
 
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
@@ -2867,7 +3100,7 @@ func _recompute_path_access() -> void:
 
 
 func _region_path_connected(net: WalkableNetwork, region: Region, d: int) -> bool:
-	var viewing := NavigationRegistry.nearest(GATE_TILE, func(c: Vector2i) -> bool:
+	var viewing := NavigationRegistry.nearest(ZooBootstrap.gate_cell(), func(c: Vector2i) -> bool:
 		return net.within_engagement_distance(c, region.cells, d))
 	return viewing != INetworkNavigator.NO_STEP
 
@@ -3189,9 +3422,15 @@ func _on_placement_requested(cell: Vector2i) -> void:
 		return
 	# Entity mode: selected def is a zone tile or amenity placed on the grid.
 	if _selected_def_id != &"":
+		var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
+		# The engine's grid is unbounded; the plot you bought is not. Enforce
+		# the land boundary game-side (zoo_types.md decides the plot size).
+		if def != null and not _in_plot(cell, def.footprint):
+			_push_log("[color=#e76f51]Can't place %s at (%d, %d): outside your land.[/color]" %
+				[def.display_name, cell.x, cell.y])
+			return
 		var id := EntityRegistry.place(_selected_def_id, cell)
 		if id == 0:
-			var def: EntityDef = ContentDB.get_entity_def(_selected_def_id)
 			var reason := "blocked"
 			if Ledger.get_balance() < def.build_cost:
 				reason = "not enough money"
@@ -3200,7 +3439,7 @@ func _on_placement_requested(cell: Vector2i) -> void:
 		return
 	# No build selection: gate → admin modal; arena → arena modal;
 	# exhibit tile → Manage Exhibit panel; blank ground → clear panel.
-	if cell == GATE_TILE:
+	if cell == ZooBootstrap.gate_cell():
 		_open_admin_modal()
 		return
 	var arena_id := _arena_at(cell)
@@ -3214,6 +3453,13 @@ func _on_placement_requested(cell: Vector2i) -> void:
 	else:
 		_selected_region_id = -1
 		_refresh_region_panel()
+
+
+# Does a footprint anchored at `cell` lie entirely inside the plot we own?
+func _in_plot(cell: Vector2i, footprint: Vector2i = Vector2i.ONE) -> bool:
+	var plot := ZooBootstrap.plot_size()
+	return cell.x >= 0 and cell.y >= 0 \
+		and cell.x + footprint.x <= plot.x and cell.y + footprint.y <= plot.y
 
 
 func _arena_at(cell: Vector2i) -> int:
@@ -3259,6 +3505,8 @@ func _on_placement_drag_requested(cell: Vector2i) -> void:
 		return
 	if def.footprint.x != 1 or def.footprint.y != 1:
 		return   # multi-tile builds don't drag-paint cleanly; click each one
+	if not _in_plot(cell, def.footprint):
+		return   # silent off-plot drag, same as occupied cells
 	EntityRegistry.place(_selected_def_id, cell)
 	# Ignore return value: cell may be occupied or unaffordable mid-drag;
 	# user can see the result and lift the button.
