@@ -51,6 +51,12 @@ custom_bind_ip=""
 port_override_enabled=false
 port_override=6550
 
+[input_devices]
+
+; Touch taps drive the HUD via emulated mouse events (roadmap 2.2). The iso
+; map view refines them: tap-on-release placement, 1-finger pan, pinch zoom.
+pointing/emulate_mouse_from_touch=true
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

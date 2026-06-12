@@ -8,7 +8,6 @@ extends Node
 # This script is GAME CODE — not engine. The engine drives ticks, spawning,
 # satisfaction, etc.; this just stages content and observes/dispatches input.
 
-const STARTER_VISITOR_COUNT: int = 6
 const GATE_TILE: Vector2i = Vector2i(0, 17)
 const REGION_PANEL_W: int = 300   # width of the right-side Manage Exhibit panel
 const HUD_REFRESH_SECONDS: float = 0.2
@@ -149,8 +148,15 @@ var _tutorial_step3_floor: int = 0
 
 var _hud_accumulator: float = 0.0
 
+# Zoo-side audio (roadmap 2.1) — wires its own SFX signals; main owns only
+# the mute/volume UI and the endgame stingers.
+var _audio: ZooAudio
+var _sound_btn: Button
+
 
 func _ready() -> void:
+	_audio = ZooAudio.new()
+	add_child(_audio)
 	_build_ui()
 	_wire_engine_signals()
 	_refresh_speed_buttons()
@@ -1221,6 +1227,30 @@ func _build_admin_modal(parent: Control) -> void:
 	_admin_campaign_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(_admin_campaign_label)
 
+	col.add_child(HSeparator.new())
+
+	# Sound — master volume (the top-bar ♪ button is the quick mute).
+	var snd_row := HBoxContainer.new()
+	snd_row.add_theme_constant_override("separation", 10)
+	col.add_child(snd_row)
+	var snd_label := Label.new()
+	snd_label.text = "Sound volume"
+	snd_label.add_theme_font_size_override("font_size", 14)
+	snd_label.add_theme_color_override("font_color", Color("#dde4cf"))
+	snd_row.add_child(snd_label)
+	var snd_slider := HSlider.new()
+	snd_slider.min_value = 0.0
+	snd_slider.max_value = 1.0
+	snd_slider.step = 0.05
+	snd_slider.value = _audio.master_volume if _audio != null else 0.8
+	snd_slider.custom_minimum_size = Vector2(180, 24)
+	snd_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	snd_slider.focus_mode = Control.FOCUS_NONE
+	snd_slider.value_changed.connect(func(v: float):
+		if _audio != null:
+			_audio.set_master_volume(v))
+	snd_row.add_child(snd_slider)
+
 
 func _open_admin_modal() -> void:
 	_refresh_admin_modal()
@@ -1835,6 +1865,8 @@ func _mission_results(cash: int, rep: int, s: Scenario) -> Array:
 func _resolve_endgame(won: bool, headline: String, body: String,
 		results: Array = []) -> void:
 	_endgame_resolved = true
+	if _audio != null:
+		_audio.play(&"win" if won else &"lose")
 	SimClock.pause()
 	_refresh_speed_buttons()
 	if _endgame_modal != null:
@@ -2364,6 +2396,14 @@ func _build_top_bar(parent: Control) -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
 
+	_sound_btn = Button.new()
+	_sound_btn.custom_minimum_size = Vector2(44, 36)
+	_sound_btn.focus_mode = Control.FOCUS_NONE
+	_sound_btn.tooltip_text = "Toggle sound (volume slider in the gate's Park Admin)"
+	_sound_btn.pressed.connect(_toggle_sound)
+	_refresh_sound_button()
+	row.add_child(_sound_btn)
+
 	_view_btn = Button.new()
 	_view_btn.custom_minimum_size = Vector2(96, 36)
 	_view_btn.focus_mode = Control.FOCUS_NONE
@@ -2715,78 +2755,9 @@ func _wire_engine_signals() -> void:
 
 
 func _stage_starter_park() -> void:
-	# A welcoming starter park spread across the map: a Lion savanna and a
-	# Penguin pool, with a food stand + restroom on the visitor path between
-	# the entrance and the exhibits. Tuned so a non-technical first-time
-	# player can run the sim and immediately see activity.
-
-	# Gate is at the bottom-left corner (see GATE_TILE). The starter park lays
-	# a path spine UP from the gate to a concourse, with exhibits above it.
-
-	# --- Lion savanna: grass with rocks at one end. ---
-	for x in range(5, 9):
-		for y in range(7, 9):
-			EntityRegistry.place(&"grass_patch", Vector2i(x, y))
-	EntityRegistry.place(&"rock_patch", Vector2i(9, 7))
-	EntityRegistry.place(&"rock_patch", Vector2i(9, 8))
-
-	# --- Penguin pool: pure water tiles, separated from the lion region
-	# by a one-tile gap so they don't merge into one big Region. ---
-	for x in range(5, 9):
-		for y in range(12, 14):
-			EntityRegistry.place(&"water_patch", Vector2i(x, y))
-
-	# --- Path network: a spine from the entrance gate (0,17) up to a main
-	# concourse at y=10 that runs past both exhibits. Guests spawn at the gate
-	# and walk the path; they view an exhibit from any path cell within the
-	# engagement distance (navigation.md), so the concourse alone lets them
-	# see the lion and the penguins. Lay paths BEFORE amenities so the
-	# amenities can sit adjacent to the concourse without colliding. ---
-	for y in range(10, 18):
-		EntityRegistry.place(&"path", Vector2i(0, y))   # gate → concourse
-	for x in range(1, 16):
-		EntityRegistry.place(&"path", Vector2i(x, 10))  # concourse
-
-	# --- Amenities, each adjacent to the concourse so guests reach them.
-	# The starter park covers all four guest needs (food / drink / restroom /
-	# rest) at a density sized for the ~40–50 guest crowd this park actually
-	# pulls by day 6 — not one-of-each. The 2026-06-09 playtest measured the
-	# one-of-each layout leaving 27/47 guests thirsty, and the resulting
-	# unhappy departures sank reputation unrecoverably. Doing nothing should
-	# be a slow drift, not a death spiral; thirst gets the most capacity
-	# because drink demand peaks first. ---
-	EntityRegistry.place(&"food_stand",  Vector2i(13, 11))  # touches (13,10)/(14,10)
-	EntityRegistry.place(&"food_stand",  Vector2i(1, 8))    # 2nd food, gate end; touches (1,10)/(2,10) via (1,9)/(2,9)
-	EntityRegistry.place(&"drink_stand", Vector2i(11, 11))  # touches (11,10)
-	EntityRegistry.place(&"drink_stand", Vector2i(6, 9))    # mid-concourse, touches (6,10)
-	EntityRegistry.place(&"drink_stand", Vector2i(9, 11))   # touches (9,10)
-	EntityRegistry.place(&"restroom",    Vector2i(4, 11))   # touches (4,10)
-	EntityRegistry.place(&"restroom",    Vector2i(8, 11))   # 2nd restroom (spillover bottleneck)
-	EntityRegistry.place(&"bench",       Vector2i(2, 11))   # touches (2,10)
-	EntityRegistry.place(&"bench",       Vector2i(12, 11))  # touches (12,10)
-	EntityRegistry.place(&"bench",       Vector2i(3, 9))    # touches (3,10)
-
-	# --- Lion + its infrastructure. ---
-	var lion_region := RegionRegistry.region_at_cell(Vector2i(5, 7))
-	if lion_region != null:
-		RegionRegistry.add_placement(lion_region.region_id, &"lion")
-		RegionRegistry.add_placement(lion_region.region_id, &"feeding_trough")
-		RegionRegistry.add_placement(lion_region.region_id, &"water_trough")
-
-	# --- Penguin colony — they're social, start with 4 so the herd
-	# requirement is met (social_min=4). ---
-	var penguin_region := RegionRegistry.region_at_cell(Vector2i(5, 12))
-	if penguin_region != null:
-		for _i in 4:
-			RegionRegistry.add_placement(penguin_region.region_id, &"penguin")
-		RegionRegistry.add_placement(penguin_region.region_id, &"feeding_trough")
-
-	# Visitors enter at the gate and walk in along the path. Spawn them on the
-	# entrance path column (x=0, y 10..17) so they start on the network and
-	# route immediately; auto-spawned guests enter at the gate cell.
-	for i in range(STARTER_VISITOR_COUNT):
-		AgentPool.spawn(&"visitor", Vector2(
-			0.0, SimClock.rng.randf_range(10.0, 17.0)))
+	# Layout lives in src/starter_park.gd, shared with the integration suite
+	# so the multi-day arc test runs the exact park a new player gets.
+	StarterPark.stage()
 
 
 # ============================================================================
@@ -3180,6 +3151,22 @@ func _toggle_view() -> void:
 	_map_view.preview_def_id = prev_preview
 	_map_view.disconnected_regions = prev_disconnected
 	_update_view_button()
+
+
+func _toggle_sound() -> void:
+	if _audio == null:
+		return
+	_audio.set_muted(not _audio.muted)
+	_refresh_sound_button()
+
+
+func _refresh_sound_button() -> void:
+	if _sound_btn == null:
+		return
+	var on: bool = _audio != null and not _audio.muted
+	_sound_btn.text = "♪" if on else "✕"
+	_sound_btn.add_theme_color_override("font_color",
+		Color("#efeadb") if on else Color("#7e9286"))
 
 
 func _update_view_button() -> void:

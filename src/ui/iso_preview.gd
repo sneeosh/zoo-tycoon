@@ -19,12 +19,12 @@ const GATE_CELL: Vector2i = Vector2i(0, 17)   # entrance — bottom-left corner
 const FENCE_H := 16
 const GROUND_W := 28     # cells of ground to draw
 const GROUND_H := 18
-const GROUND_TEX_SCALE := 96.0   # model px the seamless ground-noise tile spans
 
 var origin := Vector2(660, 70)
 var _sprites := {}       # name -> Texture2D | null
 var _sprite_meta := {}   # name -> {foot, cx, wfrac} anchoring metadata
 var _ground_noise: ImageTexture   # seamless grayscale grain for the ground
+var _background: IsoBackground    # static world layers (redraws on change only)
 
 # Hover/interaction state (mirrors MapView). _hover_cell is the grid cell the
 # cursor is over, via inverse projection; _hovering gates the preview.
@@ -51,6 +51,22 @@ var _panning := false
 # Mouse button currently held for drag-paint (LEFT/RIGHT); 0 = nothing held.
 var _drag_button: int = 0
 
+# --- Touch (roadmap 2.2, first pass) ----------------------------------------
+# The OS-level mouse-from-touch emulation keeps the HUD's buttons working with
+# zero changes; this view refines the *map* gestures so they feel native:
+#   tap            → place/select on RELEASE (a pinch's first finger can't
+#                    accidentally buy a tile — emulated presses are deferred)
+#   1-finger drag  → pan the camera (mobile-natural; drag-paint stays a
+#                    mouse-only affordance)
+#   2-finger pinch → zoom about the midpoint; the midpoint's motion pans
+# Emulated mouse events are recognized by device == DEVICE_ID_EMULATION.
+var _active_touches := {}            # touch index -> screen position
+var _touch_tap_pos := Vector2.INF    # press position of a candidate tap
+var _touch_tap_valid := false
+var _pinch_prev_dist := 0.0
+var _pinch_prev_mid := Vector2.ZERO
+const TAP_SLOP_PX := 14.0
+
 # Parkland scenery billboards (trees / rocks / bushes), depth-sorted with
 # everything else so guests pass behind a tree. Deterministic per cell, cached
 # and rebuilt only when the built world changes.
@@ -70,7 +86,6 @@ var _money_floats: Array = []
 const VERDICT_HAPPY_COLOR := Color(0.51, 0.78, 0.47)
 const VERDICT_UNHAPPY_COLOR := Color(0.91, 0.42, 0.34)
 
-
 func _ready() -> void:
 	# STOP so we receive _gui_input — this is an interactive view now, not a
 	# passive overlay.
@@ -82,6 +97,19 @@ func _ready() -> void:
 	# Tile the ground noise texture seamlessly across the whole ground plane.
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	_ground_noise = _make_ground_noise()
+	# Static world layers (backdrop, lawn, exhibit floors, paths, scatter)
+	# live in a child that redraws only on world/camera changes — the same
+	# split MapView/MapBackground uses. Keeps ~600 textured polygons out of
+	# the per-frame draw (web-perf budget + the GL-handle-churn suspect).
+	_background = IsoBackground.new()
+	_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_background.show_behind_parent = true
+	_background.origin = origin
+	_background.ground_noise = _ground_noise
+	assert(IsoBackground.TW == TW and IsoBackground.TH == TH \
+		and IsoBackground.GROUND_W == GROUND_W and IsoBackground.GROUND_H == GROUND_H,
+		"IsoBackground projection constants must match IsoPreview's")
+	add_child(_background)
 	resized.connect(_rebuild_view)
 	ZooBootstrap.money_floated.connect(_on_money_floated)
 	ZooBootstrap.guest_departed.connect(_on_guest_departed)
@@ -96,7 +124,6 @@ func _ready() -> void:
 	_card_box.set_border_width_all(1)
 	_card_box.set_corner_radius_all(4)
 
-
 var _time := 0.0
 
 func _process(d: float) -> void:
@@ -104,7 +131,6 @@ func _process(d: float) -> void:
 	_tick_money_floats()
 	_handle_keyboard_pan(d)
 	queue_redraw()
-
 
 # WASD / arrow keys nudge the view _pan in screen space. Speed scales with the
 # control size so big windows feel as snappy as small ones; modifiers boost it
@@ -126,10 +152,8 @@ func _handle_keyboard_pan(dt: float) -> void:
 	_pan += dir.normalized() * KEY_PAN_SPEED * boost * dt
 	_rebuild_view()
 
-
 func _on_money_floated(amount: int, world_pos: Vector2) -> void:
 	_push_float("+$%d" % amount, Color(0.96, 0.83, 0.37), world_pos)
-
 
 # A guest left: float their verdict so the reputation meter has a visible
 # heartbeat at the gate. Forgettable departures (verdict 0) stay silent.
@@ -139,13 +163,11 @@ func _on_guest_departed(verdict: int, world_pos: Vector2) -> void:
 	elif verdict < 0:
 		_push_float("☹", VERDICT_UNHAPPY_COLOR, world_pos)
 
-
 func _push_float(text: String, color: Color, world_pos: Vector2) -> void:
 	if _money_floats.size() >= FLOAT_LIMIT:
 		_money_floats.pop_front()
 	_money_floats.append({"text": text, "color": color, "world_pos": world_pos,
 		"born_at": Time.get_ticks_msec() / 1000.0})
-
 
 func _tick_money_floats() -> void:
 	var now := Time.get_ticks_msec() / 1000.0
@@ -156,7 +178,6 @@ func _tick_money_floats() -> void:
 		else:
 			i += 1
 
-
 # Model-space bounding rect of the drawn ground (its four diamond corners).
 func _ground_model_rect() -> Rect2:
 	var pts := [_project(0, 0), _project(GROUND_W, 0),
@@ -165,7 +186,6 @@ func _ground_model_rect() -> Rect2:
 	for p in pts:
 		r = r.expand(p)
 	return r
-
 
 # Recompute the view transform: fit the ground into the control, then apply the
 # user's zoom (about the model centre) and pan.
@@ -178,7 +198,10 @@ func _rebuild_view() -> void:
 	var z := _fit_zoom * _user_zoom
 	_view_xf = Transform2D(0.0, Vector2(z, z), 0.0, size * 0.5 - _model_center * z + _pan)
 	_last_size = size
-
+	# Camera moved — the static layer needs the new transform.
+	if _background != null:
+		_background.view_xf = _view_xf
+		_background.queue_redraw()
 
 # Inverse of _project/_tile_center, accounting for the view transform: which
 # grid cell does a local screen point fall in? The 2:1 diamond lattice is a
@@ -193,8 +216,24 @@ func _screen_to_cell(p: Vector2) -> Vector2i:
 	var v := dy / (TH * 0.5)              # v = gx + gy
 	return Vector2i(roundi((u + v) * 0.5), roundi((v - u) * 0.5))
 
-
 func _gui_input(event: InputEvent) -> void:
+	# Raw touch tracking for multi-finger gestures (emulated mouse events for
+	# finger 0 still arrive below and are deferred to tap-on-release).
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			_active_touches[event.index] = event.position
+			if _active_touches.size() >= 2:
+				_touch_tap_valid = false   # a pinch is not a tap
+		else:
+			_active_touches.erase(event.index)
+		if _active_touches.size() < 2:
+			_pinch_prev_dist = 0.0
+		return
+	if event is InputEventScreenDrag:
+		_active_touches[event.index] = event.position
+		if _active_touches.size() == 2:
+			_handle_pinch()
+		return
 	# Mac trackpad pinch — `factor` is multiplicative (>1 = zoom in).
 	if event is InputEventMagnifyGesture:
 		_zoom_at(event.position, event.factor)
@@ -205,6 +244,16 @@ func _gui_input(event: InputEvent) -> void:
 		_rebuild_view()
 		return
 	if event is InputEventMouseMotion:
+		if event.device == InputEvent.DEVICE_ID_EMULATION:
+			# One-finger drag on touch: pan. Moving past the tap slop also
+			# voids the pending tap so a pan never places a tile on lift.
+			if _touch_tap_valid \
+					and event.position.distance_to(_touch_tap_pos) > TAP_SLOP_PX:
+				_touch_tap_valid = false
+			if _active_touches.size() <= 1 and not _touch_tap_valid:
+				_pan += event.relative
+				_rebuild_view()
+			return
 		if _panning:
 			_pan += event.relative
 			_rebuild_view()
@@ -220,6 +269,19 @@ func _gui_input(event: InputEvent) -> void:
 			elif _drag_button == MOUSE_BUTTON_RIGHT:
 				remove_drag_requested.emit(_hover_cell)
 	elif event is InputEventMouseButton:
+		if event.device == InputEvent.DEVICE_ID_EMULATION:
+			if event.button_index != MOUSE_BUTTON_LEFT:
+				return   # touch has no right-click; sell via the manage panel
+			if event.pressed:
+				_touch_tap_pos = event.position
+				_touch_tap_valid = true
+			elif _touch_tap_valid and _active_touches.size() <= 1 \
+					and event.position.distance_to(_touch_tap_pos) <= TAP_SLOP_PX:
+				_touch_tap_valid = false
+				placement_requested.emit(_screen_to_cell(event.position))
+			else:
+				_touch_tap_valid = false
+			return
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_zoom_at(event.position, 1.1)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
@@ -235,7 +297,6 @@ func _gui_input(event: InputEvent) -> void:
 		elif not event.pressed and event.button_index == _drag_button:
 			_drag_button = 0
 
-
 # Zoom about the cursor: keep the model point under `screen_pos` fixed.
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 	var m := _view_xf.affine_inverse() * screen_pos
@@ -245,40 +306,45 @@ func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 	_pan = screen_pos - size * 0.5 - (m - _model_center) * z
 	_rebuild_view()
 
+# Two active fingers: zoom about their midpoint by the distance ratio, and
+# pan by the midpoint's motion. State resets when a finger lifts.
+func _handle_pinch() -> void:
+	var pts: Array = _active_touches.values()
+	var mid: Vector2 = (pts[0] + pts[1]) * 0.5
+	var dist: float = pts[0].distance_to(pts[1])
+	if _pinch_prev_dist > 1.0:
+		_pan += mid - _pinch_prev_mid
+		_rebuild_view()
+		_zoom_at(mid, dist / _pinch_prev_dist)
+	_pinch_prev_dist = dist
+	_pinch_prev_mid = mid
+
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_MOUSE_EXIT:
 		_hovering = false
-
 
 func force_hover_at_world(world_pos: Vector2) -> void:
 	_hover_cell = Vector2i(roundi(world_pos.x), roundi(world_pos.y))
 	_hover_screen = _view_xf * _tile_center(world_pos.x, world_pos.y)
 	_hovering = true
 
-
 # Top corner of cell (gx,gy)'s diamond.
 func _project(gx: float, gy: float) -> Vector2:
 	return origin + Vector2((gx - gy) * TW * 0.5, (gx + gy) * TH * 0.5)
 
-
 func _tile_center(gx: float, gy: float) -> Vector2:
 	return _project(gx, gy) + Vector2(0, TH * 0.5)
-
 
 func _draw() -> void:
 	if _last_size != size:
 		_rebuild_view()
-	# Backdrop fills the whole control in screen space — a deep park green so
-	# the bright daytime ground reads as sunlit lawn against forest, not a
-	# debug void (classic Zoo Tycoon daytime framing).
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#2c4420"), true)
-	# The world is drawn in model space under the fit/zoom/pan transform.
+	# Static layers (backdrop, lawn, exhibit floors + fringes, path pavers,
+	# ground scatter) are drawn by the IsoBackground child; they re-render
+	# only on world/camera events, not every frame. This per-frame pass draws
+	# only what moves: shimmer, depth-sorted objects, guests, floats, UI.
 	draw_set_transform_matrix(_view_xf)
-	_draw_ground()
-	_draw_region_fills()
 	_draw_water_shimmer()
-	_draw_ground_scatter()
 	_draw_sorted_objects()
 	_draw_money_floats()
 	_draw_path_warnings()
@@ -287,7 +353,6 @@ func _draw() -> void:
 	draw_set_transform_matrix(Transform2D())
 	_draw_day_night()
 	_draw_inspector_card()
-
 
 # Hover inspector — a screen-space info card for the visitor or entity under
 # the cursor. Suppressed during build-mode (the preview owns that), mirroring
@@ -301,7 +366,6 @@ func _draw_inspector_card() -> void:
 	if lines.is_empty():
 		return
 	_render_card(lines, _hover_screen)
-
 
 func _inspect_visitor_at(screen_pos: Vector2) -> Array[String]:
 	var hit: Agent = null
@@ -332,7 +396,6 @@ func _inspect_visitor_at(screen_pos: Vector2) -> Array[String]:
 			out.append("heading to: %s" % inst.get_def().display_name)
 	return out
 
-
 func _inspect_entity_at(cell: Vector2i) -> Array[String]:
 	for inst_id in EntityRegistry.instances.keys():
 		var inst: EntityInstance = EntityRegistry.instances[inst_id]
@@ -355,14 +418,12 @@ func _inspect_entity_at(cell: Vector2i) -> Array[String]:
 		return out
 	return [] as Array[String]
 
-
 func _bar(value: float) -> String:
 	var filled := int(round(clampf(value, 0.0, 1.0) * 8.0))
 	var s := ""
 	for i in 8:
 		s += "▰" if i < filled else "▱"
 	return s
-
 
 func _render_card(lines: Array[String], anchor: Vector2) -> void:
 	var font := get_theme_default_font()
@@ -385,7 +446,6 @@ func _render_card(lines: Array[String], anchor: Vector2) -> void:
 		draw_string(font, text_o + Vector2(0, fs + i * line_h), lines[i],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs + (1 if i == 0 else 0), color)
 
-
 # Animated glints on water-exhibit cells so pools read as water, not flat blue.
 func _draw_water_shimmer() -> void:
 	for region: Region in RegionRegistry.all_regions():
@@ -401,7 +461,6 @@ func _draw_water_shimmer() -> void:
 				var x0: float = ctr.x - TW * 0.16 + xoff
 				draw_line(Vector2(x0, yy), Vector2(x0 + TW * 0.24, yy),
 					Color(1, 1, 1, 0.16), 1.5)
-
 
 # "+$N" toasts rising from where a guest paid. world_pos is in cell coords, so
 # project through _tile_center; drawn under the view transform (scales with
@@ -425,7 +484,6 @@ func _draw_money_floats() -> void:
 		draw_string(font, o, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 			Color(color.r, color.g, color.b, alpha))
 
-
 # Dusk/night tint — same model as the top-down view: dim toward the edges of
 # the open day, darker once the park has closed.
 func _draw_day_night() -> void:
@@ -445,7 +503,6 @@ func _draw_day_night() -> void:
 	# Lamps and lit buildings push back the dark (OpenRCT2-style light sources).
 	if darkness >= 0.18:
 		_draw_night_glows(darkness)
-
 
 # Warm pools of light at lamp posts, the entrance gate, and building windows
 # once it's dark enough. Drawn in screen space (after the dusk overlay) by
@@ -471,7 +528,6 @@ func _draw_night_glows(darkness: float) -> void:
 		_glow(_view_xf * (_tile_center(cx, cy) + Vector2(0, -8)),
 			20.0 * z * (1.0 + 0.4 * (span - 1.0)), Color("#ffce85"), darkness * 0.85)
 
-
 # A soft pool of light: concentric translucent rings that whiten toward a bright
 # core, so warm-over-dark reads as a lamp glow without an additive material.
 func _glow(pos: Vector2, radius: float, warm: Color, intensity: float) -> void:
@@ -481,7 +537,6 @@ func _glow(pos: Vector2, radius: float, warm: Color, intensity: float) -> void:
 		var r := radius * (1.0 - t)
 		var col := warm.lerp(core, 1.0 - t)
 		draw_circle(pos, r, Color(col.r, col.g, col.b, intensity * 0.16))
-
 
 # Pulsing ⚠ over any exhibit guests can't path to (set by main from the
 # reachability check), floated above the pen so it reads at a glance.
@@ -508,7 +563,6 @@ func _draw_path_warnings() -> void:
 		draw_string(font, pos, glyph,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.90, 0.43, 0.31, pulse))
 
-
 # A filled + outlined diamond on cell (gx,gy), used for hover + build feedback.
 func _preview_cell(gx: int, gy: int, fill: Color, stroke: Color) -> void:
 	var t := _project(gx, gy)
@@ -517,7 +571,6 @@ func _preview_cell(gx: int, gy: int, fill: Color, stroke: Color) -> void:
 	if fill.a > 0.0:
 		draw_colored_polygon(pts, fill)
 	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), stroke, 2.0)
-
 
 # Build preview — mirrors MapView: footprint diamonds for entities, a
 # whole-region highlight for placeables (green = ok, red = can't). Also a quiet
@@ -565,7 +618,6 @@ func _draw_preview() -> void:
 			Color(0, 0, 0, 0.6))
 		draw_string(font, o, note, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, note_color)
 
-
 func _draw_placeable_preview() -> void:
 	var region := RegionRegistry.region_at_cell(_hover_cell)
 	if region == null:
@@ -581,7 +633,6 @@ func _draw_placeable_preview() -> void:
 	for c in region.cells:
 		_preview_cell(c.x, c.y, fill, stroke)
 
-
 func _would_collide(pos: Vector2i, footprint: Vector2i) -> bool:
 	for dx in footprint.x:
 		for dy in footprint.y:
@@ -596,196 +647,10 @@ func _would_collide(pos: Vector2i, footprint: Vector2i) -> bool:
 					return true
 	return false
 
-
-# Fill cell (gx,gy)'s diamond with a solid colour. The polygon is inflated a
-# hair so antialiased neighbours meet with no hairline seam. No edge stroke —
-# adjacent solid diamonds share their borders exactly, so the ground reads as
-# one continuous surface (no grid). This is why we draw ground procedurally
-# instead of tiling the supplied iso PNGs, which bake a dark rim into every
-# tile edge and therefore always paint a visible diamond lattice.
-func _fill_diamond(gx: float, gy: float, fill: Color) -> void:
-	var t := _project(gx, gy)
-	var hw := TW * 0.5 + 0.75
-	var hh := TH * 0.5 + 0.5
-	var c := t + Vector2(0, TH * 0.5)
-	var pts := PackedVector2Array([
-		c + Vector2(0, -hh), c + Vector2(hw, 0), c + Vector2(0, hh), c + Vector2(-hw, 0)])
-	if _ground_noise == null:
-		draw_colored_polygon(pts, fill)
-		return
-	# Multiply a seamless grayscale noise texture by the terrain tint, UV-mapped
-	# in model space so the grain is world-locked (no swim on pan/zoom) and
-	# continuous across diamonds (no seams). Turns flat fills into textured turf.
-	var uvs := PackedVector2Array([
-		pts[0] / GROUND_TEX_SCALE, pts[1] / GROUND_TEX_SCALE,
-		pts[2] / GROUND_TEX_SCALE, pts[3] / GROUND_TEX_SCALE])
-	draw_polygon(pts, PackedColorArray([fill, fill, fill, fill]), uvs, _ground_noise)
-
-
-func _draw_diamond(gx: int, gy: int, fill: Color, edge: Color) -> void:
-	var t := _project(gx, gy)
-	var pts := PackedVector2Array([
-		t, t + Vector2(TW * 0.5, TH * 0.5), t + Vector2(0, TH), t + Vector2(-TW * 0.5, TH * 0.5)])
-	draw_colored_polygon(pts, fill)
-	if edge.a > 0.0:
-		draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[0]]), edge, 1.0)
-
-
-# A grass-toned diamond with subtle per-cell variation so the parkland reads
-# as living turf rather than a flat green field — without any tile seams.
-# Palette matches Zoo Tycoon (2001) daytime lawn: bright, saturated, sunlit.
-func _grass_color(gx: int, gy: int) -> Color:
-	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
-	var base := Color("#609f36")
-	# Keep per-cell variation subtle — the world-locked noise texture supplies
-	# the grain; strong cell-level shifts read as a diamond checkerboard.
-	var v := float(h % 7) / 7.0
-	var col := base.lerp(Color("#68a93b"), v)
-	if (h / 7) % 4 == 0:
-		col = col.darkened(0.02)
-	return col
-
-
-func _draw_ground() -> void:
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
-			_fill_diamond(gx, gy, _grass_color(gx, gy))
-
-
-# Color a single zone-tile cell by its own tile def, not the region's aggregate
-# tags — a grass tile reads as grass even when it sits next to rock and water.
-func _zone_tile_floor_color(def: EntityDef, gx: int, gy: int) -> Color:
-	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
-	var base: Color
-	var tags := def.zone_tags
-	if &"water" in tags:
-		base = Color("#46a0d8")        # bright pool blue
-	elif &"rocks" in tags:
-		base = Color("#b3905c")        # sunlit rocky ground
-	elif &"tall_cage" in tags:
-		base = Color("#c2a468")        # aviary sand
-	elif &"grass" in tags:
-		base = Color("#74a943")        # exhibit turf, a shade warmer than lawn
-	else:
-		base = Color("#d0ad62")        # savannah sand — the ZT1 exhibit floor
-	var v := float(h % 7) / 7.0
-	return base.lerp(base.lightened(0.10), v).darkened(0.04 * float((h / 7) % 3))
-
-
-# Iterate zone-tile entities directly so each cell is colored by its actual
-# tile type. Cells inside a region but without a zone-tile entity (shouldn't
-# happen — regions are built from these — but defensive) fall back to a dirt
-# tint via the region-level color.
-func _draw_region_fills() -> void:
-	var painted := {}
-	for inst_id in EntityRegistry.instances.keys():
-		var inst: EntityInstance = EntityRegistry.instances[inst_id]
-		var def := inst.get_def()
-		if def == null or def.zone_kind == &"":
-			continue
-		var c: Vector2i = inst.position
-		_fill_diamond(c.x, c.y, _zone_tile_floor_color(def, c.x, c.y))
-		painted[c] = true
-	# Defensive: any region cells without a painted zone tile (e.g., loaded
-	# from an older save) still get a sensible fill.
-	for region: Region in RegionRegistry.all_regions():
-		for c in region.cells:
-			if painted.has(c):
-				continue
-			_fill_diamond(c.x, c.y, _region_fallback_color(region, c.x, c.y))
-	_draw_region_fringe()
-
-
-func _region_fallback_color(region: Region, gx: int, gy: int) -> Color:
-	var h := _hash2(gx * 3 + 7, gy * 5 + 11)
-	var base: Color
-	var tags := region.provided_zone_tags
-	if &"water" in tags: base = Color("#46a0d8")
-	elif &"rocks" in tags: base = Color("#b3905c")
-	elif &"tall_cage" in tags: base = Color("#c2a468")
-	elif &"grass" in tags: base = Color("#74a943")
-	else: base = Color("#d0ad62")
-	var v := float(h % 7) / 7.0
-	return base.lerp(base.lightened(0.10), v).darkened(0.04 * float((h / 7) % 3))
-
-
-# Soften the hard diamond boundary where an exhibit floor meets the parkland:
-# along every edge that borders a non-region cell, draw a feathered gradient
-# band (per-vertex alpha) that fades the boundary into a blend colour — a foam
-# shoreline for water, a grassy blend for dirt/rock. (Wesnoth/Factorio terrain
-# transitions, done procedurally — see design/research_graphics_tactics.md.)
-func _draw_region_fringe() -> void:
-	for region: Region in RegionRegistry.all_regions():
-		var cellset := {}
-		for c in region.cells:
-			cellset[c] = true
-		var edge: Color = _region_fringe_color(region)
-		var inner := Color(edge.r, edge.g, edge.b, 0.0)
-		for c in region.cells:
-			var t := _project(c.x, c.y)
-			var top := t
-			var right := t + Vector2(TW * 0.5, TH * 0.5)
-			var bottom := t + Vector2(0, TH)
-			var left := t + Vector2(-TW * 0.5, TH * 0.5)
-			var ctr := t + Vector2(0, TH * 0.5)
-			for spec in [[Vector2i(-1, 0), top, left], [Vector2i(0, -1), top, right],
-					[Vector2i(1, 0), right, bottom], [Vector2i(0, 1), left, bottom]]:
-				if cellset.has(c + spec[0]):
-					continue
-				var a: Vector2 = spec[1]
-				var b: Vector2 = spec[2]
-				var a2: Vector2 = a.lerp(ctr, 0.30)
-				var b2: Vector2 = b.lerp(ctr, 0.30)
-				draw_polygon(PackedVector2Array([a, b, b2, a2]),
-					PackedColorArray([edge, edge, inner, inner]))
-
-
-func _region_fringe_color(region: Region) -> Color:
-	if &"water" in region.provided_zone_tags:
-		return Color(0.85, 0.93, 0.97, 0.45)   # pale foam shoreline
-	var g := Color("#5a9c33").lerp(Color("#6cb03d"), 0.5)   # grassy blend
-	g.a = 0.5
-	return g
-
-
-# Parkland decoration — tufts and shrubs scattered across grass cells that are
-# not inside a region or under a path. Deterministic per cell so it's stable
-# frame to frame; drawn after the ground fill, beneath objects.
-func _draw_ground_scatter() -> void:
-	var blocked := {}
-	for region: Region in RegionRegistry.all_regions():
-		for c in region.cells:
-			blocked[c] = true
-	for inst_id in EntityRegistry.instances.keys():
-		var inst: EntityInstance = EntityRegistry.instances[inst_id]
-		var def := inst.get_def()
-		if def != null and def.walkable:
-			blocked[inst.position] = true
-	for gy in range(GROUND_H):
-		for gx in range(GROUND_W):
-			if blocked.has(Vector2i(gx, gy)):
-				continue
-			var h := _hash2(gx + 31, gy + 17)
-			if (h % 4) != 0:
-				continue
-			var c := _tile_center(gx, gy)
-			var off := Vector2(
-				float((h / 7) % 16) - 8.0, float((h / 13) % 8) - 4.0)
-			_draw_tuft(c + off, h)
-
-
-func _draw_tuft(p: Vector2, h: int) -> void:
-	if (h % 3) == 0:
-		var r := 3.0 + float(h % 2)
-		draw_circle(p + Vector2(0, r * 0.4), r * 1.05, Color(0, 0, 0, 0.12))
-		draw_circle(p, r, Color("#4d862a82"))
-		draw_circle(p + Vector2(-r * 0.3, -r * 0.3), r * 0.55, Color("#7fbf4daa"))
-	else:
-		var col := Color("#74ad4288") if (h % 2) == 0 else Color("#84bd4c88")
-		for i in 3:
-			draw_line(p + Vector2(float(i - 1) * 1.6, 1.0),
-				p + Vector2(float(i - 1) * 1.6, -3.0 - float(h % 2)), col, 1.0)
-
+# (Diamond ground fills, lawn/exhibit-floor colors, fringes, path pavers and
+# the ground scatter moved to IsoBackground — the static layer that redraws
+# only on world/camera change. The note about why ground is procedural, not
+# tiled PNGs, lives there too.)
 
 # Build one depth-sorted list of everything that has height — perimeter fence
 # segments, placed entities, animals, and guests — and paint back-to-front so
@@ -793,16 +658,7 @@ func _draw_tuft(p: Vector2, h: int) -> void:
 func _draw_sorted_objects() -> void:
 	var draws: Array = []
 
-	# Paths first (ground, not billboards) — collected up front so each cell
-	# knows its path neighbours for continuous paver joints + outer curbs.
-	var path_cells := {}
-	for inst_id in EntityRegistry.instances.keys():
-		var inst: EntityInstance = EntityRegistry.instances[inst_id]
-		var def := inst.get_def()
-		if def != null and def.walkable:
-			path_cells[inst.position] = true
-	for c in path_cells.keys():
-		_draw_path_cell(c, path_cells)
+	# (Path pavers are ground — drawn by the IsoBackground static layer.)
 
 	# Fence segments per region-perimeter edge.
 	for region: Region in RegionRegistry.all_regions():
@@ -949,13 +805,11 @@ func _draw_sorted_objects() -> void:
 		else:
 			_draw_billboard(dr)
 
-
 # Rebuild the deterministic scenery scatter: a dense tree border framing the
 # park (the Zoo-Tycoon "park in a forest" look) and sparse interior clumps,
 # skipping any cell that's inside an exhibit, under a path/building, or the gate.
 func _mark_scenery_dirty(_arg = null) -> void:
 	_scenery_dirty = true
-
 
 func _rebuild_scenery() -> void:
 	_scenery_dirty = false
@@ -1044,33 +898,6 @@ func _rebuild_scenery() -> void:
 			_scenery.append({"cell": Vector2i(gx, gy), "sprite": sprite,
 				"wmul": wmul, "jitter": jitter})
 
-
-# A path cell as light stone pavers: warm-gray fill, faint grout joints that
-# run continuously across adjacent path cells, and a darker curb line wherever
-# the path meets grass — the classic Zoo Tycoon promenade read, procedurally.
-func _draw_path_cell(cell: Vector2i, path_cells: Dictionary) -> void:
-	var ph := _hash2(cell.x * 3 + 7, cell.y * 5 + 11)
-	var pcol := Color("#cfc6ae").lerp(Color("#ded6c0"), float(ph % 5) / 5.0)
-	_fill_diamond(cell.x, cell.y, pcol.darkened(0.03 * float((ph / 5) % 3)))
-	var t := _project(cell.x, cell.y)
-	var top := t
-	var right := t + Vector2(TW * 0.5, TH * 0.5)
-	var bottom := t + Vector2(0, TH)
-	var left := t + Vector2(-TW * 0.5, TH * 0.5)
-	# Paver joints: one line per axis splits the diamond into 2×2 stones; the
-	# split sits at the midpoints, so joints line up across neighbouring cells.
-	var grout := Color(0, 0, 0, 0.09)
-	draw_line(top.lerp(left, 0.5), right.lerp(bottom, 0.5), grout, 1.0)
-	draw_line(top.lerp(right, 0.5), left.lerp(bottom, 0.5), grout, 1.0)
-	# Curb on edges that face non-path ground.
-	var curb := Color("#9a9078")
-	for spec in [[Vector2i(-1, 0), top, left], [Vector2i(0, -1), top, right],
-			[Vector2i(1, 0), right, bottom], [Vector2i(0, 1), left, bottom]]:
-		if path_cells.has(cell + spec[0]):
-			continue
-		draw_line(spec[1], spec[2], curb, 1.5)
-
-
 func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 	var t := _project(cell.x, cell.y)
 	var top := t
@@ -1108,7 +935,6 @@ func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 		draw_line(p + up, p, post_hi, 1.5)
 		draw_circle(p + up, 2.2, post_hi)
 
-
 # Bounding box of a region in grid space — centre cell and half-extent, used to
 # keep the animal wander inside the enclosure.
 func _region_bounds(region: Region) -> Dictionary:
@@ -1118,7 +944,6 @@ func _region_bounds(region: Region) -> Dictionary:
 		mn.x = minf(mn.x, c.x); mn.y = minf(mn.y, c.y)
 		mx.x = maxf(mx.x, c.x); mx.y = maxf(mx.y, c.y)
 	return {"center": (mn + mx) * 0.5, "half": (mx - mn) * 0.5}
-
 
 # A smooth, slow, per-animal wander offset in roughly [-1, 1]^2 — summed sines
 # at incommensurate frequencies so the path never visibly repeats.
@@ -1130,7 +955,6 @@ func _wander_offset(seed: int, t: float) -> Vector2:
 	var ox := 0.66 * sin(t * fa + pa) + 0.34 * sin(t * fa * 1.9 + pa * 2.3)
 	var oy := 0.66 * sin(t * fb + pb) + 0.34 * sin(t * fb * 2.1 + pb * 1.7)
 	return Vector2(ox, oy)
-
 
 # Wandered float-grid position, kept inside the enclosure: drift within the
 # bounding box, then snap to the nearest real cell if the shape is non-convex.
@@ -1149,7 +973,6 @@ func _wander_in(region: Region, bb: Dictionary, seed: int, t: float) -> Vector2:
 				bestd = dd; best = Vector2(c)
 		pos = best
 	return pos
-
 
 func _draw_billboard(dr: Dictionary) -> void:
 	var fp: Vector2i = dr["fp"]
@@ -1223,7 +1046,6 @@ func _draw_billboard(dr: Dictionary) -> void:
 				draw_string(font2, o, glyph,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.55, 0.6, alpha))
 
-
 # Per-sprite anchoring metadata, computed once from the opaque bounding box:
 #   foot  — fraction down the PNG where opaque content ends (contact point)
 #   cx    — opaque horizontal centre as a fraction of width
@@ -1247,7 +1069,6 @@ func _sprite_anchor(name: String) -> Dictionary:
 				meta["wfrac"] = float(used.size.x) / tw
 	_sprite_meta[name] = meta
 	return meta
-
 
 # Guests draw as little pixel people — the dense, colorful ZT1 crowd — instead
 # of halo-ringed billboards. Outfits are deterministic per agent id so the
@@ -1275,7 +1096,6 @@ const NEED_BUBBLES := {
 	&"restroom": {"glyph": "R", "color": Color("#41b3a3")},
 	&"energy":   {"glyph": "Z", "color": Color("#c9a4ff")}}
 
-
 func _draw_guest(ag: Agent) -> void:
 	var base := _tile_center(ag.position.x, ag.position.y)
 	# Directional cast shadow + tight contact AO (sun from upper-left).
@@ -1291,7 +1111,6 @@ func _draw_guest(ag: Agent) -> void:
 	if ag.agent_type_id == &"family":
 		_draw_person(base + Vector2(7.0, 2.5), ag.agent_id * 7 + 3, 0.6, false)
 	_draw_visitor_mood(ag, base + Vector2(0, -11.0 * person_scale))
-
 
 # One little pixel person, feet at `feet`: scissoring legs, shirt + pants in
 # deterministic colors, skin-tone head with a hair cap (or the enthusiast's
@@ -1326,12 +1145,10 @@ func _draw_person(feet: Vector2, id: int, s: float, capped: bool) -> void:
 		draw_circle(head_c + Vector2(0, -1.1 * s), 2.4 * s, hair)
 		draw_circle(head_c + Vector2(0, 0.5 * s), 2.2 * s, skin)
 
-
 func _satisfaction_color(s: float) -> Color:
 	if s < 0.5:
 		return Color("#e76f51").lerp(Color("#f4a261"), s * 2.0)
 	return Color("#f4a261").lerp(Color("#83c779"), (s - 0.5) * 2.0)
-
 
 # Per-need mood bubble: an unmet need wins (colored H/T/R/Z chip); a content
 # guest shows cycling ♥/★/♪ delight. Same model as MapView — the crowd
@@ -1373,7 +1190,6 @@ func _draw_visitor_mood(ag: Agent, pos: Vector2) -> void:
 	draw_string(font, o + Vector2(1, 1), glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0, 0, 0, 0.40 * alpha))
 	draw_string(font, o, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, bubble_color)
 
-
 func _draw_mood_chip(pos: Vector2, glyph: String, color: Color, intensity: float) -> void:
 	var center := pos + Vector2(0.0, -20.0)
 	var r := 7.0
@@ -1385,7 +1201,6 @@ func _draw_mood_chip(pos: Vector2, glyph: String, color: Color, intensity: float
 	draw_string(font, center - Vector2(sz.x * 0.5, -11 * 0.36), glyph,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, intensity))
 
-
 func _sprite(name: String) -> Texture2D:
 	if _sprites.has(name):
 		return _sprites[name]
@@ -1393,7 +1208,6 @@ func _sprite(name: String) -> Texture2D:
 	var tex: Texture2D = load(path) if ResourceLoader.exists(path) else null
 	_sprites[name] = tex
 	return tex
-
 
 # True ¾ isometric directional art: if assets/sprites/<species>_4dir/ exists,
 # return the sprite name facing the screen-space heading (N/S/E/W). Falls back
@@ -1423,7 +1237,6 @@ func _directional_sprite(species: String, heading: Vector2) -> String:
 		dir = "west"
 	return "%s_4dir/%s" % [species, dir]
 
-
 # Bake a small, seamless grayscale value-noise texture used to grain the ground.
 # Two octaves of a wrapping value noise (lattice indices taken modulo the octave
 # size, so the image tiles), mapped to [0.78, 1.0] so it only darkens the tint.
@@ -1436,7 +1249,6 @@ func _make_ground_noise() -> ImageTexture:
 			var g: float = 0.72 + 0.28 * v
 			img.set_pixel(x, y, Color(g, g, g))
 	return ImageTexture.create_from_image(img)
-
 
 func _tile_value_noise(x: int, y: int, n: int, cells: int) -> float:
 	var fx := float(x) / float(n) * float(cells)
@@ -1453,10 +1265,8 @@ func _tile_value_noise(x: int, y: int, n: int, cells: int) -> float:
 	var v11 := _lattice(x0 + 1, y0 + 1, cells)
 	return lerpf(lerpf(v00, v10, tx), lerpf(v01, v11, tx), ty)
 
-
 func _lattice(ix: int, iy: int, cells: int) -> float:
 	return float(_hash2(posmod(ix, cells) + 11, posmod(iy, cells) + 17) % 1000) / 1000.0
-
 
 func _hash2(a: int, b: int) -> int:
 	return abs((a * 374761393 + b * 668265263) ^ 0x55555555) & 0x7FFFFFFF
