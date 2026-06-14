@@ -37,7 +37,7 @@
 		"about.credits": "Design, code & tuning by the Zoo Tycoon team.\nBuilt on the Tycoon Engine.",
 		"about.version": "Version %s",
 		"about.controls_header": "Keyboard",
-		"about.controls": "Space pause/play · 1/2/4 set speed · Esc close · S save · L load",
+		"about.controls": "Space pause/play · 1/2/4 set speed · Esc settings/cancel · WASD pan · X stress-spawn",
 
 		"ach.title": "Achievements",
 		"ach.progress": "%d of %d earned",

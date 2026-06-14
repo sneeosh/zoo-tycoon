@@ -42,7 +42,7 @@ var _map_view: BaseMapView
 # view all the art lives in); TYCOON_TOPDOWN forces the legacy top-down view
 # at launch, and the top-bar View
 # button flips it at runtime by rebuilding the view in place.
-var _use_iso: bool = OS.get_environment("TYCOON_TOPDOWN") == ""
+var _use_iso: bool = true   # resolved from env + persisted Settings in _ready
 var _view_container: VBoxContainer
 var _view_btn: Button
 # region_id -> true for populated exhibits with no gate-reachable path cell
@@ -162,14 +162,29 @@ var _hud_accumulator: float = 0.0
 # the mute/volume UI and the endgame stingers.
 var _audio: ZooAudio
 var _sound_btn: Button
+var _settings_modal: SettingsModal
+var _toast_label: Label   # transient achievement banner
 
 
 func _ready() -> void:
+	# Resolve the starting view before the HUD builds the map: TYCOON_TOPDOWN
+	# still forces top-down at launch (back-compat), otherwise honor the
+	# player's persisted choice (roadmap 5.4).
+	if OS.get_environment("TYCOON_TOPDOWN") != "":
+		_use_iso = false
+	else:
+		_use_iso = Settings.get_string(&"view") != "top"
 	_audio = ZooAudio.new()
 	add_child(_audio)
 	_build_ui()
 	_wire_engine_signals()
 	_refresh_speed_buttons()
+	_apply_accessibility()
+	Settings.changed.connect(func(_k): _apply_accessibility())
+	Achievements.achievement_unlocked.connect(_on_achievement_unlocked)
+	# Restore the persisted speed multiplier without forcing play/pause.
+	SimClock.set_speed(_speed_multiplier(Settings.get_string(&"game_speed")))
+	Telemetry.track(&"app_launch")
 
 	# Headless harness modes take over before anything game-specific runs,
 	# so scripted scenarios start from a known-empty world.
@@ -1703,6 +1718,9 @@ func _show_tutorial_step() -> void:
 	var spec: Dictionary = TUTORIAL_STEPS[_tutorial_step]
 	_tutorial_progress.text = spec["title"]
 	_tutorial_prompt.text = spec["body"]
+	# First-session funnel: which onboarding step the player reached (5.3). The
+	# last step seen before a quit is the drop-off point.
+	Telemetry.track(&"tutorial_step", {"step": _tutorial_step})
 	if _tutorial_step == 3:
 		_tutorial_step3_floor = Ledger.get_balance()
 
@@ -1763,6 +1781,7 @@ func _advance_tutorial() -> void:
 
 func _end_tutorial(completed: bool) -> void:
 	_tutorial_active = false
+	Telemetry.track(&"tutorial_end", {"completed": completed, "step": _tutorial_step})
 	if _tutorial_overlay != null:
 		_tutorial_overlay.visible = false
 	if completed:
@@ -2099,6 +2118,14 @@ func _mission_results(cash: int, rep: int, s: Scenario) -> Array:
 func _resolve_endgame(won: bool, headline: String, body: String,
 		results: Array = []) -> void:
 	_endgame_resolved = true
+	# Funnel: the win/lose outcome + how far the player got (5.3 telemetry).
+	Telemetry.track(&"game_over", {
+		"won": won,
+		"day": SimClock.current_day + 1,
+		"balance": Ledger.get_balance(),
+		"reputation": ProgressionManager.reputation,
+	})
+	Telemetry.track_session_length("win" if won else "lose")
 	if _audio != null:
 		_audio.play(&"win" if won else &"lose")
 	SimClock.pause()
@@ -2275,11 +2302,9 @@ func _fmt_money(n: int) -> String:
 
 
 func _happiness_color(h: float) -> Color:
-	if h < 0.4:
-		return Color("#e76f51")
-	if h < 0.7:
-		return Color("#f4a261")
-	return Color("#83c779")
+	# Colorblind-aware (roadmap 5.5): Palette returns a deficiency-safe hue for
+	# the active mode, falling back to the classic green/amber/red otherwise.
+	return Palette.welfare(h)
 
 
 # Exhibit suitability — the single 0–100 read on how well an exhibit suits
@@ -2646,9 +2671,17 @@ func _build_top_bar(parent: Control) -> void:
 	_update_view_button()
 	row.add_child(_view_btn)
 
+	var settings_btn := Button.new()
+	settings_btn.text = "⚙"
+	settings_btn.tooltip_text = I18n.t("top.settings_tip")
+	settings_btn.custom_minimum_size = Vector2(36, 36)
+	settings_btn.focus_mode = Control.FOCUS_NONE
+	settings_btn.pressed.connect(_open_settings)
+	row.add_child(settings_btn)
+
 	var help_btn := Button.new()
 	help_btn.text = "?"
-	help_btn.tooltip_text = "Show the welcome guide again"
+	help_btn.tooltip_text = I18n.t("top.help_tip")
 	help_btn.custom_minimum_size = Vector2(36, 36)
 	help_btn.focus_mode = Control.FOCUS_NONE
 	help_btn.pressed.connect(_open_help)
@@ -2911,6 +2944,26 @@ func _build_right_column(parent: Control) -> void:
 	_build_open_park_dialog(parent)
 	_build_relocate_dialog(parent)
 
+	# Player settings / pause / accessibility / about / achievements (5.4–5.7,
+	# 6.2). Self-contained modal; main only flips the view + closes on request.
+	_settings_modal = SettingsModal.new()
+	parent.add_child(_settings_modal)
+	_settings_modal.view_toggle_requested.connect(_toggle_view)
+	_settings_modal.closed.connect(_refresh_speed_buttons)
+
+	# Transient achievement banner, top-center, click-through.
+	_toast_label = Label.new()
+	_toast_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_toast_label.offset_top = 64
+	_toast_label.offset_left = -240
+	_toast_label.offset_right = 240
+	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_label.add_theme_font_size_override("font_size", 16)
+	_toast_label.add_theme_color_override("font_color", Color("#f4d35e"))
+	_toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_label.visible = false
+	parent.add_child(_toast_label)
+
 	var log_panel := PanelContainer.new()
 	log_panel.custom_minimum_size = Vector2(0, 140)
 	log_panel.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
@@ -2947,6 +3000,11 @@ func _wire_engine_signals() -> void:
 			_push_log("[color=#a8c4b0]A guest entered.[/color]"))
 	EventBus.unlock_acquired.connect(func(node_id):
 		_push_log("[color=#f4d35e]Unlocked: %s[/color]" % node_id))
+	# A malformed or version-mismatched save must surface clearly, not silently
+	# leave the player on a stale world (5.7 save-corruption resilience).
+	EventBus.load_failed.connect(func(_slot, reason):
+		_push_log("[color=#e76f51]%s (%s)[/color]" % [I18n.t("load.fail"), reason])
+		_flash_toast(I18n.t("load.fail"), Color("#e76f51")))
 
 	# Tutorial step advance: any signal that could indicate progress.
 	EventBus.region_created.connect(func(_rid): _check_tutorial_advance())
@@ -3194,9 +3252,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match event.keycode:
 		KEY_ESCAPE:
+			# Settings doubles as the pause menu — Esc closes it first.
+			if _settings_modal != null and _settings_modal.visible:
+				_settings_modal.close()
+				return
 			# Cancel cascade: active move > build tool > region selection.
-			# Only quits if there's nothing to cancel (and never on web —
-			# a web tab "quit" is a no-op).
+			# With nothing to cancel, Esc opens Settings (the pause menu)
+			# rather than quitting — a web tab "quit" is a no-op anyway.
 			if _moving_region_id >= 0:
 				_cancel_move_placement()
 			elif _selected_def_id != &"":
@@ -3205,10 +3267,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				_selected_region_id = -1
 				_refresh_region_panel()
 			else:
-				if OS.has_feature("web"):
-					pass
-				else:
-					get_tree().quit()
+				_open_settings()
+		KEY_1:
+			_on_speed_pressed("1x")
+		KEY_2:
+			_on_speed_pressed("2x")
+		KEY_4:
+			_on_speed_pressed("4x")
 		KEY_SPACE:
 			AgentPool.spawn(&"visitor", Vector2(
 				SimClock.rng.randf_range(0, 6),
@@ -3261,23 +3326,44 @@ const SAVE_SLOT := "main"
 func _on_save_pressed() -> void:
 	var ok := SaveService.save_to_slot(SAVE_SLOT)
 	if ok:
-		_push_log("[color=#f4d35e]Saved.[/color]  Slot: %s" % SAVE_SLOT)
+		_push_log("[color=#f4d35e]%s[/color]  (%s)" % [I18n.t("save.ok"), SAVE_SLOT])
 	else:
-		_push_log("[color=#e76f51]Save failed.[/color]")
+		# Save failure is the one bug that eats an evening's zoo (5.7) — make it
+		# loud and unmissable, not a one-line log entry.
+		_push_log("[color=#e76f51]%s[/color]" % I18n.t("save.fail"))
+		_flash_toast(I18n.t("save.fail"), Color("#e76f51"))
 
 
 func _on_load_pressed() -> void:
 	if not SaveService.slot_exists(SAVE_SLOT):
-		_push_log("[color=#e76f51]No save found in slot %s.[/color]" % SAVE_SLOT)
+		_push_log("[color=#e76f51]%s (%s)[/color]" % [I18n.t("load.none"), SAVE_SLOT])
 		return
 	var ok := SaveService.load_from_slot(SAVE_SLOT)
 	if ok:
-		_push_log("[color=#83c779]Loaded.[/color]  Day %d, Balance $%d" %
-			[SimClock.current_day + 1, Ledger.get_balance()])
+		_push_log("[color=#83c779]%s[/color]  Day %d, Balance $%d" %
+			[I18n.t("load.ok"), SimClock.current_day + 1, Ledger.get_balance()])
 		_refresh_hud()
 		_refresh_speed_buttons()
 	else:
-		_push_log("[color=#e76f51]Load failed — see error log.[/color]")
+		_push_log("[color=#e76f51]%s[/color]" % I18n.t("load.fail"))
+		_flash_toast(I18n.t("load.fail"), Color("#e76f51"))
+
+
+# Brief top-center banner reused for save/load failures and any other state the
+# player must not miss. Shares the achievement-toast slot.
+func _flash_toast(text: String, color: Color) -> void:
+	if _toast_label == null:
+		return
+	_toast_label.text = text
+	_toast_label.add_theme_color_override("font_color", color)
+	_toast_label.visible = true
+	_toast_label.modulate = Color(1, 1, 1, 1)
+	var tw := create_tween()
+	tw.tween_interval(3.5)
+	tw.tween_property(_toast_label, "modulate:a", 0.0, 0.8)
+	tw.tween_callback(func():
+		_toast_label.visible = false
+		_toast_label.add_theme_color_override("font_color", Color("#f4d35e")))
 
 
 func _on_speed_pressed(key: String) -> void:
@@ -3293,6 +3379,8 @@ func _on_speed_pressed(key: String) -> void:
 		"4x":
 			SimClock.set_speed(4.0)
 			SimClock.play()
+	if key != "pause":
+		Settings.set_value(&"game_speed", key)
 	_refresh_speed_buttons()
 
 
@@ -3386,6 +3474,7 @@ func _toggle_view() -> void:
 	_map_view.preview_def_id = prev_preview
 	_map_view.disconnected_regions = prev_disconnected
 	_update_view_button()
+	Settings.set_value(&"view", "iso" if _use_iso else "top")
 
 
 func _toggle_sound() -> void:
@@ -3409,6 +3498,40 @@ func _update_view_button() -> void:
 		return
 	# Show the current mode; pressing switches to the other.
 	_view_btn.text = "View: Iso" if _use_iso else "View: Top"
+
+
+func _open_settings() -> void:
+	if _settings_modal != null:
+		_settings_modal.open()
+
+
+# Larger-text accessibility (5.5): a uniform UI zoom is the most reliable
+# lever here because the HUD overrides font sizes per-label, so a theme
+# default wouldn't reach most text. content_scale_factor scales the whole
+# viewport and Godot remaps input through it.
+func _apply_accessibility() -> void:
+	var large := Settings.get_bool(&"large_font")
+	get_tree().root.content_scale_factor = 1.18 if large else 1.0
+
+
+func _speed_multiplier(key: String) -> float:
+	match key:
+		"2x": return 2.0
+		"4x": return 4.0
+		_: return 1.0
+
+
+func _on_achievement_unlocked(_id: StringName, label: String, _desc: String) -> void:
+	_push_log("[color=#f4d35e]★ %s[/color]" % (I18n.t("ach.unlocked_toast") % label))
+	if _toast_label == null:
+		return
+	_toast_label.text = "★ " + (I18n.t("ach.unlocked_toast") % label)
+	_toast_label.visible = true
+	_toast_label.modulate = Color(1, 1, 1, 1)
+	var tw := create_tween()
+	tw.tween_interval(2.5)
+	tw.tween_property(_toast_label, "modulate:a", 0.0, 0.8)
+	tw.tween_callback(func(): _toast_label.visible = false)
 
 
 func _on_placement_requested(cell: Vector2i) -> void:
