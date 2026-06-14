@@ -1,6 +1,6 @@
 # Zoo Tycoon — Product Roadmap
 
-**Status:** Living document. Last updated 2026-06-07.
+**Status:** Living document. Last updated 2026-06-14.
 **Owner:** Kenny Johnson (PM + Eng).
 
 > **This is the Zoo Tycoon repo.** It started as the engine's validation
@@ -34,8 +34,8 @@ Three durable principles, in priority order:
 
 ## 2. Where we are today
 
-Built on **engine v0.5.0** (zones + placeables + sprite set). The
-economic loop is live and honest:
+Built on **engine v0.6.1** (zones + placeables + sprite set + a walkable
+navigation network). The economic loop is live and honest:
 
 - Build regions from zone tiles → drop animals/infrastructure inside →
   appeal is computed from placements → visitors arrive, browse, buy
@@ -52,12 +52,29 @@ economic loop is live and honest:
   inspector, reputation, goals panel, welcome modal, win/lose end-game,
   and **need-aware guest mood bubbles**.
 
-**Strengths:** loop is real, art reads as a tycoon (not a debug
-harness), engine has held under feature pressure with no seam leaks.
+Since this section was first written, **most of Phases 1–4 has landed
+ahead of schedule** (see the decision log): audio, save versioning +
+migration, difficulty scenarios, marketing campaigns, all six Phase 3
+deep systems (welfare, guest archetypes, staff, day/night, breeding,
+weather/seasons), a touch input first-pass, a selectable land-plot
+system, an isometric art pass, and a GitHub Pages deploy pipeline. The
+simulation is feature-rich. **76 GUT tests green.**
 
-**Gaps that block a "real game" feeling:** no sound, no mobile input, no
-staff, no breeding, no time-of-day, no scenarios. *(Guest archetypes and
-animal welfare have since landed — see the decision log.)*
+**Strengths:** loop is real, the systems interact honestly, art reads as
+a tycoon (not a debug harness), engine has held under heavy feature
+pressure with the only seam (animal welfare → spawn balance) cleanly
+filed against the engine rather than patched in place.
+
+**Gaps that block a *launch* (not a "real game" feeling — we have that):**
+the *product wrapper* around the simulation is thin. We have never
+verified the public build is actually live, fast, and crash-free in a
+real browser over a long session; no human has playtested it; there is
+no telemetry, so the launch funnel is blind; player settings (volume,
+mute, view) don't survive a reload; there is no accessibility pass, no
+finished portrait/mobile HUD, no research tree, no achievements, no
+localization, and only the single 30-day scenario. These are sequenced
+in the new **Phase 5 (Make it shippable)** and **Phase 6 (Make it
+stick)** below.
 
 ---
 
@@ -74,18 +91,24 @@ adds new systems — it makes the systems we have *legible*.
 
 | # | Initiative | Why |
 |---|---|---|
-| 1.1 | **Web export, hosted publicly** | Engine is web-first. If it can't ship to a browser, nothing downstream matters |
-| 1.2 | **Win + lose conditions** — "Hit $20k cash and 50 reputation in 30 days," and "bankruptcy = game over"; surfaced in goals panel | Sandboxes don't make memories. A finish line creates the moment-to-moment urgency the economy needs |
-| 1.3 | **Onboarding** — guided first 60s; build a region, place an animal, watch a visitor pay | Welcome modal is passive. Browser-tab attention is brutal |
-| 1.4 | **Performance budget pass** — 60 fps on a mid-2022 laptop browser with 100+ visitors | Web perf is the differentiator; if we miss the budget, every later phase suffers |
-| 1.5 | **First playtest gauntlet** — 5+ external testers, recorded sessions | Until someone who didn't build it plays it, we don't know what we built |
+| 1.1 ⚙️ | **Web export, hosted publicly** | Engine is web-first. If it can't ship to a browser, nothing downstream matters |
+| 1.2 ✅ | **Win + lose conditions** — "Hit $20k cash and 50 reputation in 30 days," and "bankruptcy = game over"; surfaced in goals panel | Sandboxes don't make memories. A finish line creates the moment-to-moment urgency the economy needs |
+| 1.3 ✅ | **Onboarding** — guided first 60s; build a region, place an animal, watch a visitor pay | Welcome modal is passive. Browser-tab attention is brutal |
+| 1.4 ⚙️ | **Performance budget pass** — 60 fps on a mid-2022 laptop browser with 100+ visitors | Web perf is the differentiator; if we miss the budget, every later phase suffers |
+| 1.5 ⬜ | **First playtest gauntlet** — 5+ external testers, recorded sessions | Until someone who didn't build it plays it, we don't know what we built |
+
+*Legend: ✅ shipped · ⚙️ partially landed / needs verification · ⬜ not started.*
 
 **Exit criteria:**
 
-- [ ] Public URL loads in <5s, plays to win or lose without crash.
-- [ ] ≥5 external playtest sessions logged with notes.
-- [ ] Smoke test green.
-- [ ] No new uncaptured engine seams.
+- [ ] Public URL loads in <5s, plays to win or lose without crash. *(Deploy
+      pipeline built — `.github/workflows/deploy.yml` → GitHub Pages — but
+      never verified live or over a long browser session. Closed in 5.1.)*
+- [ ] ≥5 external playtest sessions logged with notes. *(Only automated
+      Fable end-to-end runs so far; no humans. Closed in 5.2.)*
+- [x] Smoke test green. *(76 GUT tests passing.)*
+- [x] No new uncaptured engine seams. *(The one seam — welfare → spawn
+      balance — is filed: `design/animals_as_agents_spec.md`.)*
 
 ---
 
@@ -96,18 +119,21 @@ feel alive on the platforms players actually use.
 
 | # | Initiative | Why | Engine impact |
 |---|---|---|---|
-| 2.1 | **Audio integration** — SFX on purchase / visitor leave / day rollover, one ambient loop, master volume | Sound is half the tycoon-game feeling. We have none | **Likely engine v0.6 seam** — no audio surface today |
-| 2.2 | **Mobile / touch input** — pinch-zoom, drag-pan, tap-to-place, portrait HUD | Most web traffic is mobile. Desktop-only "web" is half an export | Input routing in `tycoon_core` UI layer |
-| 2.3 | **Accessibility pass** — colorblind-safe auras, min font size, keyboard nav | Public-build hygiene; also a forcing function for engine UI primitives | Theme / palette plumbing |
-| 2.4 | **Telemetry** — opt-in analytics: session length, day reached, win/lose, drop-off step | We can't tune what we can't measure | Event bus completeness |
-| 2.5 | **Save format migration** — write a save on v0.5, load it on v0.6, prove forward-compat | Saves are where tycoon games die. Catch this seam at v0.6, not v1.0 | **Likely engine seam** — no migration story today |
-| 2.6 | **Difficulty scenarios** — Easy / Standard / Hard via tuning overlays | First test of variant configs without forking | Tuning loader composition |
+| 2.1 ✅ | **Audio integration** — SFX on purchase / visitor leave / day rollover, one ambient loop, master volume | Sound is half the tycoon-game feeling. We have none | ~~Likely engine v0.6 seam~~ — **no seam**; audio is presentation, shipped zoo-side |
+| 2.2 ⚙️ | **Mobile / touch input** — pinch-zoom, drag-pan, tap-to-place, portrait HUD | Most web traffic is mobile. Desktop-only "web" is half an export | Input routing in `tycoon_core` UI layer. *(Tap/pan/pinch landed; **portrait HUD still open** → 5.6.)* |
+| 2.3 ⬜ | **Accessibility pass** — colorblind-safe auras, min font size, keyboard nav | Public-build hygiene; also a forcing function for engine UI primitives | Theme / palette plumbing. *(→ 5.5.)* |
+| 2.4 ⬜ | **Telemetry** — opt-in analytics: session length, day reached, win/lose, drop-off step | We can't tune what we can't measure | Event bus completeness. *(Blocked on a data-destination decision → 5.3.)* |
+| 2.5 ✅ | **Save format migration** — write a save on v0.5, load it on v0.6, prove forward-compat | Saves are where tycoon games die. Catch this seam at v0.6, not v1.0 | Versioned payload (`SAVE_VERSION`, now v3) + legacy-load test; done zoo-side |
+| 2.6 ✅ | **Difficulty scenarios** — Easy / Standard / Hard via tuning overlays | First test of variant configs without forking | Tuning loader composition |
 
 **Exit criteria:**
 
-- [ ] Audio + touch shipped, accessibility audit passed.
-- [ ] ≥20 external playtest sessions, "would you play again" ≥ 60%.
-- [ ] Engine seams from 2.1/2.5 resolved or formally deferred.
+- [ ] Audio + touch shipped, accessibility audit passed. *(Audio ✅ and
+      touch ✅ shipped; accessibility ⬜ pending → 5.5.)*
+- [ ] ≥20 external playtest sessions, "would you play again" ≥ 60%. *(No
+      human sessions yet → 5.2.)*
+- [x] Engine seams from 2.1/2.5 resolved or formally deferred. *(2.1 had
+      no seam; 2.5 solved with save versioning.)*
 
 ---
 
@@ -119,21 +145,26 @@ feature — they interact, and that's the point.
 
 | # | System | What it adds | Depends on |
 |---|---|---|---|
-| 3.1 | **Animal welfare** — happiness from existing model drives behavior, illness, death; welfare alerts in HUD | Animals become more than props; player attention pivots from layout to care | None — extends existing `IPlaceableHappiness` |
-| 3.2 | **Visitor archetypes** — families, thrill-seekers, photographers, school groups; each with its own appeal-match profile | Single visitor type makes the appeal axes feel academic. Archetypes make exhibit-mix decisions matter | Engine archetype support (likely already present via `AgentType`) |
-| 3.3 | **Staff agents** — zookeepers, vendors, mechanics; second agent population | Tests engine multi-population claim; gives the player labor to manage | **Engine** must cleanly support N populations |
-| 3.4 | **Day/night + opening hours** — visitors spawn only during open hours; nocturnal animals shift appeal | Pacing. A flat 240-tick day is identical every day | Engine clock/calendar surface |
-| 3.5 | **Breeding & generations** — animals pair, produce offspring, age out; rare-genome milestones | The depth hook. Players who care about animals stay for breeding | Welfare (3.1) must land first |
-| 3.6 | **Weather + seasons** — modifies spawn and welfare; cosmetic + functional | Variety, plus another forcing function on the simulation's robustness | Engine event hooks |
+| 3.1 ✅ | **Animal welfare** — happiness from existing model drives behavior, illness, death; welfare alerts in HUD | Animals become more than props; player attention pivots from layout to care | None — extends existing `IPlaceableHappiness` |
+| 3.2 ✅ | **Visitor archetypes** — families, thrill-seekers, photographers, school groups; each with its own appeal-match profile | Single visitor type makes the appeal axes feel academic. Archetypes make exhibit-mix decisions matter | Adult / Child / Family / Enthusiast shipped via weighted `AgentType` |
+| 3.3 ✅ | **Staff agents** — zookeepers, vendors, mechanics; second agent population | Tests engine multi-population claim; gives the player labor to manage | Shipped as a welfare/wage **effect layer**; not yet a *walking* population (→ animals-as-agents, 6.6) |
+| 3.4 ✅ | **Day/night + opening hours** — visitors spawn only during open hours; nocturnal animals shift appeal | Pacing. A flat 240-tick day is identical every day | SimClock-derived; nocturnal-appeal-by-time deferred to an engine clock hook |
+| 3.5 ✅ | **Breeding & generations** — animals pair, produce offspring, age out; rare-genome milestones | The depth hook. Players who care about animals stay for breeding | Welfare (3.1) must land first |
+| 3.6 ✅ | **Weather + seasons** — modifies spawn and welfare; cosmetic + functional | Variety, plus another forcing function on the simulation's robustness | Daily roll × season, both scaling demand |
 
 **Exit criteria:**
 
-- [ ] All six systems shipped behind the same web build.
-- [ ] Median session length doubles vs. end of Phase 2.
-- [ ] 30-day campaign is winnable on Standard, hard on Hard, and a
-      sandbox mode exists for players who just want to build.
+- [x] All six systems shipped behind the same web build. *(3.1–3.6 all
+      landed — see the 2026-06-07 decision-log entry.)*
+- [ ] Median session length doubles vs. end of Phase 2. *(Unmeasurable
+      until telemetry lands → 5.3.)*
+- [x] 30-day campaign is winnable on Standard, hard on Hard, and a
+      sandbox mode exists for players who just want to build. *(Winnability
+      locked by an 8-day arc test; "Keep playing" sandbox continuation
+      exists. Hard-mode difficulty wants a human-tuned pass in 5.2.)*
 - [ ] Engine reaches **v1.0** — stable surface, no expected breaking
-      changes for Phase 4.
+      changes. *(Engine is at v0.6.1; v1.0 still gates the editor/research
+      surfaces in Phase 6.)*
 
 ---
 
@@ -142,17 +173,85 @@ feature — they interact, and that's the point.
 The game exists. Phase 4 is about getting it in front of people and
 giving it legs after launch.
 
+> **Status (2026-06-14):** the simulation arrived ahead of the product
+> wrapper, so Phase 4 has been **re-sequenced**. Marketing (4.2) shipped
+> early. The remaining reach items (4.1, 4.3, 4.4, 4.5) and the launch
+> itself (4.6) now live in **Phase 6 — Make it stick**, gated behind the
+> new **Phase 5 — Make it shippable**. This table is kept for history;
+> the live plan for these items is in §3 Phases 5–6 below.
+
 | # | Initiative | Why |
 |---|---|---|
-| 4.1 | **Research tree** — replaces the linear unlock chain; spend points on tech, husbandry, amenities | Meta-progression. Gives long sessions a vector other than "more cash" |
-| 4.2 | **Marketing campaigns** — spend cash to bias spawn weights toward archetypes | Closes the loop between investment and visitor mix — a classic tycoon move |
-| 4.3 | **Scenario set + editor** — 6–10 hand-tuned scenarios plus a basic editor | Replayability; community content tests tuning at scale |
-| 4.4 | **Achievements + light meta** | Standard table stakes for tycoon-genre retention |
-| 4.5 | **Localization** — EN + 3 languages | Web reach is global. Most of our audience isn't anglophone |
-| 4.6 | **Public launch** — Steam, itch.io, web simultaneously; press kit; trailer | The moment we earn back the runway |
+| 4.1 ➡️6.1 | **Research tree** — replaces the linear unlock chain; spend points on tech, husbandry, amenities | Meta-progression. Gives long sessions a vector other than "more cash" |
+| 4.2 ✅ | **Marketing campaigns** — spend cash to bias spawn weights toward archetypes | Closes the loop between investment and visitor mix — a classic tycoon move. *(Shipped 2026-06-07.)* |
+| 4.3 ➡️6.3 | **Scenario set + editor** — 6–10 hand-tuned scenarios plus a basic editor | Replayability; community content tests tuning at scale |
+| 4.4 ➡️6.2 | **Achievements + light meta** | Standard table stakes for tycoon-genre retention |
+| 4.5 ➡️6.4 | **Localization** — EN + 3 languages | Web reach is global. Most of our audience isn't anglophone |
+| 4.6 ➡️6.8 | **Public launch** — Steam, itch.io, web simultaneously; press kit; trailer | The moment we earn back the runway |
 
 **Exit criteria:** the game is launched. Beyond launch, the roadmap
 becomes a backlog driven by player data, not by phases.
+
+---
+
+### Phase 5 — **Make it shippable** *(the launch-readiness gate)*
+
+We built the systems before we built the product around them. Phases 1–3
+(and most of 2 and 4) shipped early, so the simulation is rich — but
+"the systems exist" is not "a stranger can find it, play it on their
+phone, and come back tomorrow." **Phase 5 adds no simulation system.** It
+hardens, wraps, and *proves* what we already have. This is the honest
+gate between a feature-complete sandbox and a launchable product — and
+the place several long-deferred Phase 1/2 exit criteria finally close.
+
+Two buckets: **A — prove it ships**, **B — wrap the sim for strangers.**
+
+| # | Initiative | Why | Closes |
+|---|---|---|---|
+| 5.1 | **Prove the public build** — confirm the Pages deploy is live at a real URL, cold-loads <5s, and survives a *long* browser session without the WebGL object-handle exhaustion the 1.4 static-layer split was meant to fix but never re-verified in-browser. Desktop + mobile Safari/Chrome smoke | We have a deploy pipeline and a perf *theory*; we have never watched a stranger's tab stay alive for 30 in-game days. Until we have, the platform claim is unproven | 1.1, 1.4 |
+| 5.2 | **Real human playtests** — ≥5 external testers on the live URL, recorded, with a first-session funnel log | Automated Fable runs find balance bugs; they can't tell us where a human quits in the first 90 seconds. This is the actual Phase 1/2 go/no-go | 1.5, P2 gate |
+| 5.3 | **Telemetry + privacy notice** — decide where data goes, then ship opt-in events: session length, day reached, win/lose, drop-off step; plus a privacy notice | We cannot tune a launch funnel blind, and three exit criteria (1.x, 3.x) are unmeasurable without it | 2.4 |
+| 5.4 | **Settings, options & pause menu** — a real settings surface (not the Park Admin panel): master / SFX / ambient volume, mute, view toggle, accessibility prefs — **persisted to `user://`** so they survive a reload | Today nothing the player sets survives a refresh; on the web that's every session. Table-stakes polish | new |
+| 5.5 | **Accessibility pass** — colorblind-safe appeal auras & welfare flags, a minimum font size, full keyboard nav + focus order | Public-build hygiene; also the forcing function for engine UI primitives we flagged at 2.3 | 2.3 |
+| 5.6 | **Mobile / portrait HUD** — finish the portrait layout the touch first-pass left open; reflow the build menu and stat bar for a phone held upright | Most web traffic is a phone in portrait. Tap-to-place without a portrait HUD is half a mobile build | 2.2 |
+| 5.7 | **QA / bug-bash hardening** — a dedicated stability pass: long-session memory, save-corruption resilience & a clear "save failed" state, graceful handling of a malformed/old save, and an About / version / credits screen | Tycoon games die on saves and on the one crash that eats an evening's zoo. Find them before strangers do | new |
+
+**Exit criteria (this is the real launch gate):**
+
+- [ ] Live public URL, verified <5s cold load, no crash across a full
+      win *and* a full lose session, on desktop **and** a real phone.
+- [ ] ≥5 recorded external playtests; "would you play again" ≥ 60%.
+- [ ] Telemetry live behind opt-in + a privacy notice; first-session
+      funnel visible.
+- [ ] Accessibility audit passed; **every** player setting persists
+      across a reload.
+- [ ] Smoke suite green; no new uncaptured engine seams.
+
+---
+
+### Phase 6 — **Make it stick** *(depth, reach & launch)*
+
+Phase 5 makes the game launchable; Phase 6 gives a launched game reasons
+to be reopened, and then ships it. It absorbs the still-unbuilt Phase 4
+reach items and adds the retention hooks a zoo game actually lives on.
+**Do not start Phase 6 until Phase 5's gate is met.** Items marked ⚙️
+still wait on the engine cadence in §4.
+
+| # | System / Initiative | What it adds | Was |
+|---|---|---|---|
+| 6.1 | **Research / husbandry tree** — spend earned points on tech, husbandry, amenities; replaces the linear unlock chain | A long-session vector other than "more cash"; the meta-progression spine | 4.1 |
+| 6.2 | **Achievements + light meta** — milestones across welfare, breeding, attendance, money | Genre table stakes for retention; gives playtests something to chase | 4.4 |
+| 6.3 | **Scenario set + editor** ⚙️ — 6–10 hand-tuned scenarios (rescue zoo, frozen climate, tight-budget) plus a basic editor | Replayability past the single 30-day arc; community content stress-tests tuning | 4.3 |
+| 6.4 | **Localization / i18n extraction** — extract every hardcoded string into a catalog now; EN-only at launch is fine | Strings are hardcoded today; retrofitting i18n after launch is brutal. Do the extraction early even if we ship one language | 4.5 |
+| 6.5 | **Content breadth + emotional hooks** — more species / amenities / décor, and the hooks a zoo lives on: **name your animals**, a **lineage / family-tree view** on top of breeding, and a **photo / share mode** for virality | 12 species and an unnamed crowd is a tech demo; named animals you bred across generations are a *zoo*. Also the cheapest marketing we have | new |
+| 6.6 | **Animals-as-agents** ⚙️ — promote animals from static `Placement` records to real engine `Agent`s (the parked 2026-06-07 spec) so welfare is *watchable*, not a hidden meter | Makes the welfare/breeding depth legible on screen; the payoff of Phase 3's investment | new (spec'd) |
+| 6.7 | **Audio depth** — beyond the single ambient loop: layered SFX, a small music set, day/season-aware ambience | One loop reads as a prototype; a launch needs a soundscape | new |
+| 6.8 | **Public launch** — Steam + itch.io + web simultaneously; store pages, press kit, trailer, landing page, launch-day privacy/legal | The finish line. Everything above earns the right to do this once, well | 4.6 |
+
+**Exit criteria:** the game is launched on all three storefronts with a
+research vector, achievements, ≥6 scenarios, an i18n-ready string
+catalog, named/breedable animals, and a soundscape. Beyond launch the
+roadmap becomes a player-data-driven backlog, not a phase plan.
 
 ---
 
@@ -163,12 +262,13 @@ if the engine slips, we **shrink zoo scope**, never patch the submodule.
 
 | Engine release | Needed for | Notes |
 |---|---|---|
-| v0.5.0 *(current)* | Phase 1 | Already shipped |
-| v0.6.x | Audio (2.1), mobile input (2.2), save migration (2.5), **agent navigation on a constrained network** (Phase 1, paths-only) | The audio + migration surfaces are the riskiest known seams. Navigation seam spec: [`design/engine_seam_agent_navigation.md`](./design/engine_seam_agent_navigation.md) |
-| v0.7.x | Day/night clock (3.4), event hooks for weather (3.6) | |
-| v0.8.x | Multi-agent population polish (3.3) | |
-| **v1.0** | Stable surface for Phase 4 | Hard gate before research tree / scenario editor work |
-| v1.x+ | Phase 4 reach work | |
+| ~~v0.5.0~~ | Phase 1 | Shipped |
+| **v0.6.1 *(current)*** | Audio (2.1, no seam), mobile input (2.2), save migration (2.5), **agent navigation on a constrained network** (paths-only) | Navigation landed (`WalkableNetwork`, `INetworkNavigator`); fixed an engine `ContentDB` walkable-parse bug along the way. Seam spec: [`design/engine_seam_agent_navigation.md`](./design/engine_seam_agent_navigation.md). **Open item:** the commit/tag still needs pushing to the engine remote + a CHANGELOG |
+| v0.6.x | **`AgentType.drives_spawn_balance` flag** for animals-as-agents (6.6) | Filed seam — animal welfare must not leak into guest spawn demand: [`design/animals_as_agents_spec.md`](./design/animals_as_agents_spec.md) |
+| **Phase 5 is engine-clean** | Deploy proof, telemetry, settings, a11y, portrait HUD, QA (5.1–5.7) | The launch-readiness gate needs **no engine work** — it's all product wrapper. Don't let an engine slip stall it |
+| v0.7.x | Nocturnal-appeal-by-time clock hook (3.4 polish), weather event hooks (3.6 polish) | Deferred effects, not blockers |
+| **v1.0** | Stable surface for the Phase 6 **research tree (6.1)** and **scenario editor (6.3)** | Hard gate before that editor surface; the rest of Phase 6 can proceed without it |
+| v1.x+ | Post-launch reach work | |
 
 **Operating rule:** any time a phase item requires engine work, we cut
 a real engine issue and wait for the tag. Silent submodule edits are
@@ -191,6 +291,30 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-14** — **Launch-readiness sweep: added Phase 5 (Make it
+  shippable) + Phase 6 (Make it stick); checked off what's shipped.** A
+  code audit confirmed the simulation has run ahead of the product: audio,
+  save versioning + migration, difficulty, marketing, all six Phase 3
+  systems, a touch first-pass, land plots, the iso art pass, and a Pages
+  deploy pipeline are all in code (76 GUT tests green). What's *missing
+  before launch* is not another system — it's the wrapper around the one
+  we have. **New Phase 5 (engine-clean gate):** prove the public build is
+  actually live/fast/crash-free over a long session (5.1, closes 1.1/1.4),
+  real human playtests (5.2, closes 1.5), telemetry + privacy (5.3, closes
+  2.4), a real settings/pause menu with **`user://`-persisted prefs** (5.4,
+  net-new — nothing the player sets survives a reload today), accessibility
+  (5.5, closes 2.3), the still-open portrait HUD (5.6, closes the 2.2
+  remainder), and a QA/bug-bash hardening pass with save-corruption
+  resilience + an about/credits screen (5.7, net-new). **New Phase 6**
+  absorbs the unbuilt Phase 4 reach items (research tree → 6.1, achievements
+  → 6.2, scenarios+editor → 6.3, localization → 6.4, launch → 6.8) and adds
+  the retention hooks a zoo lives on: content breadth + **name-your-animals
+  / lineage view / photo-share** (6.5), the parked **animals-as-agents**
+  spec (6.6), and **audio depth** (6.7). Phase 4's table is kept for history
+  with ➡️ pointers; exit-criteria boxes across Phases 1–3 are now ticked
+  honestly — smoke/seams/Phase-3-systems ✅; deploy-verify, human playtests,
+  telemetry-gated metrics, and engine v1.0 explicitly **not** yet. No engine
+  or code changes in this entry — roadmap only.
 - **2026-06-12 (c)** — **Zoo land types: selectable plots (climate × size ×
   price) + sell-to-relocate.** New game now picks a land plot on the
   welcome screen (`design/tuning/zoo_types.md`): each plot is a climate
@@ -419,7 +543,9 @@ decision log, don't slip them in silently.
 
 - Steam Workshop integration
 - Multiplayer / shared zoos (very speculative)
-- Animal genetics depth (coat patterns, traits, lineage trees)
+- Animal genetics depth (coat patterns, traits, lineage trees) *(the
+  lineage/family-tree view promoted into Phase 6.5; deeper genetics stays
+  parked here)*
 - Educational mode / school edition
 - Mod support beyond scenarios
 - Console ports (would require engine input rework)
