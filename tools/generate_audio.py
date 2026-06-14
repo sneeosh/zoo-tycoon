@@ -129,24 +129,42 @@ write_wav("lose.wav", mix(
     delayed(tone(311.1, 1.1, amp=0.24, decay=3), 0.60)))
 
 
-# --- Ambient park loop -------------------------------------------------------
-# 8 seconds of gentle wind (lowpassed noise) + sparse birdsong chirps, made
-# seamless by crossfading the tail into the head. Deterministic seed.
+# --- Ambient loops (day / night / rain) -------------------------------------
+# Roadmap 6.7 audio depth: one ambient bed read as a prototype; a launch wants
+# a soundscape that responds to the world. We synthesize three seamless loops
+# (ZooAudio crossfades between them by time-of-day + weather): a day park bed
+# with birdsong, a night bed with crickets + the odd owl, and a rain bed with
+# heavier filtered noise. All deterministic, all stdlib.
 
-random.seed(20260612)
 DUR = 8.0
 N = int(SR * DUR)
 
-# Wind: white noise through a one-pole lowpass, slowly breathing in volume.
-wind = []
-lp = 0.0
-for i in range(N):
-    t = i / SR
-    lp += 0.02 * (random.uniform(-1, 1) - lp)
-    breathe = 0.75 + 0.25 * math.sin(2 * math.pi * t / DUR * 2 + 1.3)
-    wind.append(0.16 * lp * 10 * breathe)
 
-# Birds: a handful of short FM chirps scattered through the loop.
+def loop_seamless(samples, xf_sec=0.5):
+    """Crossfade the tail into the head so the loop has no seam."""
+    xf = int(xf_sec * SR)
+    out = list(samples)
+    for i in range(xf):
+        a = i / xf
+        out[i] = out[i] * a + out[N - xf + i] * (1 - a)
+    return out[: N - xf]
+
+
+def wind_bed(amp, lp_coef, breathe_rate):
+    """White noise through a one-pole lowpass, slowly breathing in volume."""
+    out = []
+    lp = 0.0
+    for i in range(N):
+        t = i / SR
+        lp += lp_coef * (random.uniform(-1, 1) - lp)
+        breathe = 0.75 + 0.25 * math.sin(2 * math.pi * t / DUR * breathe_rate + 1.3)
+        out.append(amp * lp * 10 * breathe)
+    return out
+
+
+# Day: gentle wind + scattered FM birdsong chirps.
+random.seed(20260612)
+wind = wind_bed(0.16, 0.02, 2)
 birds = [0.0] * N
 for start, base in [(0.9, 2800), (2.1, 3400), (3.8, 2500), (5.2, 3100), (6.6, 2700)]:
     n0 = int(start * SR)
@@ -157,12 +175,77 @@ for start, base in [(0.9, 2800), (2.1, 3400), (3.8, 2500), (5.2, 3100), (6.6, 27
         env = math.sin(math.pi * k / chirp_len) ** 2
         if n0 + k < N:
             birds[n0 + k] += 0.10 * env * math.sin(2 * math.pi * sweep * t)
+write_wav("ambient_park.wav", loop_seamless([w + b for w, b in zip(wind, birds)]))
 
-amb = [w + b for w, b in zip(wind, birds)]
-# Seamless loop: crossfade the last 0.5s into the first 0.5s.
-xf = int(0.5 * SR)
-for i in range(xf):
-    a = i / xf
-    amb[i] = amb[i] * a + amb[N - xf + i] * (1 - a)
-amb = amb[: N - xf]
-write_wav("ambient_park.wav", amb)
+# Night: softer, darker wind + steady cricket pulses + a distant owl.
+random.seed(20260613)
+nwind = wind_bed(0.10, 0.012, 1)
+crickets = [0.0] * N
+cricket_period = 0.32
+k_len = int(0.05 * SR)
+tpos = 0.2
+while tpos < DUR:
+    n0 = int(tpos * SR)
+    for k in range(k_len):
+        t = k / SR
+        env = math.sin(math.pi * k / k_len) ** 2
+        if n0 + k < N:
+            crickets[n0 + k] += 0.05 * env * math.sin(2 * math.pi * 4500 * t)
+    tpos += cricket_period
+owl = [0.0] * N
+for start, base in [(1.6, 360), (5.0, 330)]:
+    n0 = int(start * SR)
+    hoot_len = int(0.5 * SR)
+    for k in range(hoot_len):
+        t = k / SR
+        env = math.sin(math.pi * k / hoot_len) ** 2
+        if n0 + k < N:
+            owl[n0 + k] += 0.07 * env * math.sin(2 * math.pi * base * t)
+write_wav("ambient_night.wav",
+          loop_seamless([w + c + o for w, c, o in zip(nwind, crickets, owl)]))
+
+# Rain: heavier high-passed noise (patter) over a low rumble bed.
+random.seed(20260614)
+rain = []
+hp_prev = 0.0
+lp = 0.0
+for i in range(N):
+    t = i / SR
+    nz = random.uniform(-1, 1)
+    lp += 0.05 * (nz - lp)
+    hp = nz - lp                      # high-passed = the patter
+    rumble = 0.0
+    rl = lp * 10
+    swell = 0.8 + 0.2 * math.sin(2 * math.pi * t / DUR)
+    rain.append((0.13 * hp + 0.05 * rl) * swell)
+    hp_prev = hp
+write_wav("ambient_rain.wav", loop_seamless(rain))
+
+
+# --- Music bed --------------------------------------------------------------
+# A small, calm music set (6.7): one slow pad loop on a I–vi–IV–V progression
+# in C, very quiet so it sits under the ambience. Seamless over its own length.
+
+def pad(freqs, dur, amp=0.12):
+    n = int(SR * dur)
+    out = [0.0] * n
+    for k in range(n):
+        t = k / SR
+        # Gentle attack/release so chords don't click.
+        env = min(1.0, t / 0.4) * min(1.0, (dur - t) / 0.4)
+        s = 0.0
+        for f in freqs:
+            s += math.sin(2 * math.pi * f * t)
+        out[k] = amp * env * s / max(1, len(freqs))
+    return out
+
+
+CHORD_DUR = 3.0
+C_major = [261.6, 329.6, 392.0]
+A_minor = [220.0, 261.6, 329.6]
+F_major = [174.6, 220.0, 261.6]
+G_major = [196.0, 246.9, 293.7]
+music = seq(
+    pad(C_major, CHORD_DUR), pad(A_minor, CHORD_DUR),
+    pad(F_major, CHORD_DUR), pad(G_major, CHORD_DUR))
+write_wav("music_calm.wav", music)
