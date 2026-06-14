@@ -1,0 +1,61 @@
+{
+	"en": {
+		"top.reports": "Reports",
+		"top.save": "Save",
+		"top.load": "Load",
+		"top.settings": "Settings",
+		"top.help_tip": "Show the welcome guide again",
+		"top.settings_tip": "Settings, accessibility & about (Esc)",
+		"top.view_tip": "Switch between top-down and isometric view",
+		"top.sound_tip": "Toggle sound (full mix in Settings)",
+
+		"settings.title": "Settings",
+		"settings.audio": "Audio",
+		"settings.master_volume": "Master volume",
+		"settings.sfx_volume": "Sound effects",
+		"settings.ambient_volume": "Ambience",
+		"settings.mute": "Mute all sound",
+		"settings.display": "Display",
+		"settings.view": "View",
+		"settings.view_iso": "Isometric",
+		"settings.view_top": "Top-down",
+		"settings.accessibility": "Accessibility",
+		"settings.colorblind": "Colorblind palette",
+		"settings.colorblind_off": "Off",
+		"settings.colorblind_deut": "Red-green (deuteranopia)",
+		"settings.colorblind_prot": "Red-green (protanopia)",
+		"settings.colorblind_trit": "Blue-yellow (tritanopia)",
+		"settings.large_font": "Larger text",
+		"settings.reduced_motion": "Reduce motion",
+		"settings.privacy": "Privacy & data",
+		"settings.telemetry": "Share anonymous play data",
+		"settings.close": "Close",
+		"settings.reset": "Reset to defaults",
+
+		"about.title": "About",
+		"about.tagline": "A web-first zoo tycoon built on a read-only simulation engine.",
+		"about.credits": "Design, code & tuning by the Zoo Tycoon team.\nBuilt on the Tycoon Engine.",
+		"about.version": "Version %s",
+		"about.controls_header": "Keyboard",
+		"about.controls": "Space pause/play · 1/2/4 set speed · Esc close · S save · L load",
+
+		"ach.title": "Achievements",
+		"ach.progress": "%d of %d earned",
+		"ach.unlocked_toast": "Achievement unlocked: %s",
+		"ach.locked": "Locked",
+
+		"welcome.title": "Welcome to your Zoo",
+		"welcome.start": "Welcome to your Zoo. Pick Tutorial or Skip to begin.",
+
+		"save.ok": "Saved.",
+		"save.fail": "Save failed — your changes are not stored. Check disk space and try again.",
+		"load.ok": "Loaded.",
+		"load.none": "No save found.",
+		"load.fail": "Load failed — the save may be from an incompatible version.",
+
+		"common.on": "On",
+		"common.off": "Off",
+		"common.open": "Open",
+		"common.closed": "Closed"
+	}
+}

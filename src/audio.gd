@@ -23,12 +23,19 @@ const THROTTLE := {
 }
 const DEFAULT_THROTTLE := 0.08
 
+# These mirror the persisted player settings (Settings autoload). They stay
+# public so the existing HUD reads (_refresh_sound_button, the admin slider)
+# keep working unchanged; writes now route through Settings so the player's
+# choice survives a reload (roadmap 5.4).
 var muted: bool = false
 var master_volume: float = 0.8   # linear 0..1, applied to the Master bus
+var sfx_volume: float = 1.0      # linear 0..1, under master, on the SFX players
+var ambient_volume: float = 1.0  # linear 0..1, under master, on the ambient bed
 
 var _players: Dictionary = {}      # StringName -> AudioStreamPlayer
 var _ambient: AudioStreamPlayer
 var _last_played: Dictionary = {}  # StringName -> msec
+const _AMBIENT_BED_DB := -10.0     # the loop is a bed, not a presence
 
 
 func _ready() -> void:
@@ -50,10 +57,13 @@ func _ready() -> void:
 	if amb != null:
 		_ambient = AudioStreamPlayer.new()
 		_ambient.stream = amb
-		_ambient.volume_db = -10.0   # a bed, not a presence
 		add_child(_ambient)
 		_ambient.play()
-	_apply_volume()
+	# Pull persisted volumes/mute, then keep in sync with the Settings panel.
+	_sync_from_settings()
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.changed.connect(func(_key): _sync_from_settings())
 
 	# SFX wiring — the same signals the HUD narrates from.
 	ZooBootstrap.money_floated.connect(func(_amt, _pos): play(&"purchase"))
@@ -85,14 +95,31 @@ func play(sound_name: StringName) -> void:
 
 
 func set_muted(m: bool) -> void:
-	muted = m
-	if _ambient != null:
-		_ambient.stream_paused = m
-	_apply_volume()
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.set_value(&"muted", m)   # _sync_from_settings re-applies
+	else:
+		muted = m
+		_apply_volume()
 
 
 func set_master_volume(v: float) -> void:
-	master_volume = clampf(v, 0.0, 1.0)
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.set_value(&"master_volume", clampf(v, 0.0, 1.0))
+	else:
+		master_volume = clampf(v, 0.0, 1.0)
+		_apply_volume()
+
+
+# Pull the persisted player settings into the local mirrors and re-apply.
+func _sync_from_settings() -> void:
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		muted = settings.get_bool(&"muted")
+		master_volume = settings.get_float(&"master_volume")
+		sfx_volume = settings.get_float(&"sfx_volume")
+		ambient_volume = settings.get_float(&"ambient_volume")
 	_apply_volume()
 
 
@@ -100,6 +127,14 @@ func _apply_volume() -> void:
 	var bus := AudioServer.get_bus_index("Master")
 	AudioServer.set_bus_mute(bus, muted or master_volume <= 0.001)
 	AudioServer.set_bus_volume_db(bus, linear_to_db(maxf(master_volume, 0.001)))
+	# SFX players and the ambient bed carry their own sub-volumes beneath the
+	# master bus, so the player can dim ambience without muting the till bell.
+	var sfx_db := linear_to_db(maxf(sfx_volume, 0.0001))
+	for p in _players.values():
+		(p as AudioStreamPlayer).volume_db = sfx_db
+	if _ambient != null:
+		_ambient.volume_db = _AMBIENT_BED_DB + linear_to_db(maxf(ambient_volume, 0.0001))
+		_ambient.stream_paused = muted
 
 
 func _load_stream(sound_name: StringName) -> AudioStream:
