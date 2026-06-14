@@ -45,6 +45,15 @@ var _map_view: BaseMapView
 var _use_iso: bool = true   # resolved from env + persisted Settings in _ready
 var _view_container: VBoxContainer
 var _view_btn: Button
+# Responsive layout (roadmap 5.6): the build panel collapses so the map gets
+# the full width on a phone in portrait. _center's left offset tracks it.
+var _left_panel: PanelContainer
+var _center_col: VBoxContainer
+var _build_toggle_btn: Button
+var _build_panel_open: bool = true
+var _was_narrow: bool = false
+const LEFT_PANEL_W: int = 220
+const NARROW_THRESHOLD: int = 900
 # region_id -> true for populated exhibits with no gate-reachable path cell
 # within viewing distance (guests can't reach them). Recomputed each HUD tick.
 var _disconnected_regions: Dictionary = {}
@@ -186,6 +195,10 @@ func _ready() -> void:
 	Achievements.achievement_unlocked.connect(_on_achievement_unlocked)
 	# Restore the persisted speed multiplier without forcing play/pause.
 	SimClock.set_speed(_speed_multiplier(Settings.get_string(&"game_speed")))
+	# Responsive layout: collapse the build panel on a phone in portrait, and
+	# re-evaluate whenever the viewport resizes / rotates.
+	get_viewport().size_changed.connect(_apply_responsive_layout)
+	_apply_responsive_layout()
 	Telemetry.track(&"app_launch")
 
 	# Headless harness modes take over before anything game-specific runs,
@@ -2674,6 +2687,14 @@ func _build_top_bar(parent: Control) -> void:
 	_update_view_button()
 	row.add_child(_view_btn)
 
+	_build_toggle_btn = Button.new()
+	_build_toggle_btn.text = "☰"
+	_build_toggle_btn.tooltip_text = "Show/hide the build menu"
+	_build_toggle_btn.custom_minimum_size = Vector2(40, 36)
+	_build_toggle_btn.focus_mode = Control.FOCUS_NONE
+	_build_toggle_btn.pressed.connect(func(): _set_build_panel_open(not _build_panel_open))
+	row.add_child(_build_toggle_btn)
+
 	var lineage_btn := Button.new()
 	lineage_btn.text = "🐾"
 	lineage_btn.tooltip_text = I18n.t("top.lineage_tip")
@@ -2836,11 +2857,12 @@ func _placeable_tooltip_for(def: PlaceableDef) -> String:
 
 func _build_left_panel(parent: Control) -> void:
 	var panel := PanelContainer.new()
+	_left_panel = panel
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.offset_top = 56
 	panel.offset_left = 0
 	panel.offset_bottom = 0
-	panel.custom_minimum_size = Vector2(220, 0)
+	panel.custom_minimum_size = Vector2(LEFT_PANEL_W, 0)
 	panel.add_theme_stylebox_override("panel", _panel_box(Color("#2a3a22")))
 	parent.add_child(panel)
 
@@ -2937,8 +2959,9 @@ func _build_right_column(parent: Control) -> void:
 	#   center: map + log
 	#   right region-manage panel (300 wide, hidden until a region is selected)
 	var center := VBoxContainer.new()
+	_center_col = center
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.offset_left = 220
+	center.offset_left = LEFT_PANEL_W
 	center.offset_top = 56
 	# offset_right is toggled by _set_region_panel_visible: 0 when the panel is
 	# hidden (map uses the full width) and -REGION_PANEL_W when it's open.
@@ -3521,6 +3544,28 @@ func _update_view_button() -> void:
 		return
 	# Show the current mode; pressing switches to the other.
 	_view_btn.text = "View: Iso" if _use_iso else "View: Top"
+
+
+func _set_build_panel_open(open: bool) -> void:
+	_build_panel_open = open
+	if _left_panel != null:
+		_left_panel.visible = open
+	if _center_col != null:
+		_center_col.offset_left = LEFT_PANEL_W if open else 0
+	if _map_view != null:
+		_map_view.queue_redraw()
+
+
+# Portrait/mobile reflow (roadmap 5.6): on a narrow viewport the build panel
+# collapses so the map fills the width; widening reopens it. Only acts on a
+# threshold crossing so it never fights a mid-session manual toggle.
+func _apply_responsive_layout() -> void:
+	var w := get_viewport().get_visible_rect().size.x
+	var narrow := w < NARROW_THRESHOLD
+	if narrow == _was_narrow:
+		return
+	_was_narrow = narrow
+	_set_build_panel_open(not narrow)
 
 
 func _open_settings() -> void:
