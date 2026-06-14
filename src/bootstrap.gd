@@ -836,10 +836,21 @@ func _on_day_ending_for_breeding(_day: int) -> void:
 				(breeders[p.placeable_def_id] as Array[int]).append(i)
 		# A species with two+ eligible adults may produce one offspring/day.
 		for species_id in breeders.keys():
-			if (breeders[species_id] as Array).size() < 2:
+			var parents: Array = breeders[species_id]
+			if parents.size() < 2:
 				continue
 			if SimClock.rng.randf() < breeding.chance_per_day:
-				births.append({"region_id": region.region_id, "species": species_id})
+				# Capture lineage now, before old-age removals shift indices: the
+				# offspring's generation is one past its eldest parent, and we
+				# remember a parent's individual name for the family view (6.5).
+				var pa: Placement = region.placements[parents[0]]
+				var pb: Placement = region.placements[parents[1]]
+				var parent_gen: int = maxi(
+					int(pa.state.get("generation", 0)), int(pb.state.get("generation", 0)))
+				births.append({
+					"region_id": region.region_id, "species": species_id,
+					"parent": name_for(pa), "generation": parent_gen + 1,
+				})
 
 	# Old-age deaths first (descending index within a region).
 	old_age_deaths.sort_custom(func(a, b): return a["index"] > b["index"])
@@ -869,10 +880,15 @@ func _on_day_ending_for_breeding(_day: int) -> void:
 			Ledger.post_income(def.build_cost, "Birth: %s" % def.display_name, species)
 		placement.state["age_days"] = 0
 		placement.state["welfare"] = 1.0
+		placement.state["generation"] = int(b.get("generation", 1))
+		placement.state["parent"] = String(b.get("parent", ""))
+		var indiv_name: String = _assign_name(placement)
 		var rare: bool = SimClock.rng.randf() < breeding.rare_chance
 		if rare:
 			ProgressionManager.add_reputation(breeding.rare_reputation)
-		animal_born.emit(b["region_id"], species, def.display_name, rare)
+		# Emit the newborn's *individual* name — the hook a player remembers
+		# (6.5), not the bare species label.
+		animal_born.emit(b["region_id"], species, indiv_name, rare)
 
 
 # Age (in days) of an animal placement, for the UI.
@@ -880,6 +896,77 @@ func animal_age(region: Region, index: int) -> int:
 	if index < 0 or index >= region.placements.size():
 		return 0
 	return int(region.placements[index].state.get("age_days", 0))
+
+
+# ---------------------------------------------------------------------------
+# Individual animals: names + lineage (roadmap 6.5)
+# ---------------------------------------------------------------------------
+#
+# A named animal you bred across generations is the difference between a tech
+# demo and a zoo. Each animal placement carries an individual `name` in its
+# state (assigned lazily so old saves and hand-placed animals get one on first
+# sight) plus a `generation` and the `parent` name captured at birth, which the
+# lineage view reads back into a family roster.
+
+# Curated flavor names — content, not balance, so they live in code (the
+# tuning layer is for numbers per CLAUDE.md §3). Cycles disambiguate with a
+# numeral once exhausted, so the pool never runs out.
+const ANIMAL_NAME_POOL: Array = [
+	"Aspen", "Bramble", "Cinder", "Dune", "Ember", "Fern", "Goose", "Hazel",
+	"Iris", "Juniper", "Koa", "Luna", "Maple", "Nimbus", "Olive", "Pippin",
+	"Quill", "River", "Sage", "Tundra", "Umber", "Vesper", "Willow", "Xara",
+	"Yarrow", "Zephyr", "Basil", "Clover", "Dusty", "Echo", "Flint", "Gale",
+]
+var _name_counter: int = 0
+
+
+# Individual name for an animal placement, assigning one on first request.
+func name_for(p: Placement) -> String:
+	var n := String(p.state.get("name", ""))
+	if n == "":
+		n = _assign_name(p)
+	return n
+
+
+func _assign_name(p: Placement) -> String:
+	var base: String = ANIMAL_NAME_POOL[_name_counter % ANIMAL_NAME_POOL.size()]
+	var cycle: int = _name_counter / ANIMAL_NAME_POOL.size()
+	var n := base if cycle == 0 else "%s %d" % [base, cycle + 1]
+	_name_counter += 1
+	p.state["name"] = n
+	return n
+
+
+# Player rename from the lineage view. Blank input is ignored (keeps the name).
+func rename_animal(region: Region, index: int, new_name: String) -> void:
+	if region == null or index < 0 or index >= region.placements.size():
+		return
+	var nm := new_name.strip_edges()
+	if nm != "":
+		region.placements[index].state["name"] = nm
+
+
+# Flat roster of every living animal for the lineage / family view. Each entry:
+#   {species, species_id, name, generation, parent, age, region_id, index}
+func get_lineage() -> Array:
+	var out: Array = []
+	for region: Region in RegionRegistry.all_regions():
+		for i in region.placements.size():
+			var p: Placement = region.placements[i]
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # animals only (infrastructure has no appeal axes)
+			out.append({
+				"species": def.display_name,
+				"species_id": p.placeable_def_id,
+				"name": name_for(p),
+				"generation": int(p.state.get("generation", 0)),
+				"parent": String(p.state.get("parent", "")),
+				"age": int(p.state.get("age_days", 0)),
+				"region_id": region.region_id,
+				"index": i,
+			})
+	return out
 
 
 # ---------------------------------------------------------------------------
@@ -892,7 +979,8 @@ func animal_age(region: Region, index: int) -> int:
 #   1 — original provider (settings + exhibits)
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
 #   3 — adds the zoo type (land plot + climate selection)
-const SAVE_VERSION: int = 3
+#   4 — adds per-animal name/generation/parent + the name counter (6.5)
+const SAVE_VERSION: int = 4
 
 
 func _save_game_state() -> Dictionary:
@@ -908,6 +996,9 @@ func _save_game_state() -> Dictionary:
 				"age_days": int(p.state.get("age_days", 0)),
 				"sick": bool(p.state.get("sick", false)),
 				"attitude": float(p.state.get("attitude", 1.0)),
+				"name": String(p.state.get("name", "")),
+				"generation": int(p.state.get("generation", 0)),
+				"parent": String(p.state.get("parent", "")),
 			})
 		# Anchor on a cell so we can find the rebuilt region after load.
 		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
@@ -924,6 +1015,7 @@ func _save_game_state() -> Dictionary:
 		"departures_happy": departures_happy,
 		"departures_unhappy": departures_unhappy,
 		"departures_total": departures_total,
+		"name_counter": _name_counter,
 		"exhibits": exhibits,
 	}
 
@@ -941,6 +1033,8 @@ func _migrate_game_state(data: Dictionary) -> void:
 	# from zero (defaults below). No reshapes yet.
 	# v2 → v3: zoo_type didn't exist; older saves were all built on the
 	# default plot, which is exactly what the reader below falls back to.
+	# v3 → v4: animals had no name/generation/parent; the reader defaults them
+	# (blank name → lazily assigned on first sight, generation 0). No reshape.
 
 
 func _load_game_state(data: Dictionary) -> void:
@@ -996,12 +1090,18 @@ func _load_game_state(data: Dictionary) -> void:
 				"age_days": int(pd.get("age_days", 0)),
 				"sick": bool(pd.get("sick", false)),
 				"attitude": float(pd.get("attitude", 1.0)),
+				"name": String(pd.get("name", "")),
+				"generation": int(pd.get("generation", 0)),
+				"parent": String(pd.get("parent", "")),
 			}
 			region.placements.append(p)
 
 	departures_happy = int(data.get("departures_happy", 0))
 	departures_unhappy = int(data.get("departures_unhappy", 0))
 	departures_total = int(data.get("departures_total", 0))
+	# Continue the name sequence past whatever the save reached so reloaded
+	# zoos don't hand out duplicate names to new arrivals (6.5).
+	_name_counter = int(data.get("name_counter", 0))
 	unhappy_need_counts.clear()
 
 	donations_by_region.clear()

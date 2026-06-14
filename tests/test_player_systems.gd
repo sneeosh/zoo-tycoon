@@ -87,3 +87,23 @@ func test_achievements_loaded_from_tuning() -> void:
 	var d := Achievements.definition(&"open_for_business")
 	assert_eq(d.get("metric"), &"guests")
 	assert_eq(int(d.get("threshold")), 1)
+
+
+# --- Animal naming + lineage (6.5) ----------------------------------------
+
+func test_animal_name_lazy_and_stable() -> void:
+	var p := Placement.new()
+	p.placeable_def_id = &"lion"
+	var n := ZooBootstrap.name_for(p)
+	assert_ne(n, "", "an animal gets a name on first sight")
+	assert_eq(ZooBootstrap.name_for(p), n, "name is stable, not reassigned")
+
+
+func test_animal_rename_trims_and_ignores_blank() -> void:
+	var p := Placement.new()
+	var r := Region.new()
+	r.placements.append(p)
+	ZooBootstrap.rename_animal(r, 0, "  Leo  ")
+	assert_eq(String(p.state.get("name", "")), "Leo")
+	ZooBootstrap.rename_animal(r, 0, "   ")   # blank keeps the prior name
+	assert_eq(String(p.state.get("name", "")), "Leo")

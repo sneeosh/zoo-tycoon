@@ -163,6 +163,8 @@ var _hud_accumulator: float = 0.0
 var _audio: ZooAudio
 var _sound_btn: Button
 var _settings_modal: SettingsModal
+var _lineage_modal: LineageModal
+var _hud_layer: CanvasLayer   # the whole HUD; hidden briefly for photo mode
 var _toast_label: Label   # transient achievement banner
 
 
@@ -2574,6 +2576,7 @@ func _harness_assert_quality(action: Dictionary) -> bool:
 
 func _build_ui() -> void:
 	var hud := CanvasLayer.new()
+	_hud_layer = hud
 	add_child(hud)
 
 	var root := Control.new()
@@ -2670,6 +2673,22 @@ func _build_top_bar(parent: Control) -> void:
 	_view_btn.pressed.connect(_toggle_view)
 	_update_view_button()
 	row.add_child(_view_btn)
+
+	var lineage_btn := Button.new()
+	lineage_btn.text = "🐾"
+	lineage_btn.tooltip_text = I18n.t("top.lineage_tip")
+	lineage_btn.custom_minimum_size = Vector2(40, 36)
+	lineage_btn.focus_mode = Control.FOCUS_NONE
+	lineage_btn.pressed.connect(_open_lineage)
+	row.add_child(lineage_btn)
+
+	var photo_btn := Button.new()
+	photo_btn.text = "📷"
+	photo_btn.tooltip_text = I18n.t("top.photo_tip")
+	photo_btn.custom_minimum_size = Vector2(40, 36)
+	photo_btn.focus_mode = Control.FOCUS_NONE
+	photo_btn.pressed.connect(_take_photo)
+	row.add_child(photo_btn)
 
 	var settings_btn := Button.new()
 	settings_btn.text = "⚙"
@@ -2950,6 +2969,10 @@ func _build_right_column(parent: Control) -> void:
 	parent.add_child(_settings_modal)
 	_settings_modal.view_toggle_requested.connect(_toggle_view)
 	_settings_modal.closed.connect(_refresh_speed_buttons)
+
+	# Name-your-animals + family/lineage view (6.5).
+	_lineage_modal = LineageModal.new()
+	parent.add_child(_lineage_modal)
 
 	# Transient achievement banner, top-center, click-through.
 	_toast_label = Label.new()
@@ -3505,6 +3528,31 @@ func _open_settings() -> void:
 		_settings_modal.open()
 
 
+func _open_lineage() -> void:
+	if _lineage_modal != null:
+		_lineage_modal.open()
+
+
+# Photo / share mode (6.5): hide the HUD, grab the framebuffer, save a PNG to
+# user://photos/. The cheapest possible "share mode" — virality on a budget.
+func _take_photo() -> void:
+	if _hud_layer != null:
+		_hud_layer.visible = false
+	# Let the hidden HUD take effect before we read the framebuffer.
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	if _hud_layer != null:
+		_hud_layer.visible = true
+	DirAccess.make_dir_recursive_absolute(
+		ProjectSettings.globalize_path("user://photos/"))
+	var path := "user://photos/zoo_%d.png" % Time.get_unix_time_from_system()
+	if img != null and img.save_png(path) == OK:
+		_flash_toast(I18n.t("photo.saved") % path, Color("#83c779"))
+		Telemetry.track(&"photo_taken")
+	else:
+		_flash_toast(I18n.t("photo.failed"), Color("#e76f51"))
+
+
 # Larger-text accessibility (5.5): a uniform UI zoom is the most reliable
 # lever here because the HUD overrides font sizes per-label, so a theme
 # default wouldn't reach most text. content_scale_factor scales the whole
@@ -3673,13 +3721,15 @@ func _on_welfare_alert(region_id: int, _index: int, kind: String, animal_name: S
 		_refresh_region_panel()
 
 
-func _on_animal_born(region_id: int, _species: StringName, animal_name: String, rare: bool) -> void:
+func _on_animal_born(region_id: int, species: StringName, animal_name: String, rare: bool) -> void:
+	var def: PlaceableDef = ContentDB.placeable_defs.get(species)
+	var species_label: String = def.display_name if def != null else String(species)
 	if rare:
-		_push_log("[color=#f4d35e][b]★ A rare %s was born in Exhibit #%d![/b][/color] The press loves it — reputation up." %
-			[animal_name, region_id])
+		_push_log("[color=#f4d35e][b]★ %s, a rare %s, was born in Exhibit #%d![/b][/color] The press loves it — reputation up." %
+			[animal_name, species_label, region_id])
 	else:
-		_push_log("[color=#83c779]🐣 A baby %s was born in Exhibit #%d.[/color]" %
-			[animal_name, region_id])
+		_push_log("[color=#83c779]🐣 %s, a baby %s, was born in Exhibit #%d.[/color]" %
+			[animal_name, species_label, region_id])
 	if region_id == _selected_region_id:
 		_refresh_region_panel()
 
