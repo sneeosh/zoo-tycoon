@@ -1,17 +1,19 @@
-# Achievements — milestones a launched zoo game lives on (roadmap 6.2).
-#
-# Each row is one achievement. `metric` names a value the Achievements
-# autoload knows how to read; the achievement unlocks the moment that metric
-# first reaches `threshold`. Keep `id` stable — it is the save key.
-#
-# Supported metrics (all observed engine/zoo-side, no new engine surface):
-#   balance       — Ledger balance (peak seen)
-#   reputation    — ProgressionManager reputation (peak seen)
-#   day           — in-game day reached
-#   guests        — cumulative guest departures (lifetime, across games)
-#   happy_guests  — cumulative happy departures
-#   births        — cumulative animal births
-#   rare_births   — cumulative rare-genome births
+# Achievements — Zoo
+
+<!--
+Roadmap 6.2. Each row is one achievement. `metric` names a value the
+Achievements autoload knows how to read; the achievement unlocks the moment
+that metric first reaches `threshold`. Keep `id` stable — it is the save key.
+
+Supported metrics (all observed engine/zoo-side, no new engine surface):
+  balance       — Ledger balance (peak seen)
+  reputation    — ProgressionManager reputation (peak seen)
+  day           — in-game day reached
+  guests        — cumulative guest departures (lifetime, across games)
+  happy_guests  — cumulative happy departures
+  births        — cumulative animal births
+  rare_births   — cumulative rare-genome births
+-->
 
 ## Achievements
 

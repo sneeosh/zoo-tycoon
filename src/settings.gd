@@ -46,7 +46,7 @@ func get_value(key: StringName) -> Variant:
 
 
 func get_bool(key: StringName) -> bool:
-	return bool(get_value(key))
+	return _to_bool(get_value(key))
 
 
 func get_float(key: StringName) -> float:
@@ -65,7 +65,7 @@ func set_value(key: StringName, value: Variant) -> bool:
 	if not DEFAULTS.has(key):
 		push_warning("Settings.set_value: unknown key '%s'" % key)
 		return false
-	var coerced := _coerce(key, value)
+	var coerced: Variant = _coerce(key, value)
 	if _values.has(key) and _values[key] == coerced:
 		return false
 	_values[key] = coerced
@@ -124,7 +124,7 @@ func _coerce(key: StringName, value: Variant) -> Variant:
 	var default: Variant = DEFAULTS[key]
 	match typeof(default):
 		TYPE_BOOL:
-			return bool(value)
+			return _to_bool(value)
 		TYPE_FLOAT:
 			return clampf(float(value), 0.0, 1.0) if _is_unit(key) else float(value)
 		TYPE_INT:
@@ -138,3 +138,17 @@ func _coerce(key: StringName, value: Variant) -> Variant:
 # Volume-style keys are clamped to [0,1]; everything else floats freely.
 func _is_unit(key: StringName) -> bool:
 	return key in [&"master_volume", &"sfx_volume", &"ambient_volume"]
+
+
+# GDScript 4 has no bool() constructor, so coerce truthiness by hand. JSON
+# gives us real bools, but a hand-edited file (or a stringly value) shouldn't
+# crash — non-empty/"true"/nonzero reads as true.
+func _to_bool(v: Variant) -> bool:
+	if v is bool:
+		return v
+	if v is int or v is float:
+		return v != 0
+	if v is String:
+		var s := (v as String).strip_edges().to_lower()
+		return s == "true" or s == "1" or s == "yes"
+	return v != null
