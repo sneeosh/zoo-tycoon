@@ -139,16 +139,23 @@ func test_starter_park_stages_on_every_plot() -> void:
 # --- Selling up & relocating --------------------------------------------------
 
 func test_sale_value_counts_land_buildings_and_animals() -> void:
+	# A 3-cell grass+rock enclosure so the lion's grass,rocks requirement and
+	# its 3-cell space need are both met (the point of the test is to count an
+	# animal in the sale value).
 	EntityRegistry.place(&"grass_patch", Vector2i(2, 2))
 	EntityRegistry.place(&"grass_patch", Vector2i(3, 2))
+	EntityRegistry.place(&"rock_patch", Vector2i(4, 2))
 	var region := RegionRegistry.region_at_cell(Vector2i(2, 2))
-	RegionRegistry.add_placement(region.region_id, &"lion")
+	var lion_placement := RegionRegistry.add_placement(region.region_id, &"lion")
+	assert_not_null(lion_placement, "lion should place in a 3-cell grass+rock enclosure")
 	var sale := ZooBootstrap.zoo_sale_value()
 	assert_eq(int(sale["land"]), 0, "default plot is free, so land resale is $0")
-	# Two grass tiles at refund_fraction plus half a lion.
+	# Two grass + one rock tile at refund_fraction plus half a lion.
 	var grass: EntityDef = ContentDB.get_entity_def(&"grass_patch")
+	var rock: EntityDef = ContentDB.get_entity_def(&"rock_patch")
 	var lion: PlaceableDef = ContentDB.placeable_defs[&"lion"]
 	var expected: int = 2 * int(grass.build_cost * EntityRegistry.refund_fraction) \
+		+ int(rock.build_cost * EntityRegistry.refund_fraction) \
 		+ int(lion.build_cost * 0.5)
 	assert_eq(int(sale["assets"]), expected)
 	assert_eq(int(sale["total"]), int(sale["land"]) + int(sale["assets"]))

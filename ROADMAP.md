@@ -291,6 +291,39 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-14 (b)** — **Phase 5/6 engine-clean build-out: settings,
+  telemetry, achievements, i18n, accessibility, naming/lineage, audio depth,
+  portrait reflow.** Worked the *codeable* remainder of Phases 5–6, all
+  engine-clean, **verified by actually running Godot 4.5.1 headless** (GUT
+  **89/89 green**, clean game boot, and a successful web export that packs the
+  new i18n/achievements/audio). Shipped: **5.3 Telemetry** — opt-in,
+  **local-only** event log (session length / day reached / win-lose /
+  tutorial drop-off) + a privacy notice; the "where does data go" blocker is
+  resolved privacy-first (no network egress). **5.4 Settings/pause menu** —
+  new `Settings` autoload persists volume mix, view, speed, and accessibility
+  prefs to `user://settings.json`; a real settings modal (⚙ / Esc) that
+  pauses the sim; **every player setting now survives a reload** (the net-new
+  gap). **5.5 Accessibility** — colorblind-safe welfare/appeal colors
+  (`Palette`), a larger-text UI zoom, Esc/1/2/4 keyboard controls. **5.6
+  Portrait** — the build panel is collapsible and auto-hides on a narrow
+  viewport (full portrait polish still wants in-browser iteration, gated with
+  5.1). **5.7 hardening** — loud save-failed/load-failed banners, a wired
+  `load_failed` handler, and an About/version/credits screen. **6.2
+  Achievements** — 12 milestones from `design/tuning/achievements.md`,
+  progress persisted as a cross-game profile, toast + list UI. **6.4 i18n** —
+  string catalog (`assets/i18n/strings.json`) + `I18n.t()` with English
+  fallback; new surfaces routed through it, the rest a mechanical follow-up.
+  **6.5 Emotional hooks** — animals carry an individual **name** (+ generation
+  + parent), breeding threads lineage, a **🐾 lineage view** renames them
+  inline, births announce the newborn by name, and **📷 photo mode** saves a
+  PNG. Save payload v3→v4 with forward migration. **6.7 Audio depth** —
+  day/night/rain ambience variants + a calm music bed, selected by world
+  state. *Deliberately not done (blocked, not skipped):* **5.1** live-URL
+  verification & **5.2** human playtests (need a real browser + external
+  testers — no display here); **6.1** research tree & **6.3** scenario editor
+  (hard-gated on **engine v1.0**); **6.6** animals-as-agents (needs the filed
+  `AgentType.drives_spawn_balance` engine seam); **6.8** launch (storefront
+  work). No engine edits — submodule untouched.
 - **2026-06-14** — **Launch-readiness sweep: added Phase 5 (Make it
   shippable) + Phase 6 (Make it stick); checked off what's shipped.** A
   code audit confirmed the simulation has run ahead of the product: audio,

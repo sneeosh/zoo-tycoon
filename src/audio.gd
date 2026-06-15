@@ -23,12 +23,28 @@ const THROTTLE := {
 }
 const DEFAULT_THROTTLE := 0.08
 
+# These mirror the persisted player settings (Settings autoload). They stay
+# public so the existing HUD reads (_refresh_sound_button, the admin slider)
+# keep working unchanged; writes now route through Settings so the player's
+# choice survives a reload (roadmap 5.4).
 var muted: bool = false
 var master_volume: float = 0.8   # linear 0..1, applied to the Master bus
+var sfx_volume: float = 1.0      # linear 0..1, under master, on the SFX players
+var ambient_volume: float = 1.0  # linear 0..1, under master, on the ambient bed
 
 var _players: Dictionary = {}      # StringName -> AudioStreamPlayer
 var _ambient: AudioStreamPlayer
+var _music: AudioStreamPlayer
 var _last_played: Dictionary = {}  # StringName -> msec
+const _AMBIENT_BED_DB := -10.0     # the loop is a bed, not a presence
+const _MUSIC_BED_DB := -16.0       # the music sits under the ambience
+
+# Day/season-aware ambience (roadmap 6.7): one of three loops plays depending
+# on weather + time-of-day. Keyed by the variant id; loaded once.
+const _AMBIENT_VARIANTS: Array[StringName] = [
+	&"ambient_park", &"ambient_night", &"ambient_rain"]
+var _ambient_streams: Dictionary = {}   # StringName -> AudioStreamWAV
+var _ambient_key: StringName = &"ambient_park"
 
 
 func _ready() -> void:
@@ -40,20 +56,44 @@ func _ready() -> void:
 		p.stream = stream
 		add_child(p)
 		_players[sound_name] = p
-	# Ambient park loop — forced looping at runtime so the import settings
-	# can stay default.
-	var amb := _load_stream(&"ambient_park")
-	if amb is AudioStreamWAV:
-		amb.loop_mode = AudioStreamWAV.LOOP_FORWARD
-		amb.loop_begin = 0
-		amb.loop_end = amb.data.size() / 2   # 16-bit mono: 2 bytes per frame
-	if amb != null:
-		_ambient = AudioStreamPlayer.new()
-		_ambient.stream = amb
-		_ambient.volume_db = -10.0   # a bed, not a presence
-		add_child(_ambient)
+	# Ambient loops — forced looping at runtime so the import settings can stay
+	# default. Three variants (day / night / rain) selected by the world.
+	for key in _AMBIENT_VARIANTS:
+		var s := _load_stream(key)
+		if s is AudioStreamWAV:
+			_loop(s)
+			_ambient_streams[key] = s
+	_ambient = AudioStreamPlayer.new()
+	add_child(_ambient)
+	if _ambient_streams.has(&"ambient_park"):
+		_ambient.stream = _ambient_streams[&"ambient_park"]
 		_ambient.play()
-	_apply_volume()
+
+	# Calm music bed under the ambience.
+	var mus := _load_stream(&"music_calm")
+	if mus is AudioStreamWAV:
+		_loop(mus)
+		_music = AudioStreamPlayer.new()
+		_music.stream = mus
+		add_child(_music)
+		_music.play()
+
+	# Pull persisted volumes/mute, then keep in sync with the Settings panel.
+	_sync_from_settings()
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.changed.connect(func(_key): _sync_from_settings())
+
+	# React to weather; poll time-of-day on a light timer (no engine clock
+	# signal exists for dawn/dusk, so a 2s poll is the cheap honest option).
+	if ZooBootstrap.has_signal("weather_changed"):
+		ZooBootstrap.weather_changed.connect(func(_w, _s): _update_ambient())
+	var clock_timer := Timer.new()
+	clock_timer.wait_time = 2.0
+	clock_timer.timeout.connect(_update_ambient)
+	add_child(clock_timer)
+	clock_timer.start()
+	_update_ambient()
 
 	# SFX wiring — the same signals the HUD narrates from.
 	ZooBootstrap.money_floated.connect(func(_amt, _pos): play(&"purchase"))
@@ -85,14 +125,31 @@ func play(sound_name: StringName) -> void:
 
 
 func set_muted(m: bool) -> void:
-	muted = m
-	if _ambient != null:
-		_ambient.stream_paused = m
-	_apply_volume()
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.set_value(&"muted", m)   # _sync_from_settings re-applies
+	else:
+		muted = m
+		_apply_volume()
 
 
 func set_master_volume(v: float) -> void:
-	master_volume = clampf(v, 0.0, 1.0)
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		settings.set_value(&"master_volume", clampf(v, 0.0, 1.0))
+	else:
+		master_volume = clampf(v, 0.0, 1.0)
+		_apply_volume()
+
+
+# Pull the persisted player settings into the local mirrors and re-apply.
+func _sync_from_settings() -> void:
+	var settings := get_node_or_null("/root/Settings")
+	if settings != null:
+		muted = settings.get_bool(&"muted")
+		master_volume = settings.get_float(&"master_volume")
+		sfx_volume = settings.get_float(&"sfx_volume")
+		ambient_volume = settings.get_float(&"ambient_volume")
 	_apply_volume()
 
 
@@ -100,6 +157,45 @@ func _apply_volume() -> void:
 	var bus := AudioServer.get_bus_index("Master")
 	AudioServer.set_bus_mute(bus, muted or master_volume <= 0.001)
 	AudioServer.set_bus_volume_db(bus, linear_to_db(maxf(master_volume, 0.001)))
+	# SFX players and the ambient bed carry their own sub-volumes beneath the
+	# master bus, so the player can dim ambience without muting the till bell.
+	var sfx_db := linear_to_db(maxf(sfx_volume, 0.0001))
+	for p in _players.values():
+		(p as AudioStreamPlayer).volume_db = sfx_db
+	var amb_db := linear_to_db(maxf(ambient_volume, 0.0001))
+	if _ambient != null:
+		_ambient.volume_db = _AMBIENT_BED_DB + amb_db
+		_ambient.stream_paused = muted
+	if _music != null:
+		_music.volume_db = _MUSIC_BED_DB + amb_db
+		_music.stream_paused = muted
+
+
+# Force a WAV stream to loop over its whole length (16-bit mono: 2 bytes/frame).
+func _loop(s: AudioStreamWAV) -> void:
+	s.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s.loop_begin = 0
+	s.loop_end = s.data.size() / 2
+
+
+# Pick the ambience that matches the current weather + time of day, swapping
+# the playing stream only when it actually changes (a hard swap is fine for a
+# quiet bed).
+func _update_ambient() -> void:
+	if _ambient == null:
+		return
+	var desired := &"ambient_park"
+	if String(ZooBootstrap.current_weather) == "rainy":
+		desired = &"ambient_rain"
+	elif not ZooBootstrap.is_within_open_hours():
+		desired = &"ambient_night"
+	if desired == _ambient_key:
+		return
+	if not _ambient_streams.has(desired):
+		return
+	_ambient_key = desired
+	_ambient.stream = _ambient_streams[desired]
+	_ambient.play()
 
 
 func _load_stream(sound_name: StringName) -> AudioStream:
