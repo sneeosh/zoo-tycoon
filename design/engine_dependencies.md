@@ -102,11 +102,11 @@ comments, `## Section`, `key = value`, pipe tables). The zoo now ships
 These are the only places the zoo wants the engine to change; each is already
 written up — don't patch them in `engine/` silently, bump a tag.
 
-- **`AgentType.drives_spawn_balance` flag** — animal welfare must not leak into
-  guest spawn demand via `AgentPool.compute_aggregate_satisfaction()` (which
-  averages over *all* agents). Spec:
-  [`animals_as_agents_spec.md`](./animals_as_agents_spec.md). Gates roadmap
-  **6.6**. Target engine v0.6.x.
+- ~~**`AgentType.drives_spawn_balance` flag**~~ — **RESOLVED in engine
+  v0.7.0** and consumed: animal welfare no longer leaks into guest spawn demand
+  via `AgentPool.compute_aggregate_satisfaction()`. The zoo's `animal` type
+  sets it false (`agents.md`). Roadmap **6.6** shipped on it. Spec:
+  [`animals_as_agents_spec.md`](./animals_as_agents_spec.md).
 - **Agent navigation on a constrained network** — landed in v0.6.1
   (`WalkableNetwork`, `INetworkNavigator`). Writeup:
   [`engine_seam_agent_navigation.md`](./engine_seam_agent_navigation.md) and

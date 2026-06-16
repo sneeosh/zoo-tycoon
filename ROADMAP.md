@@ -291,6 +291,28 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
+  v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
+  `AgentType.drives_spawn_balance` flag (default true), so a non-customer
+  population can be kept out of the guest spawn-demand curve. Bumped the
+  submodule to it and built the parked spec
+  ([`design/animals_as_agents_spec.md`](./design/animals_as_agents_spec.md))
+  entirely zoo-side: an `animal` AgentType (spawn_weight 0,
+  drives_spawn_balance false) with food/water needs; `AnimalBehavior`
+  (free-roam, seek troughs, herd drift, contained to the enclosure — no
+  pathfinding) on a dedicated RNG so it never perturbs the tuned
+  visitor/weather/breeding sequence; `AnimalSatisfactionModel` (welfare =
+  weakest-link of food/water/social/space, excluded from spawn balance);
+  a 1:1 Placement↔Agent lifecycle via a reconcile pass on placement/region
+  signals (player placement, breeding births, neglect/old-age deaths all
+  bind/unbind with no call-site changes); save **v4** round-trips animal roam
+  state; and both renderers now draw animals at the sim's real position
+  (the old sine-wander is a pre-bind fallback). The day-end care model
+  (habitat + keepers) stays the survival authority for illness/death/breeding;
+  this adds the continuous, watchable welfare on top — unifying the two is a
+  tunable follow-up. Verified by running Godot 4.5.1 headless: **97/97 GUT
+  green**, clean boot, clean web export. *Note:* engine documents v0.7.0 in its
+  CHANGELOG but hasn't pushed a git **tag**, so the submodule pins the commit.
 - **2026-06-14 (b)** — **Phase 5/6 engine-clean build-out: settings,
   telemetry, achievements, i18n, accessibility, naming/lineage, audio depth,
   portrait reflow.** Worked the *codeable* remainder of Phases 5–6, all
