@@ -52,6 +52,12 @@ code, that is a SEAM LEAK and the most important thing you can do is:
 Seam leaks documented in this repo become bug reports against the engine.
 Silently editing the submodule defeats the entire experiment.
 
+**Working in the engine submodule?** Read
+[`design/engine_dependencies.md`](./design/engine_dependencies.md) first — it
+is the inventory of engine surfaces the zoo binds today (interfaces, EventBus
+signals, SaveService/SimClock/RegionRegistry/Placement, autoload order, the
+filed seams) so an engine-side change can see what it would break here.
+
 ---
 
 ## 2. Repository structure
@@ -92,6 +98,11 @@ git-tracked.
      the full loop (visitors arriving → paying → eating → settling). If it
      goes red, the engine is broken or the tuning is wrong; never assume
      the test is wrong.
+  5. **Autoload order is load-bearing.** The zoo adds four autoloads around
+     the engine's: `Settings` + `I18n` go **first** (dependency-free, read by
+     everything); `Telemetry` + `Achievements` go **after** `ZooBootstrap`
+     because they bind its signals and engine getters. See
+     `design/engine_dependencies.md` §1.
 
 ---
 
@@ -117,3 +128,25 @@ The engine targets web-first. When wiring up an export later, follow the
 engine's web-performance discipline (`engine/CLAUDE.md` §7): object
 pooling on, no runtime asset generation, lean node counts. Generate
 sprites via Pixel Lab at build time and commit them.
+
+---
+
+## 6. Local verification
+
+Same steps CI runs (`.github/workflows/deploy.yml`); fuller notes in
+[`design/engine_dependencies.md`](./design/engine_dependencies.md) §4.
+
+```sh
+git submodule update --init --recursive          # fresh clones only
+godot --headless --import ; godot --headless --import   # two cold passes
+# GUT suite (currently 89 green):
+godot --headless -s res://addons/gut/gut_cmdln.gd -gdir=res://tests -ginclude_subdirs -gexit
+# Web export (needs matching 4.5.1 export templates):
+godot --headless --export-release "Web" build/web/index.html
+```
+
+`tools/generate_audio.py` regenerates the committed `assets/audio/*.wav`
+(pure stdlib, deterministic) — run it only when changing audio synthesis.
+Non-resource files loaded at runtime (e.g. `assets/i18n/*.json`,
+`design/tuning/*.md`) must be listed in `export_presets.cfg`
+`include_filter` or they won't ship in the web build.
