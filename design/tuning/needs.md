@@ -31,3 +31,14 @@ decay lets a modest set of amenities keep guests content:
 | thirst   | Thirst       | 0.0010              |
 | restroom | Restroom     | 0.0005              |
 | energy   | Energy       | 0.0006              |
+| food     | Animal Food  | 0.0006              |
+| water    | Animal Water | 0.0007              |
+
+<!--
+food / water (6.6 animals-as-agents) — the two decaying needs for the `animal`
+population. Slow enough that an animal empties roughly once an in-park day
+(threshold 0.45 at ~900 ticks), so a single in-enclosure trough plus keepers
+keeps a pen content; the AnimalBehavior refills these on arrival at a
+provides_food / provides_water placement inside the region.
+-->
+

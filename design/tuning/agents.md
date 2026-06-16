@@ -15,12 +15,24 @@ park of cute penguins pulls families and children; one of dangerous big cats
 pulls enthusiasts.
 -->
 
-| id         | display_name | spawn_weight |
-| ---------- | ------------ | ------------ |
-| visitor    | Adult        | 1.0          |
-| child      | Child        | 0.6          |
-| family     | Family       | 0.8          |
-| enthusiast | Enthusiast   | 0.4          |
+| id         | display_name | spawn_weight | drives_spawn_balance |
+| ---------- | ------------ | ------------ | -------------------- |
+| visitor    | Adult        | 1.0          | true                 |
+| child      | Child        | 0.6          | true                 |
+| family     | Family       | 0.8          | true                 |
+| enthusiast | Enthusiast   | 0.4          | true                 |
+| animal     | Animal       | 0.0          | false                |
+
+<!--
+animal (6.6 animals-as-agents) — a persistent, hand-placed, region-bound
+population, NOT a spawned crowd. spawn_weight = 0 so the visitor loop never
+auto-spawns it; the game spawns/despawns one per animal Placement.
+drives_spawn_balance = false (engine v0.7.0) so a hungry animal's low
+satisfaction can't suppress guest arrivals. Species husbandry stays in
+placeables.md — the agent carries its species id in behavior_state and looks
+up the PlaceableDef; one AgentType drives all species.
+-->
+
 
 ## Need specs
 
@@ -48,6 +60,8 @@ restrooms most (kids in tow); enthusiasts are low-maintenance and focused.
 | enthusiast | thirst   | 1.0           | 0.9                   | 0.40      |
 | enthusiast | restroom | 1.0           | 0.8                   | 0.45      |
 | enthusiast | energy   | 1.0           | 0.7                   | 0.35      |
+| animal     | food     | 1.0           | 1.0                   | 0.45      |
+| animal     | water    | 1.0           | 1.2                   | 0.45      |
 
 ## Traits
 
@@ -88,6 +102,18 @@ unflappable, and beeline (low fudge).
 | enthusiast | stay_duration  | 1200 | 2200 |
 | enthusiast | impatience     | 0.05 | 0.15 |
 | enthusiast | distance_fudge | 0.0  | 1.5  |
+| animal     | temperament    | 0.20 | 0.90 |
+| animal     | wander_speed   | 0.02 | 0.05 |
+
+<!--
+animal traits (6.6): temperament — bold (high) animals tolerate crowds and
+roam freely; shy (low) ones flee the fence and hug cover. wander_speed —
+tiles/tick when ambling; the behavior moves the animal toward troughs /
+conspecifics / away from crowds at this pace, reflecting off the enclosure
+bounds. Both sampled per-individual at spawn so a pen of the same species
+still reads as a set of individuals.
+-->
+
 
 ## Preferences
 
