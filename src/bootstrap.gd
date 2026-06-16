@@ -20,6 +20,12 @@ const GUEST_TYPES: Array[StringName] = [&"visitor", &"child", &"family", &"enthu
 
 var _visitor_behavior: VisitorBehavior
 var _visitor_satisfaction: VisitorSatisfactionModel
+# 6.6 — animals are a second, persistent agent population (see
+# design/animals_as_agents_spec.md). One AgentType (`animal`, spawn_weight 0,
+# drives_spawn_balance false) drives every species; the PlaceableDef carries
+# the husbandry numbers.
+var _animal_behavior: AnimalBehavior
+var _animal_satisfaction: AnimalSatisfactionModel
 var _zoo_quality: ZooQualityRating         # callable from game UI
 var _animal_happiness: ZooAnimalHappiness  # engine reads via EffectResolver
 
@@ -150,6 +156,21 @@ func _ready() -> void:
 	for guest_type in GUEST_TYPES:
 		AgentPool.register_behavior(guest_type, _visitor_behavior)
 		AgentPool.register_satisfaction_model(guest_type, _visitor_satisfaction)
+
+	# Animals as agents (6.6). The lifecycle is bound to placement/region
+	# signals so we never have to touch the player-placement, breeding, or
+	# death call sites: any animal placement added/removed reconciles to
+	# exactly one animal Agent. drives_spawn_balance=false (set in agents.md)
+	# keeps their welfare out of the guest spawn curve.
+	if ContentDB.get_agent_type(&"animal") != null:
+		_animal_behavior = AnimalBehavior.new()
+		_animal_satisfaction = AnimalSatisfactionModel.new()
+		AgentPool.register_behavior(&"animal", _animal_behavior)
+		AgentPool.register_satisfaction_model(&"animal", _animal_satisfaction)
+		EventBus.placement_added.connect(func(_r, _i): reconcile_animals())
+		EventBus.placement_removed.connect(func(_r, _i): reconcile_animals())
+		EventBus.region_changed.connect(func(_r): reconcile_animals())
+		EventBus.region_destroyed.connect(func(_r): reconcile_animals())
 	# v0.4.0 — engine multiplies placement appeal_contribution by the
 	# happiness this returns when computing region appeal. Without this
 	# registration, the engine's default returns 1.0 (no opinion) and
@@ -970,6 +991,68 @@ func get_lineage() -> Array:
 
 
 # ---------------------------------------------------------------------------
+# Animals as agents — lifecycle reconcile (roadmap 6.6)
+# ---------------------------------------------------------------------------
+#
+# The Placement is the slot the engine's region-appeal math counts; the Agent
+# is the living individual that roams it. They're bound 1:1 via
+# placement.state["agent_id"]. Rather than hook every add/remove/breed/death
+# call site, we reconcile: ensure each animal placement has exactly one live
+# `animal` agent and despawn any agent whose placement is gone. Idempotent and
+# index-shift-proof, so it can fire on every placement/region signal.
+
+func reconcile_animals() -> void:
+	if _animal_behavior == null:
+		return
+	var claimed: Dictionary = {}
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals (appeal-contributing) become agents
+			var aid := int(p.state.get("agent_id", 0))
+			var agent: Agent = AgentPool.get_agent(aid) if aid > 0 else null
+			if agent != null and agent.agent_type_id == &"animal":
+				claimed[aid] = true
+			else:
+				var new_id := _spawn_animal_for(region, p)
+				if new_id > 0:
+					claimed[new_id] = true
+	# Despawn any animal agent no longer backed by a placement (duplicate the
+	# id list — despawn mutates the live array).
+	for aid in AgentPool.get_agents_by_type(&"animal").duplicate():
+		if not claimed.has(aid):
+			AgentPool.despawn(aid)
+
+
+# Spawn one animal agent bound to `placement`. `opts` may carry a saved
+# position / needs / traits (load path); otherwise it spawns fresh at a cell
+# chosen by the behavior's own RNG (not SimClock.rng — keeps animal placement
+# from perturbing the visitor/weather sequence).
+func _spawn_animal_for(region: Region, placement: Placement, opts: Dictionary = {}) -> int:
+	if region.cells.is_empty():
+		return 0
+	var pos: Vector2 = opts.get("position", _animal_spawn_pos(region))
+	var id := AgentPool.spawn(&"animal", pos)
+	if id <= 0:
+		return 0
+	var agent: Agent = AgentPool.get_agent(id)
+	agent.behavior_state["species"] = placement.placeable_def_id
+	agent.behavior_state["home_region_id"] = region.region_id
+	if opts.has("needs"):
+		agent.need_levels = (opts["needs"] as Dictionary).duplicate()
+	if opts.has("traits"):
+		agent.traits = (opts["traits"] as Dictionary).duplicate()
+	placement.state["agent_id"] = id
+	return id
+
+
+func _animal_spawn_pos(region: Region) -> Vector2:
+	var c: Vector2i = region.cells[_animal_behavior.rng.randi() % region.cells.size()]
+	return Vector2(c) + Vector2(0.5, 0.5)
+
+
+# ---------------------------------------------------------------------------
 # Save / load — completes the engine's save with region placements + zoo state
 # ---------------------------------------------------------------------------
 
@@ -990,7 +1073,7 @@ func _save_game_state() -> Dictionary:
 			continue
 		var pls: Array = []
 		for p: Placement in region.placements:
-			pls.append({
+			var rec := {
 				"def": String(p.placeable_def_id),
 				"welfare": float(p.state.get("welfare", 1.0)),
 				"age_days": int(p.state.get("age_days", 0)),
@@ -999,7 +1082,20 @@ func _save_game_state() -> Dictionary:
 				"name": String(p.state.get("name", "")),
 				"generation": int(p.state.get("generation", 0)),
 				"parent": String(p.state.get("parent", "")),
-			})
+			}
+			# 6.6 — persist the bound animal agent's roam state so a saved zoo
+			# reloads mid-wander exactly (the engine never persists agents).
+			var aid := int(p.state.get("agent_id", 0))
+			var ag: Agent = AgentPool.get_agent(aid) if aid > 0 else null
+			if ag != null and ag.agent_type_id == &"animal":
+				rec["animal"] = {
+					"pos": [ag.position.x, ag.position.y],
+					"food": float(ag.need_levels.get(&"food", 1.0)),
+					"water": float(ag.need_levels.get(&"water", 1.0)),
+					"temperament": float(ag.traits.get("temperament", 0.5)),
+					"wander_speed": float(ag.traits.get("wander_speed", 0.03)),
+				}
+			pls.append(rec)
 		# Anchor on a cell so we can find the rebuilt region after load.
 		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
 	return {
@@ -1095,6 +1191,27 @@ func _load_game_state(data: Dictionary) -> void:
 				"parent": String(pd.get("parent", "")),
 			}
 			region.placements.append(p)
+			# 6.6 — respawn the bound animal agent at its saved roam state (the
+			# engine doesn't persist agents). Non-animal placements (troughs,
+			# foliage) have no agent.
+			var pdef: PlaceableDef = ContentDB.placeable_defs.get(def_id)
+			if _animal_behavior != null and pdef != null \
+					and not pdef.appeal_contribution.is_empty():
+				var a: Dictionary = pd.get("animal", {})
+				var opts: Dictionary = {}
+				if not a.is_empty():
+					opts["position"] = Vector2(float(a["pos"][0]), float(a["pos"][1]))
+					opts["needs"] = {
+						&"food": float(a.get("food", 1.0)),
+						&"water": float(a.get("water", 1.0))}
+					opts["traits"] = {
+						&"temperament": float(a.get("temperament", 0.5)),
+						&"wander_speed": float(a.get("wander_speed", 0.03))}
+				_spawn_animal_for(region, p, opts)
+
+	# Drop any animal agents left over from the pre-load game and confirm the
+	# 1:1 binding (no-op if the explicit respawn above covered everything).
+	reconcile_animals()
 
 	departures_happy = int(data.get("departures_happy", 0))
 	departures_unhappy = int(data.get("departures_unhappy", 0))

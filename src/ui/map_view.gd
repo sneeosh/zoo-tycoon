@@ -288,18 +288,22 @@ func _draw_placements() -> void:
 			var def: PlaceableDef = ContentDB.placeable_defs.get(placement.placeable_def_id)
 			if def == null:
 				continue
-			# Wander offset for animals (anything with an appeal contribution
-			# — troughs and infrastructure stay put). Two Lissajous-style
-			# sines with different per-placement phase give a roaming look
-			# inside ~⅓ of a tile, never leaving the anchor cell. Pure
-			# render-time animation; no engine state.
+			# Animals (anything with an appeal contribution — troughs and
+			# infrastructure stay put) are now real Agents (6.6): draw the
+			# sprite at the sim's actual position, offset from the anchor cell.
+			# Fallback to a gentle idle sine only if a placement has no bound
+			# agent yet (e.g. mid-spawn).
 			var wander := Vector2.ZERO
 			if not def.appeal_contribution.is_empty():
-				var phase := float(region.region_id) * 1.7 + float(i) * 0.91
-				var radius := float(tile_size) * 0.30
-				wander = Vector2(
-					sin(t * 0.65 + phase) * radius,
-					cos(t * 0.48 + phase * 1.3) * radius)
+				var ag := _animal_agent_for(placement)
+				if ag != null:
+					wander = (ag.position - Vector2(anchor)) * float(tile_size)
+				else:
+					var phase := float(region.region_id) * 1.7 + float(i) * 0.91
+					var radius := float(tile_size) * 0.30
+					wander = Vector2(
+						sin(t * 0.65 + phase) * radius,
+						cos(t * 0.48 + phase * 1.3) * radius)
 			var sprite := _load_sprite_optional(String(def.sprite_key))
 			var anchor_screen := _cell_to_screen(anchor)
 			var sprite_size: float = float(tile_size) * 1.1  # slight overflow ok
@@ -328,6 +332,12 @@ func _draw_placements() -> void:
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0, 0, 0, 0.5))
 				draw_string(get_theme_default_font(), badge, "✚",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("#e76f51"))
+
+
+# The free-roaming Agent bound to an animal placement (6.6), or null.
+func _animal_agent_for(p: Placement) -> Agent:
+	var aid := int(p.state.get("agent_id", 0))
+	return AgentPool.get_agent(aid) if aid > 0 else null
 
 
 # A pulsing ⚠ badge over each exhibit guests can't path to (set by main via

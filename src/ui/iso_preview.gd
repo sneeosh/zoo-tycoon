@@ -783,18 +783,31 @@ func _draw_sorted_objects() -> void:
 			if is_animal:
 				var seed := _hash2(home.x + i * 97 + 5, home.y + i * 53 + 3)
 				var speed: float = 0.8 if (&"bird" in pdef.own_tags) else 0.45
-				var pos := _wander_in(region, bb, seed, _time * speed)
-				var ahead := _wander_in(region, bb, seed, _time * speed + 0.12)
-				# Play sessions: when the pen has a toy, each animal
-				# periodically drifts to it — the visible payoff for placing
-				# enrichment. Staggered per animal so the gathering ebbs.
-				if toy_home.x >= 0:
-					var play := fmod(_time * 0.05 + float(seed % 100) * 0.01, 1.0)
-					if play < 0.30:
-						var pull: float = clampf(play / 0.06, 0.0, 1.0) \
-							* clampf((0.30 - play) / 0.06, 0.0, 1.0)
-						pos = pos.lerp(Vector2(toy_home), 0.8 * pull)
-						ahead = ahead.lerp(Vector2(toy_home), 0.8 * pull)
+				# Animals are real Agents now (6.6): draw at the sim's actual
+				# position and face its real heading. The old presentational
+				# wander stays only as a fallback for a placement whose agent
+				# hasn't bound yet (e.g. mid-spawn).
+				var ag := _animal_agent_for(p)
+				var pos: Vector2
+				var ahead: Vector2
+				if ag != null:
+					pos = ag.position
+					var hd := Vector2(float(ag.behavior_state.get("hx", 0.0)),
+						float(ag.behavior_state.get("hy", 0.0)))
+					ahead = pos + hd * 0.25
+				else:
+					pos = _wander_in(region, bb, seed, _time * speed)
+					ahead = _wander_in(region, bb, seed, _time * speed + 0.12)
+					# Play sessions: when the pen has a toy, each animal
+					# periodically drifts to it — the visible payoff for placing
+					# enrichment. Staggered per animal so the gathering ebbs.
+					if toy_home.x >= 0:
+						var play := fmod(_time * 0.05 + float(seed % 100) * 0.01, 1.0)
+						if play < 0.30:
+							var pull: float = clampf(play / 0.06, 0.0, 1.0) \
+								* clampf((0.30 - play) / 0.06, 0.0, 1.0)
+							pos = pos.lerp(Vector2(toy_home), 0.8 * pull)
+							ahead = ahead.lerp(Vector2(toy_home), 0.8 * pull)
 				# Heading: sample the wander a hair ahead and pick the facing
 				# sprite (true ¾ iso art) when a <species>_4dir/ set exists.
 				var heading := _tile_center(ahead.x, ahead.y) - _tile_center(pos.x, pos.y)
@@ -1033,6 +1046,12 @@ func _draw_fence_edge(cell: Vector2i, side: String) -> void:
 
 # Bounding box of a region in grid space — centre cell and half-extent, used to
 # keep the animal wander inside the enclosure.
+# The free-roaming Agent bound to an animal placement (6.6), or null.
+func _animal_agent_for(p: Placement) -> Agent:
+	var aid := int(p.state.get("agent_id", 0))
+	return AgentPool.get_agent(aid) if aid > 0 else null
+
+
 func _region_bounds(region: Region) -> Dictionary:
 	var mn := Vector2(INF, INF)
 	var mx := Vector2(-INF, -INF)
