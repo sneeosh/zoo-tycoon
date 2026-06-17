@@ -669,7 +669,7 @@ func _build_welcome_modal(parent: Control) -> void:
 	# Name your zoo (6.9) — first-launch only; hidden in help mode. The park
 	# name is the first ownership hook, on top of the named animals (6.5).
 	_welcome_name_label = Label.new()
-	_welcome_name_label.text = "Name your zoo"
+	_welcome_name_label.text = I18n.t("welcome.name_label")
 	_welcome_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_welcome_name_label.add_theme_font_size_override("font_size", 12)
 	_welcome_name_label.add_theme_color_override("font_color", Color("#97a387"))
@@ -1413,7 +1413,7 @@ func _build_admin_modal(parent: Control) -> void:
 
 	# Financing — a loan (bridge a rough open) and a sponsor (cash for prestige).
 	var fin_label := Label.new()
-	fin_label.text = "Financing"
+	fin_label.text = I18n.t("finance.title")
 	fin_label.add_theme_font_size_override("font_size", 14)
 	fin_label.add_theme_color_override("font_color", Color("#dde4cf"))
 	col.add_child(fin_label)
@@ -1513,23 +1513,21 @@ func _refresh_finance_controls() -> void:
 	var fin: FinanceConfig = ZooBootstrap.finance
 	# Loan button — disabled while one is outstanding.
 	if ZooBootstrap.loan_days_left > 0:
-		_admin_loan_btn.text = "Loan: owe $%s (%d days)" % [
+		_admin_loan_btn.text = I18n.t("finance.loan_active") % [
 			_format_thousands(ZooBootstrap.loan_outstanding()), ZooBootstrap.loan_days_left]
 		_admin_loan_btn.disabled = true
 	else:
-		_admin_loan_btn.text = "Take loan\n+$%s now" % _format_thousands(fin.loan_principal)
+		_admin_loan_btn.text = I18n.t("finance.loan_btn") % _format_thousands(fin.loan_principal)
 		_admin_loan_btn.disabled = false
 	# Sponsor button — disabled while a sponsor is active.
 	if ZooBootstrap.sponsor_days_left > 0:
-		_admin_sponsor_btn.text = "Sponsored: $%d/day (%d days)" % [
+		_admin_sponsor_btn.text = I18n.t("finance.sponsor_active") % [
 			ZooBootstrap.sponsor_daily_income, ZooBootstrap.sponsor_days_left]
 		_admin_sponsor_btn.disabled = true
 	else:
-		_admin_sponsor_btn.text = "Accept sponsor\n+$%s now" % _format_thousands(fin.sponsor_signing_bonus)
+		_admin_sponsor_btn.text = I18n.t("finance.sponsor_btn") % _format_thousands(fin.sponsor_signing_bonus)
 		_admin_sponsor_btn.disabled = false
-	_admin_finance_caption.text = (
-		"Loan: borrow $%s, repay $%s/day for %d days (total $%s). " +
-		"Sponsor: $%s now + $%d/day for %d days, costs %d reputation. One of each at a time.") % [
+	_admin_finance_caption.text = I18n.t("finance.caption") % [
 		_format_thousands(fin.loan_principal), _format_thousands(fin.loan_daily_payment()),
 		fin.loan_term_days, _format_thousands(fin.loan_total()),
 		_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
@@ -1539,11 +1537,12 @@ func _refresh_finance_controls() -> void:
 func _on_take_loan() -> void:
 	var fin: FinanceConfig = ZooBootstrap.finance
 	if ZooBootstrap.take_loan():
-		_push_log(("[color=#f4d35e]🏦 Loan taken:[/color] +$%s now, repaying $%s/day " +
-			"for %d days.") % [_format_thousands(fin.loan_principal),
-			_format_thousands(fin.loan_daily_payment()), fin.loan_term_days])
+		_push_log("[color=#f4d35e]%s[/color] %s" % [
+			I18n.t("finance.loan_log_head"),
+			I18n.t("finance.loan_log_tail") % [_format_thousands(fin.loan_principal),
+				_format_thousands(fin.loan_daily_payment()), fin.loan_term_days]])
 	else:
-		_push_log("[color=#e76f51]You already have a loan outstanding.[/color]")
+		_push_log("[color=#e76f51]%s[/color]" % I18n.t("finance.loan_busy"))
 	_refresh_admin_modal()
 	_refresh_hud()
 
@@ -1551,12 +1550,13 @@ func _on_take_loan() -> void:
 func _on_accept_sponsor() -> void:
 	var fin: FinanceConfig = ZooBootstrap.finance
 	if ZooBootstrap.accept_sponsor():
-		_push_log(("[color=#f4d35e]🤝 Sponsor signed:[/color] +$%s now and $%d/day for %d days " +
-			"(−%d reputation for the branding).") % [
-			_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
-			fin.sponsor_term_days, fin.sponsor_reputation_cost])
+		_push_log("[color=#f4d35e]%s[/color] %s" % [
+			I18n.t("finance.sponsor_log_head"),
+			I18n.t("finance.sponsor_log_tail") % [
+				_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
+				fin.sponsor_term_days, fin.sponsor_reputation_cost]])
 	else:
-		_push_log("[color=#e76f51]A sponsor is already on board.[/color]")
+		_push_log("[color=#e76f51]%s[/color]" % I18n.t("finance.sponsor_busy"))
 	_refresh_admin_modal()
 	_refresh_hud()
 
@@ -2121,7 +2121,7 @@ func _format_thousands(n: int) -> String:
 func _build_contracts_section(col: VBoxContainer) -> void:
 	col.add_child(HSeparator.new())
 	var title := Label.new()
-	title.text = "CONTRACTS"
+	title.text = I18n.t("contracts.title")
 	title.add_theme_font_size_override("font_size", 12)
 	title.add_theme_color_override("font_color", Color("#f4d35e"))
 	col.add_child(title)
@@ -2150,7 +2150,7 @@ func _refresh_contracts() -> void:
 		var reward: String = "+$%s" % _format_thousands(int(c["reward_cash"])) \
 			if int(c["reward_cash"]) > 0 else ""
 		if int(c["reward_reputation"]) > 0:
-			reward += "  +%d rep" % int(c["reward_reputation"])
+			reward += "  " + I18n.t("contracts.reward_rep_short") % int(c["reward_reputation"])
 		var lbl := Label.new()
 		lbl.text = "%s  %s  (%d/%d)   %s" % [
 			"✓" if met else "○", c["label"], mini(cur, tgt), tgt, reward.strip_edges()]
@@ -2171,13 +2171,14 @@ func _on_contract_completed(_id: StringName, label: String, reward_cash: int,
 		reward = "$%s" % _format_thousands(reward_cash)
 	if reward_reputation > 0:
 		if reward != "":
-			reward += " and "
-		reward += "%d reputation" % reward_reputation
+			reward += I18n.t("contracts.reward_join")
+		reward += I18n.t("contracts.reward_rep") % reward_reputation
 	if reward == "":
-		reward = "your thanks"
-	_push_log("[color=#83c779][b]✓ Contract complete:[/b][/color] %s — earned %s." % [
-		label, reward])
-	_flash_toast("✓ %s" % label, Color("#83c779"))
+		reward = I18n.t("contracts.reward_none")
+	_push_log("[color=#83c779][b]%s[/b][/color] %s" % [
+		I18n.t("contracts.complete_head"),
+		I18n.t("contracts.complete_tail") % [label, reward]])
+	_flash_toast(I18n.t("contracts.complete_toast") % label, Color("#83c779"))
 	_refresh_contracts()
 
 
@@ -2825,12 +2826,12 @@ func _build_top_bar(parent: Control) -> void:
 	_zoo_name_label = _stat(ZooBootstrap.zoo_name, 18, Color("#f4d35e"))
 	_zoo_name_label.custom_minimum_size = Vector2(150, 0)
 	_zoo_name_label.clip_text = true
-	_zoo_name_label.tooltip_text = "Your zoo (rename a new game from the welcome screen)."
+	_zoo_name_label.tooltip_text = I18n.t("top.zoo_name_tip")
 	_star_label = _stat("", 13, Color("#f4d35e"))
 	_star_label.custom_minimum_size = Vector2(150, 0)
 	_star_label.clip_text = true
 	_star_label.mouse_filter = Control.MOUSE_FILTER_PASS
-	_star_label.tooltip_text = "Star attraction — the exhibit your guests tip the most."
+	_star_label.tooltip_text = I18n.t("top.star_tip")
 	_money_label = _stat("$0", 22, Color("#8ce05a"))
 	_day_label = _stat("Day 1", 16, Color("#efeadb"))
 	_quality_label = _stat("Appeal 0.0★", 16, Color("#f4d35e"))
