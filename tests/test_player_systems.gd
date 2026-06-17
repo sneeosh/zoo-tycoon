@@ -67,6 +67,29 @@ func test_i18n_missing_key_returns_key() -> void:
 	assert_eq(I18n.t("definitely.not.a.real.key"), "definitely.not.a.real.key")
 
 
+# The 6.9 cluster surfaces (contracts / zoo identity / finance) must all be in
+# the catalog — a missing key would render as a visible "domain.key" in the HUD.
+func test_i18n_6_9_keys_present() -> void:
+	for key in ["contracts.title", "contracts.complete_head", "contracts.complete_tail",
+			"contracts.reward_rep", "welcome.name_label", "top.star_tip",
+			"top.zoo_name_tip", "finance.title", "finance.loan_btn",
+			"finance.loan_active", "finance.sponsor_btn", "finance.caption",
+			"finance.loan_log_tail", "finance.sponsor_busy"]:
+		assert_ne(I18n.t(key), key, "missing i18n key: %s" % key)
+
+
+# Format-bearing keys must interpolate with the arg shapes their call sites use.
+func test_i18n_6_9_format_keys_interpolate() -> void:
+	assert_string_contains(I18n.t("finance.loan_btn") % "4,000", "4,000")
+	assert_string_contains(I18n.t("contracts.reward_rep") % 3, "3")
+	assert_string_contains(I18n.t("contracts.reward_rep_short") % 2, "2")
+	assert_string_contains(I18n.t("contracts.complete_tail") % ["Leo", "$500"], "Leo")
+	# The finance caption takes eight args; a wrong count would error here.
+	assert_string_contains(
+		I18n.t("finance.caption") % ["4,000", "250", 20, "5,000", "1,500", 80, 25, 3],
+		"250")
+
+
 # --- Telemetry (5.3) ------------------------------------------------------
 
 func test_telemetry_disabled_by_default() -> void:
@@ -78,6 +101,35 @@ func test_telemetry_opt_in_enables() -> void:
 	Settings.set_value(&"telemetry_opt_in", true)
 	assert_true(Telemetry.is_enabled())
 	Settings.set_value(&"telemetry_opt_in", false)
+
+
+# The 6.9 funnel events (wired from the HUD) must record through track() with a
+# stable vocabulary, so a playtest can measure engagement with the cluster.
+func test_telemetry_6_9_events_record() -> void:
+	Settings.set_value(&"telemetry_opt_in", true)
+	var seen: Array = []
+	var cb := func(ev: StringName, _props: Dictionary): seen.append(String(ev))
+	Telemetry.event_recorded.connect(cb)
+	Telemetry.track(&"contract_completed", {"id": "full_house", "day": 5})
+	Telemetry.track(&"park_event", {"id": "celebrity_visit", "category": "positive"})
+	Telemetry.track(&"loan_taken", {"principal": 4000})
+	Telemetry.track(&"sponsor_accepted", {"signing_bonus": 1500})
+	Telemetry.track(&"scenario_selected", {"id": "frozen", "plot": "glacier", "mode": "skip"})
+	Telemetry.event_recorded.disconnect(cb)
+	Settings.set_value(&"telemetry_opt_in", false)
+	for ev in ["contract_completed", "park_event", "loan_taken",
+			"sponsor_accepted", "scenario_selected"]:
+		assert_true(ev in seen, "telemetry recorded %s" % ev)
+
+
+func test_telemetry_disabled_drops_6_9_events() -> void:
+	Settings.set_value(&"telemetry_opt_in", false)
+	var seen: Array = []
+	var cb := func(ev: StringName, _props: Dictionary): seen.append(String(ev))
+	Telemetry.event_recorded.connect(cb)
+	Telemetry.track(&"contract_completed", {"id": "x"})
+	Telemetry.event_recorded.disconnect(cb)
+	assert_eq(seen.size(), 0, "no events recorded while opted out")
 
 
 # --- Achievements (6.2) ---------------------------------------------------
