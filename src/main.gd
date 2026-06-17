@@ -3079,6 +3079,7 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
 	ZooBootstrap.animal_born.connect(_on_animal_born)
 	ZooBootstrap.reputation_settled.connect(_on_reputation_settled)
+	ZooBootstrap.park_event.connect(_on_park_event)
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
@@ -3810,6 +3811,23 @@ func _on_reputation_settled(score: int, happy: int, unhappy: int,
 		_push_log(("[color=#f4d35e][b]⚠ Guests are leaving unhappy and your " +
 			"reputation is sinking.[/b][/color] Unmet needs (the H/T/R/Z bubbles) " +
 			"drive bad reviews; reputation is half your mission.%s") % why)
+
+
+# Emergent "park stories" (6.9): a one-off event fired at the start of the day.
+# Narrated in the log and flashed as a toast so it reads as a moment, not a
+# stat change. Colour + icon come from the event's category (presentation only).
+func _on_park_event(_id: StringName, label: String, category: String,
+		message: String) -> void:
+	var color := "#83c779"
+	var icon := "🎉"
+	if category == "negative":
+		color = "#e76f51"
+		icon = "⚠"
+	elif category == "neutral":
+		color = "#f4d35e"
+		icon = "📣"
+	_push_log("[color=%s][b]%s %s[/b][/color] %s" % [color, icon, label, message])
+	_flash_toast("%s %s" % [icon, label], Color(color))
 
 
 func _on_entity_placed(inst_id: int) -> void:

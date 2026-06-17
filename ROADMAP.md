@@ -247,6 +247,7 @@ still wait on the engine cadence in §4.
 | 6.6 | **Animals-as-agents** ⚙️ — promote animals from static `Placement` records to real engine `Agent`s (the parked 2026-06-07 spec) so welfare is *watchable*, not a hidden meter | Makes the welfare/breeding depth legible on screen; the payoff of Phase 3's investment | new (spec'd) |
 | 6.7 | **Audio depth** — beyond the single ambient loop: layered SFX, a small music set, day/season-aware ambience | One loop reads as a prototype; a launch needs a soundscape | new |
 | 6.8 | **Public launch** — Steam + itch.io + web simultaneously; store pages, press kit, trailer, landing page, launch-day privacy/legal | The finish line. Everything above earns the right to do this once, well | 4.6 |
+| 6.9 | **Make the day-to-day sing** — the fun cluster: emergent **events / park stories** (incl. the **escaped-animal crisis**), a short-term **contracts** drip, **zoo identity** (name your zoo + star attraction), light **economic levers** (sponsorship / loan), and **hand-tuned scenarios** | The systems are deep but read as meters; this is the layer that turns the honest simulation into *stories you stay up for*. Engine-clean, so it doesn't wait on v1.0 | new (PM sweep 2026-06-17) |
 
 **Exit criteria:** the game is launched on all three storefronts with a
 research vector, achievements, ≥6 scenarios, an i18n-ready string
@@ -291,6 +292,45 @@ the failure mode the whole architecture exists to prevent.
 
 ## 6. Decision log (running)
 
+- **2026-06-17** — **PM fun sweep: opened 6.9 "Make the day-to-day sing";
+  shipped the emergent-events system (incl. the escaped-animal crisis).** A
+  product review found the roadmap rich on *systems depth* (Phase 3/6) and
+  *launch wrapper* (Phase 5) but thin on the layer between them — the
+  moment-to-moment "why is this fun right now". The only goal vector is the
+  30-day win bar, and the deep simulation reads as meters, not stories. Opened
+  **6.9** as the engine-clean fun cluster and built its marquee item first:
+  **(A) Emergent events / "park stories"** — a once-a-day weighted roll
+  (`design/tuning/events.md`, compiled by `src/events_config.gd`, rolled in
+  `ZooBootstrap` on a dedicated fixed-seed RNG so it never perturbs the tuned
+  weather/breeding/spawn sequence) that fires a one-off event with instant
+  cash/reputation and/or multi-day demand effects, narrated in the HUD log + a
+  toast (`park_event` signal → `main.gd`). Effects compose with the existing
+  economy (Ledger, the reputation drift, the spawn-rate curve) — nothing fake.
+  **(B) The escaped-animal crisis** lands as a `requires: sick_animal` event
+  (escape + inspection-failure), so the welfare meter finally has teeth: a
+  crisis can only befall a zoo already neglecting care, dramatic without being
+  unfair. Events are gated by `min_day`/`cooldown`/world state, round-trip
+  through save **v4→v5** (`active_events` + cooldown clock; older saves default
+  to none-in-flight), and ship with `tests/test_events.gd`. *Verification gap,
+  stated honestly:* this environment has **no Godot binary**, so the GUT suite
+  (would be ~107 tests) and a boot/web-export pass were **not** run here —
+  needs a headless `gut` run before merge. No engine edits — submodule
+  untouched. **The rest of 6.9 is written up and sequenced, not yet built:**
+  **(C) Contracts** — a rolling short-term-objective drip with cash/reputation
+  rewards (the steady pull the win bar lacks), best hosted on the existing
+  MILESTONES panel made data-driven with rewards + rotation. **(D) Zoo
+  identity** — name your zoo + a surfaced "star attraction" (top-donation
+  exhibit) for earned pride; small but high-charm. **(E) Economic levers** — a
+  sponsorship (cash now for a branding/appeal cost) and a loan (bridge a rough
+  open — directly answers the "rough open is a permanent hole" theme the
+  reputation rework fought), the genre's "interesting decisions". **(F)
+  Hand-tuned scenarios** — 2–3 tuning-overlay scenarios (rescue zoo,
+  tight-budget, frozen climate) for replayability *now*, ahead of the v1.0-gated
+  editor (6.3), reusing the difficulty-overlay pattern. Recommended next:
+  **(C) Contracts**, paired with events, makes the strongest playtest build to
+  measure session-length lift once telemetry (5.3) is live. **Guardrail:** none
+  of 6.9 jumps the Phase 5 launch gate — it lands as retention polish behind
+  it, per §5's scope-sprawl risk.
 - **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
   v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
   `AgentType.drives_spawn_balance` flag (default true), so a non-customer

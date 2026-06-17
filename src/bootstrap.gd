@@ -79,6 +79,17 @@ var weather_cfg: WeatherConfig
 var current_weather: StringName = &""
 signal weather_changed(weather_id: StringName, season_id: StringName)
 
+# Emergent "park stories" (roadmap 6.9). A once-a-day roll fires one-off events
+# (celebrity visit, grant, heatwave, animal escape) with instant cash/reputation
+# and/or multi-day demand effects, narrated in the HUD log + a toast. Rolled on
+# a dedicated, fixed-seed RNG so it never perturbs the tuned weather/breeding
+# sequence. active_events holds the still-running multi-day demand effects.
+var events_cfg: EventsConfig
+var active_events: Array = []          # {id, label, days_left, demand_mult}
+var last_event_day: int = -9999
+var _event_rng := RandomNumberGenerator.new()
+signal park_event(id: StringName, label: String, category: String, message: String)
+
 # Zoo land plots + climates (design/tuning/zoo_types.md). The selected plot
 # sets the buildable grid size, the gate cell, and a climate that biases the
 # daily weather roll and scales demand. Picked at the welcome screen; traded
@@ -225,6 +236,17 @@ func _ready() -> void:
 	if weather_cfg != null and not weather_cfg.weathers.is_empty():
 		current_weather = weather_cfg.pick_weather(SimClock.rng, climate_weather_weights())
 	EventBus.day_ended.connect(_roll_weather)
+
+	# Emergent events (6.9). Loaded here, rolled at each day start *after* weather
+	# so the spawn rate settles with both factors applied. Its own seeded RNG
+	# keeps the roll out of the tuned weather/breeding sequence.
+	events_cfg = EventsConfig.load_from_tuning()
+	_event_rng.seed = 0x2007E
+	active_events.clear()
+	last_event_day = -9999
+	Accounting.register_category(&"event", Accounting.Category.REVENUE)
+	Accounting.register_category(&"event_cost", Accounting.Category.OPERATING_EXPENSE)
+	EventBus.day_ended.connect(_roll_events)
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
 	# then aging/breeding — so the day's survivors age and breed. A death's
@@ -406,7 +428,7 @@ func _apply_spawn_rate() -> void:
 	var difficulty_demand: float = scenario.demand_multiplier if scenario != null else 1.0
 	AgentPool.base_spawn_rate = (_default_base_spawn_rate
 		* current_demand_multiplier() * environment_multiplier()
-		* difficulty_demand) if open else 0.0
+		* difficulty_demand * event_demand_multiplier()) if open else 0.0
 
 
 # Apply a difficulty overlay (roadmap 2.6) — overrides the win bar, resets the
@@ -446,6 +468,82 @@ func _roll_weather(_day: int) -> void:
 	current_weather = weather_cfg.pick_weather(SimClock.rng, climate_weather_weights())
 	_apply_spawn_rate()
 	weather_changed.emit(current_weather, current_season().get("id", &""))
+
+
+# ---------------------------------------------------------------------------
+# Emergent events — "park stories" (roadmap 6.9)
+# ---------------------------------------------------------------------------
+
+# Product of every active multi-day event's demand_mult (1.0 when none active).
+# Folded into _apply_spawn_rate so a celebrity visit or a heatwave actually
+# moves the gate.
+func event_demand_multiplier() -> float:
+	var m := 1.0
+	for e in active_events:
+		m *= float(e.get("demand_mult", 1.0))
+	return m
+
+
+# A snapshot of world state the event gates read (see EventsConfig._gate_passes).
+func _event_world() -> Dictionary:
+	var animals := 0
+	var sick := 0
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def == null or def.appeal_contribution.is_empty():
+				continue   # only animals (appeal-contributing) carry welfare
+			animals += 1
+			if bool(p.state.get("sick", false)):
+				sick += 1
+	return {
+		"reputation": ProgressionManager.reputation,
+		"animals": animals,
+		"sick_animals": sick,
+	}
+
+
+# At each new day: expire yesterday's multi-day effects, then (gated by
+# min_day / cooldown / daily_chance) maybe draw and apply one new event.
+func _roll_events(day: int) -> void:
+	if events_cfg == null:
+		return
+	var still: Array = []
+	for e in active_events:
+		e["days_left"] = int(e["days_left"]) - 1
+		if int(e["days_left"]) > 0:
+			still.append(e)
+	active_events = still
+	if day >= events_cfg.min_day and (day - last_event_day) > events_cfg.cooldown_days \
+			and _event_rng.randf() < events_cfg.daily_chance:
+		var ev: Dictionary = events_cfg.pick(_event_rng, _event_world())
+		if not ev.is_empty():
+			_apply_event(ev, day)
+	_apply_spawn_rate()
+
+
+# Apply one drawn event: post its cash, bump reputation, register any lasting
+# demand effect, and announce it. Public so a test (or a future "trigger a
+# scripted beat" call site) can apply a known event deterministically.
+func _apply_event(ev: Dictionary, day: int) -> void:
+	last_event_day = day
+	var cash := int(ev.get("cash", 0))
+	if cash > 0:
+		Ledger.post_income(cash, "Event: %s" % ev["label"], &"event")
+	elif cash < 0:
+		Ledger.post_expense(-cash, "Event: %s" % ev["label"], &"event_cost")
+	var rep := int(ev.get("reputation", 0))
+	if rep != 0:
+		ProgressionManager.add_reputation(rep)
+	var dm := float(ev.get("demand_mult", 1.0))
+	var dur := int(ev.get("duration_days", 1))
+	if not is_equal_approx(dm, 1.0) and dur > 0:
+		active_events.append({
+			"id": ev["id"], "label": ev["label"],
+			"days_left": dur, "demand_mult": dm,
+		})
+	park_event.emit(ev["id"], String(ev.get("label", "")),
+		String(ev.get("category", "neutral")), String(ev.get("message", "")))
 
 
 # ---------------------------------------------------------------------------
@@ -1063,7 +1161,7 @@ func _animal_spawn_pos(region: Region) -> Vector2:
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
 #   3 — adds the zoo type (land plot + climate selection)
 #   4 — adds per-animal name/generation/parent + the name counter (6.5)
-const SAVE_VERSION: int = 4
+const SAVE_VERSION: int = 5
 
 
 func _save_game_state() -> Dictionary:
@@ -1112,8 +1210,23 @@ func _save_game_state() -> Dictionary:
 		"departures_unhappy": departures_unhappy,
 		"departures_total": departures_total,
 		"name_counter": _name_counter,
+		"active_events": _active_events_for_save(),
+		"last_event_day": last_event_day,
 		"exhibits": exhibits,
 	}
+
+
+# Serialize active multi-day event effects (StringName ids → String for JSON).
+func _active_events_for_save() -> Array:
+	var out: Array = []
+	for e in active_events:
+		out.append({
+			"id": String(e.get("id", "")),
+			"label": String(e.get("label", "")),
+			"days_left": int(e.get("days_left", 0)),
+			"demand_mult": float(e.get("demand_mult", 1.0)),
+		})
+	return out
 
 
 # Forward-migrate an older zoo payload to the current shape, in place.
@@ -1131,6 +1244,9 @@ func _migrate_game_state(data: Dictionary) -> void:
 	# default plot, which is exactly what the reader below falls back to.
 	# v3 → v4: animals had no name/generation/parent; the reader defaults them
 	# (blank name → lazily assigned on first sight, generation 0). No reshape.
+	# v4 → v5: emergent events (6.9) didn't exist; active_events defaults to []
+	# and last_event_day to its sentinel, so a loaded zoo simply has no event
+	# in flight and is immediately eligible for one. No reshape.
 
 
 func _load_game_state(data: Dictionary) -> void:
@@ -1216,6 +1332,17 @@ func _load_game_state(data: Dictionary) -> void:
 	departures_happy = int(data.get("departures_happy", 0))
 	departures_unhappy = int(data.get("departures_unhappy", 0))
 	departures_total = int(data.get("departures_total", 0))
+	# Emergent events (6.9): restore any multi-day demand effect still in flight
+	# and the cooldown clock so a reloaded zoo keeps its pacing.
+	active_events.clear()
+	for e in data.get("active_events", []):
+		active_events.append({
+			"id": StringName(String(e.get("id", ""))),
+			"label": String(e.get("label", "")),
+			"days_left": int(e.get("days_left", 0)),
+			"demand_mult": float(e.get("demand_mult", 1.0)),
+		})
+	last_event_day = int(data.get("last_event_day", -9999))
 	# Continue the name sequence past whatever the save reached so reloaded
 	# zoos don't hand out duplicate names to new arrivals (6.5).
 	_name_counter = int(data.get("name_counter", 0))
