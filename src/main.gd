@@ -57,6 +57,9 @@ const NARROW_THRESHOLD: int = 900
 # region_id -> true for populated exhibits with no gate-reachable path cell
 # within viewing distance (guests can't reach them). Recomputed each HUD tick.
 var _disconnected_regions: Dictionary = {}
+var _zoo_name_label: Label   # park name in the top bar (6.9)
+var _star_label: Label       # "★ <species>" — the star attraction (6.9)
+var _zoo_name_edit: LineEdit # name field on the welcome card (6.9)
 var _money_label: Label
 var _day_label: Label
 var _quality_label: Label
@@ -84,8 +87,9 @@ var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
 var _welcome_btn_row: HBoxContainer
 var _welcome_controls_label: Label
+var _welcome_name_label: Label
 var _welcome_difficulty_label: Label
-var _welcome_difficulty_row: HBoxContainer
+var _welcome_difficulty_row: HFlowContainer   # wraps — difficulties + scenarios
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
 var _selected_difficulty: StringName = &"standard"
 var _welcome_plot_label: Label
@@ -95,6 +99,7 @@ var _welcome_plot_caption: Label
 var _selected_zoo_type: StringName = &""           # set when the modal builds
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
+var _contracts_box: VBoxContainer      # rebuilt from ZooBootstrap's slate (6.9)
 var _goals_state: Dictionary = {       # one-way: true once completed
 	"earn_1k":    false,
 	"crowd_10":   false,
@@ -123,6 +128,9 @@ var _admin_campaign_label: Label
 var _admin_campaign_buttons: Dictionary = {}   # archetype id -> Button
 var _admin_land_caption: Label
 var _admin_land_buttons: Dictionary = {}       # plot id (StringName) -> Button
+var _admin_loan_btn: Button                    # economic levers (6.9)
+var _admin_sponsor_btn: Button
+var _admin_finance_caption: Label
 var _relocate_dialog: ConfirmationDialog
 var _pending_relocate_id: StringName = &""     # plot awaiting sell+move confirm
 var _arena_modal: Control
@@ -658,6 +666,23 @@ func _build_welcome_modal(parent: Control) -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
 
+	# Name your zoo (6.9) — first-launch only; hidden in help mode. The park
+	# name is the first ownership hook, on top of the named animals (6.5).
+	_welcome_name_label = Label.new()
+	_welcome_name_label.text = "Name your zoo"
+	_welcome_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_name_label.add_theme_font_size_override("font_size", 12)
+	_welcome_name_label.add_theme_color_override("font_color", Color("#97a387"))
+	col.add_child(_welcome_name_label)
+	_zoo_name_edit = LineEdit.new()
+	_zoo_name_edit.placeholder_text = ZooBootstrap.DEFAULT_ZOO_NAME
+	_zoo_name_edit.text = ZooBootstrap.zoo_name
+	_zoo_name_edit.max_length = 28
+	_zoo_name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_zoo_name_edit.custom_minimum_size = Vector2(260, 32)
+	_zoo_name_edit.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(_zoo_name_edit)
+
 	# Difficulty selector (first-launch only; hidden in help mode).
 	_welcome_difficulty_label = Label.new()
 	_welcome_difficulty_label.text = "Difficulty"
@@ -665,9 +690,10 @@ func _build_welcome_modal(parent: Control) -> void:
 	_welcome_difficulty_label.add_theme_font_size_override("font_size", 12)
 	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(_welcome_difficulty_label)
-	_welcome_difficulty_row = HBoxContainer.new()
-	_welcome_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_welcome_difficulty_row.add_theme_constant_override("separation", 8)
+	_welcome_difficulty_row = HFlowContainer.new()
+	_welcome_difficulty_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	_welcome_difficulty_row.add_theme_constant_override("h_separation", 6)
+	_welcome_difficulty_row.add_theme_constant_override("v_separation", 6)
 	col.add_child(_welcome_difficulty_row)
 
 	# Land selector (first-launch only) — which plot the zoo is built on.
@@ -701,6 +727,13 @@ func _build_welcome_modal(parent: Control) -> void:
 
 func _on_pick_difficulty(id: StringName) -> void:
 	_selected_difficulty = id
+	# A scenario (6.9 F) suggests a plot — default the land selection to its
+	# climate. The player can still change it on the plot picker below.
+	if ZooBootstrap.scenario != null:
+		var suggested := ZooBootstrap.scenario.preset_zoo_type(id)
+		if suggested != &"" and ZooBootstrap.zoo_types != null \
+				and not ZooBootstrap.zoo_types.plot(suggested).is_empty():
+			_selected_zoo_type = suggested
 	_refresh_welcome_difficulty()
 	# Starting cash changed, so which plots are affordable changed too.
 	_refresh_welcome_plots()
@@ -770,6 +803,8 @@ func _refresh_welcome_difficulty() -> void:
 
 
 func _on_welcome_start_tutorial() -> void:
+	if _zoo_name_edit != null:
+		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
@@ -779,6 +814,8 @@ func _on_welcome_start_tutorial() -> void:
 
 
 func _on_welcome_skip_tutorial() -> void:
+	if _zoo_name_edit != null:
+		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
@@ -843,7 +880,8 @@ func _endgame_show(won: bool, headline: String, body: String,
 		if child != _endgame_title:
 			child.queue_free()
 
-	_endgame_title.text = headline
+	# Lead with the park's name so the finish reads as *your* zoo's story (6.9).
+	_endgame_title.text = "%s — %s" % [ZooBootstrap.zoo_name, headline]
 	_endgame_title.add_theme_color_override("font_color",
 		Color("#f4d35e") if won else Color("#e76f51"))
 
@@ -1373,6 +1411,35 @@ func _build_admin_modal(parent: Control) -> void:
 
 	col.add_child(HSeparator.new())
 
+	# Financing — a loan (bridge a rough open) and a sponsor (cash for prestige).
+	var fin_label := Label.new()
+	fin_label.text = "Financing"
+	fin_label.add_theme_font_size_override("font_size", 14)
+	fin_label.add_theme_color_override("font_color", Color("#dde4cf"))
+	col.add_child(fin_label)
+	var fin_row := HBoxContainer.new()
+	fin_row.add_theme_constant_override("separation", 8)
+	col.add_child(fin_row)
+	_admin_loan_btn = Button.new()
+	_admin_loan_btn.custom_minimum_size = Vector2(0, 44)
+	_admin_loan_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_admin_loan_btn.focus_mode = Control.FOCUS_NONE
+	_admin_loan_btn.pressed.connect(_on_take_loan)
+	fin_row.add_child(_admin_loan_btn)
+	_admin_sponsor_btn = Button.new()
+	_admin_sponsor_btn.custom_minimum_size = Vector2(0, 44)
+	_admin_sponsor_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_admin_sponsor_btn.focus_mode = Control.FOCUS_NONE
+	_admin_sponsor_btn.pressed.connect(_on_accept_sponsor)
+	fin_row.add_child(_admin_sponsor_btn)
+	_admin_finance_caption = Label.new()
+	_admin_finance_caption.add_theme_font_size_override("font_size", 11)
+	_admin_finance_caption.add_theme_color_override("font_color", Color("#97a387"))
+	_admin_finance_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_finance_caption)
+
+	col.add_child(HSeparator.new())
+
 	# Sound — master volume (the top-bar ♪ button is the quick mute).
 	var snd_row := HBoxContainer.new()
 	snd_row.add_theme_constant_override("separation", 10)
@@ -1437,6 +1504,61 @@ func _refresh_admin_modal() -> void:
 			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
 	_refresh_campaign_controls()
 	_refresh_land_controls()
+	_refresh_finance_controls()
+
+
+func _refresh_finance_controls() -> void:
+	if _admin_loan_btn == null or ZooBootstrap.finance == null:
+		return
+	var fin: FinanceConfig = ZooBootstrap.finance
+	# Loan button — disabled while one is outstanding.
+	if ZooBootstrap.loan_days_left > 0:
+		_admin_loan_btn.text = "Loan: owe $%s (%d days)" % [
+			_format_thousands(ZooBootstrap.loan_outstanding()), ZooBootstrap.loan_days_left]
+		_admin_loan_btn.disabled = true
+	else:
+		_admin_loan_btn.text = "Take loan\n+$%s now" % _format_thousands(fin.loan_principal)
+		_admin_loan_btn.disabled = false
+	# Sponsor button — disabled while a sponsor is active.
+	if ZooBootstrap.sponsor_days_left > 0:
+		_admin_sponsor_btn.text = "Sponsored: $%d/day (%d days)" % [
+			ZooBootstrap.sponsor_daily_income, ZooBootstrap.sponsor_days_left]
+		_admin_sponsor_btn.disabled = true
+	else:
+		_admin_sponsor_btn.text = "Accept sponsor\n+$%s now" % _format_thousands(fin.sponsor_signing_bonus)
+		_admin_sponsor_btn.disabled = false
+	_admin_finance_caption.text = (
+		"Loan: borrow $%s, repay $%s/day for %d days (total $%s). " +
+		"Sponsor: $%s now + $%d/day for %d days, costs %d reputation. One of each at a time.") % [
+		_format_thousands(fin.loan_principal), _format_thousands(fin.loan_daily_payment()),
+		fin.loan_term_days, _format_thousands(fin.loan_total()),
+		_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
+		fin.sponsor_term_days, fin.sponsor_reputation_cost]
+
+
+func _on_take_loan() -> void:
+	var fin: FinanceConfig = ZooBootstrap.finance
+	if ZooBootstrap.take_loan():
+		_push_log(("[color=#f4d35e]🏦 Loan taken:[/color] +$%s now, repaying $%s/day " +
+			"for %d days.") % [_format_thousands(fin.loan_principal),
+			_format_thousands(fin.loan_daily_payment()), fin.loan_term_days])
+	else:
+		_push_log("[color=#e76f51]You already have a loan outstanding.[/color]")
+	_refresh_admin_modal()
+	_refresh_hud()
+
+
+func _on_accept_sponsor() -> void:
+	var fin: FinanceConfig = ZooBootstrap.finance
+	if ZooBootstrap.accept_sponsor():
+		_push_log(("[color=#f4d35e]🤝 Sponsor signed:[/color] +$%s now and $%d/day for %d days " +
+			"(−%d reputation for the branding).") % [
+			_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
+			fin.sponsor_term_days, fin.sponsor_reputation_cost])
+	else:
+		_push_log("[color=#e76f51]A sponsor is already on board.[/color]")
+	_refresh_admin_modal()
+	_refresh_hud()
 
 
 func _refresh_land_controls() -> void:
@@ -1846,6 +1968,10 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 	_welcome_plot_label.visible = initial_launch
 	_welcome_plot_row.visible = initial_launch
 	_welcome_plot_caption.visible = initial_launch
+	if _welcome_name_label != null:
+		_welcome_name_label.visible = initial_launch
+	if _zoo_name_edit != null:
+		_zoo_name_edit.visible = initial_launch
 	# Controls reference — only in help mode (the "?" button).
 	if _welcome_controls_label != null:
 		_welcome_controls_label.visible = not initial_launch
@@ -1866,6 +1992,9 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 				_format_thousands(int(d["starting_cash"])),
 				_format_thousands(int(d["target_cash"])),
 				int(d["target_reputation"]), int(d["days_limit"])]
+			var blurb := String(d.get("blurb", ""))
+			if blurb != "":
+				btn.tooltip_text += "\n%s" % blurb
 			btn.pressed.connect(_on_pick_difficulty.bind(id))
 			_welcome_difficulty_row.add_child(btn)
 			_welcome_difficulty_buttons[id] = btn
@@ -1958,8 +2087,11 @@ func _refresh_mission_targets() -> void:
 			diff_label = d["label"]
 			break
 	_mission_title.text = "MISSION  ·  %s" % diff_label
-	_mission_subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
+	var target_line := "Reach $%s cash and %d reputation\nbefore day %d ends." % [
 		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
+	# Scenario flavour (6.9 F) leads the target line when a themed preset is on.
+	_mission_subtitle.text = ("%s\n%s" % [s.active_blurb, target_line]) \
+		if s.active_blurb != "" else target_line
 
 
 func _make_mission_row(col: VBoxContainer) -> Label:
@@ -1981,6 +2113,72 @@ func _format_thousands(n: int) -> String:
 		out = s[i] + out
 		count += 1
 	return ("-" + out) if n < 0 else out
+
+
+# Contracts panel (6.9) — the live, rewarded slate. Its rows are rebuilt from
+# ZooBootstrap.active_contracts whenever the slate changes or the HUD refreshes,
+# so progress (current/target) ticks up as the player builds.
+func _build_contracts_section(col: VBoxContainer) -> void:
+	col.add_child(HSeparator.new())
+	var title := Label.new()
+	title.text = "CONTRACTS"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(title)
+
+	_contracts_box = VBoxContainer.new()
+	_contracts_box.add_theme_constant_override("separation", 3)
+	col.add_child(_contracts_box)
+	_refresh_contracts()
+
+
+func _refresh_contracts() -> void:
+	if _contracts_box == null:
+		return
+	for child in _contracts_box.get_children():
+		child.queue_free()
+	if ZooBootstrap.contracts_cfg == null:
+		return
+	for id in ZooBootstrap.active_contracts:
+		var c: Dictionary = ZooBootstrap.contracts_cfg.by_id(id)
+		if c.is_empty():
+			continue
+		var prog: Dictionary = ZooBootstrap.contract_progress(id)
+		var cur: int = int(prog["current"])
+		var tgt: int = int(prog["target"])
+		var met: bool = bool(prog["met"])
+		var reward: String = "+$%s" % _format_thousands(int(c["reward_cash"])) \
+			if int(c["reward_cash"]) > 0 else ""
+		if int(c["reward_reputation"]) > 0:
+			reward += "  +%d rep" % int(c["reward_reputation"])
+		var lbl := Label.new()
+		lbl.text = "%s  %s  (%d/%d)   %s" % [
+			"✓" if met else "○", c["label"], mini(cur, tgt), tgt, reward.strip_edges()]
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.add_theme_color_override("font_color",
+			Color("#83c779") if met else Color("#bccaa8"))
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.tooltip_text = String(c["description"])
+		_contracts_box.add_child(lbl)
+
+
+# When a contract pays out: a log line plus a toast so the reward reads as a
+# moment, not a silent balance bump.
+func _on_contract_completed(_id: StringName, label: String, reward_cash: int,
+		reward_reputation: int) -> void:
+	var reward := ""
+	if reward_cash > 0:
+		reward = "$%s" % _format_thousands(reward_cash)
+	if reward_reputation > 0:
+		if reward != "":
+			reward += " and "
+		reward += "%d reputation" % reward_reputation
+	if reward == "":
+		reward = "your thanks"
+	_push_log("[color=#83c779][b]✓ Contract complete:[/b][/color] %s — earned %s." % [
+		label, reward])
+	_flash_toast("✓ %s" % label, Color("#83c779"))
+	_refresh_contracts()
 
 
 func _build_goals_section(col: VBoxContainer) -> void:
@@ -2624,6 +2822,15 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_theme_constant_override("separation", 20)
 	margin.add_child(row)
 
+	_zoo_name_label = _stat(ZooBootstrap.zoo_name, 18, Color("#f4d35e"))
+	_zoo_name_label.custom_minimum_size = Vector2(150, 0)
+	_zoo_name_label.clip_text = true
+	_zoo_name_label.tooltip_text = "Your zoo (rename a new game from the welcome screen)."
+	_star_label = _stat("", 13, Color("#f4d35e"))
+	_star_label.custom_minimum_size = Vector2(150, 0)
+	_star_label.clip_text = true
+	_star_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_star_label.tooltip_text = "Star attraction — the exhibit your guests tip the most."
 	_money_label = _stat("$0", 22, Color("#8ce05a"))
 	_day_label = _stat("Day 1", 16, Color("#efeadb"))
 	_quality_label = _stat("Appeal 0.0★", 16, Color("#f4d35e"))
@@ -2653,6 +2860,8 @@ func _build_top_bar(parent: Control) -> void:
 		"Serve the H/T/R/Z need bubbles to keep departures happy.")
 	_needs_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	_needs_label.tooltip_text = "Guests with an urgent unmet need right now — build the matching amenity."
+	row.add_child(_zoo_name_label)
+	row.add_child(_v_sep())
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
@@ -2660,6 +2869,7 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
 	row.add_child(_needs_label)
+	row.add_child(_star_label)
 	row.add_child(_v_sep())
 	row.add_child(_weather_label)
 	row.add_child(_v_sep())
@@ -2942,6 +3152,7 @@ func _build_left_panel(parent: Control) -> void:
 		_add_placeable_button(col, def_id)
 
 	_build_mission_section(col)
+	_build_contracts_section(col)
 	_build_goals_section(col)
 
 	col.add_child(HSeparator.new())
@@ -3079,6 +3290,15 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.animal_welfare_alert.connect(_on_welfare_alert)
 	ZooBootstrap.animal_born.connect(_on_animal_born)
 	ZooBootstrap.reputation_settled.connect(_on_reputation_settled)
+	ZooBootstrap.park_event.connect(_on_park_event)
+	ZooBootstrap.contracts_changed.connect(_refresh_contracts)
+	ZooBootstrap.contract_completed.connect(_on_contract_completed)
+	ZooBootstrap.zoo_name_changed.connect(func(new_name: String):
+		if _zoo_name_label != null:
+			_zoo_name_label.text = new_name)
+	ZooBootstrap.finance_changed.connect(func():
+		if _admin_modal != null and _admin_modal.visible:
+			_refresh_admin_modal())
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
@@ -3129,6 +3349,9 @@ func _refresh_hud() -> void:
 	_reputation_label.text = "Rep %+d / %d" % [rep, rep_target]
 	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	if _star_label != null:
+		var star: Dictionary = ZooBootstrap.star_attraction()
+		_star_label.text = ("★ %s" % star["label"]) if star.get("has", false) else ""
 	_refresh_needs_strip()
 	if _weather_label != null and ZooBootstrap.weather_cfg != null:
 		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(ZooBootstrap.current_weather)
@@ -3141,6 +3364,7 @@ func _refresh_hud() -> void:
 	_fps_label.text = "%d fps" % Engine.get_frames_per_second()
 	if _goals_box != null:
 		_evaluate_goals()
+	_refresh_contracts()
 	_refresh_mission()
 	_refresh_build_locks()
 	_recompute_path_access()
@@ -3810,6 +4034,23 @@ func _on_reputation_settled(score: int, happy: int, unhappy: int,
 		_push_log(("[color=#f4d35e][b]⚠ Guests are leaving unhappy and your " +
 			"reputation is sinking.[/b][/color] Unmet needs (the H/T/R/Z bubbles) " +
 			"drive bad reviews; reputation is half your mission.%s") % why)
+
+
+# Emergent "park stories" (6.9): a one-off event fired at the start of the day.
+# Narrated in the log and flashed as a toast so it reads as a moment, not a
+# stat change. Colour + icon come from the event's category (presentation only).
+func _on_park_event(_id: StringName, label: String, category: String,
+		message: String) -> void:
+	var color := "#83c779"
+	var icon := "🎉"
+	if category == "negative":
+		color = "#e76f51"
+		icon = "⚠"
+	elif category == "neutral":
+		color = "#f4d35e"
+		icon = "📣"
+	_push_log("[color=%s][b]%s %s[/b][/color] %s" % [color, icon, label, message])
+	_flash_toast("%s %s" % [icon, label], Color(color))
 
 
 func _on_entity_placed(inst_id: int) -> void:

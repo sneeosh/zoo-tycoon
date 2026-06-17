@@ -40,6 +40,30 @@ sets the starting cash + a global guest-demand multiplier. Standard mirrors
 | standard | Standard | 10000         | 20000       | 50                | 30         | 1.00              |
 | hard     | Hard     | 7000          | 28000       | 70                | 24         | 0.80              |
 
+## Scenarios
+
+<!--
+Roadmap 6.9 (F) — hand-tuned scenarios for replayability past the single
+30-day arc, *now*, ahead of the v1.0-gated editor (6.3). Each is a themed
+preset selectable on the welcome screen exactly like a difficulty: it overlays
+the win bar / starting cash / demand, and additionally suggests a `zoo_type`
+(the climate that sets its flavour — desert heat, tundra cold) and carries a
+`blurb` shown in the MISSION panel. The suggested plot becomes the default
+land selection; the player can still change it, and its cost must leave the
+zoo_types.md `min_cash_after_purchase` buffer, so starting_cash is set to
+cover it.
+
+Columns are the Difficulties columns plus `zoo_type` (a plot id from
+design/tuning/zoo_types.md, blank = keep the player's choice) and `blurb`.
+Blurbs are table cells, so no pipe (|) characters.
+-->
+
+| id          | label            | starting_cash | target_cash | target_reputation | days_limit | demand_multiplier | zoo_type | blurb                                                                          |
+| ----------- | ---------------- | ------------- | ----------- | ----------------- | ---------- | ----------------- | -------- | ------------------------------------------------------------------------------ |
+| rescue      | Rescue Zoo       | 8000          | 18000       | 55                | 30         | 0.95              | meadow   | Take over a struggling park: tight money and a public that needs winning back. |
+| tight_budget| Shoestring       | 6000          | 15000       | 45                | 30         | 1.00              | meadow   | Every dollar counts. Build lean and let donations carry the books.             |
+| frozen      | Frozen Frontier  | 12000         | 22000       | 55                | 34         | 1.00              | glacier  | A snowbound park on the tundra — fewer guests come, so make every visit count. |
+
 ## Reputation
 
 <!--

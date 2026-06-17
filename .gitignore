@@ -25,3 +25,6 @@ addons/godot_mcp/
 
 # Stray Obsidian vault accidentally created at repo root
 /zoo-tycoon/
+
+# Godot import cache log written by the SessionStart hook
+.gut.log

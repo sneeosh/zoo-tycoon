@@ -21,8 +21,13 @@ var difficulty: StringName = &"standard"
 var starting_cash: int = 10000
 var demand_multiplier: float = 1.0
 # Ordered list of {id, label, starting_cash, target_cash, target_reputation,
-# days_limit, demand_multiplier}.
+# days_limit, demand_multiplier, zoo_type, blurb}. Holds both the Easy/Standard/
+# Hard difficulties and the themed Scenarios (6.9 F) — both are selectable
+# presets that overlay the win bar; scenarios additionally suggest a plot and
+# carry flavour text.
 var difficulties: Array = []
+# Flavour text of the currently-applied preset ("" for the plain difficulties).
+var active_blurb: String = ""
 
 # Reputation-as-rating model (## Reputation). Reputation drifts toward each
 # day's guest verdict instead of accumulating forever — see scenario.md for
@@ -76,7 +81,14 @@ func day_score(happy: int, unhappy: int, total: int) -> int:
 
 
 func _load_difficulties(parsed: Dictionary) -> void:
-	var tables: Array = parsed["sections"].get("Difficulties", {}).get("tables", [])
+	# The Easy/Standard/Hard difficulties, then the themed scenarios (6.9 F) —
+	# both feed the same selectable-preset list.
+	_append_preset_rows(parsed, "Difficulties")
+	_append_preset_rows(parsed, "Scenarios")
+
+
+func _append_preset_rows(parsed: Dictionary, section: String) -> void:
+	var tables: Array = parsed["sections"].get(section, {}).get("tables", [])
 	if tables.is_empty():
 		return
 	for row: Dictionary in tables[0]["rows"]:
@@ -91,6 +103,9 @@ func _load_difficulties(parsed: Dictionary) -> void:
 			"target_reputation": _cell_int(row, "target_reputation", target_reputation),
 			"days_limit": _cell_int(row, "days_limit", days_limit),
 			"demand_multiplier": _cell_float(row, "demand_multiplier", 1.0),
+			# Scenario-only extras; blank for the plain difficulties.
+			"zoo_type": StringName(String(row.get("zoo_type", "")).strip_edges()),
+			"blurb": String(row.get("blurb", "")).strip_edges(),
 		})
 
 
@@ -114,7 +129,15 @@ func apply_difficulty(id: StringName) -> bool:
 	target_reputation = int(d["target_reputation"])
 	days_limit = int(d["days_limit"])
 	demand_multiplier = float(d["demand_multiplier"])
+	active_blurb = String(d.get("blurb", ""))
 	return true
+
+
+# The plot a preset suggests (&"" when it doesn't force one). Used by the
+# welcome screen to default the land selection to a scenario's climate.
+func preset_zoo_type(id: StringName) -> StringName:
+	var d := difficulty_preset(id)
+	return StringName(String(d.get("zoo_type", ""))) if not d.is_empty() else &""
 
 
 static func _cell_int(row: Dictionary, key: String, fallback: int) -> int:
