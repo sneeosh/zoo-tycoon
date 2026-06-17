@@ -328,19 +328,29 @@ the failure mode the whole architecture exists to prevent.
   **no Godot binary** (and the engine submodule isn't checked out), so the GUT
   suite (now ~115 tests) and a boot/web-export pass were **not** run here —
   needs a headless `gut` run before merge. No engine edits — submodule
-  untouched. **The rest of 6.9 is written up and sequenced, not yet built:**
-  **(D) Zoo identity** — name your zoo + a surfaced "star attraction"
-  (top-donation exhibit) for earned pride; small but high-charm. **(E)
+  untouched.
+  **(D) Zoo identity** — *also shipped this sweep:* the park now has a **name**
+  (a LineEdit on the welcome card, defaulting to "Wildwood Zoo"), shown as the
+  top-bar title, in the settings About panel, and leading the win/lose screen
+  ("Wildwood Zoo — Zoo of the Year!"). A derived **star attraction** —
+  `ZooBootstrap.star_attraction()`, the exhibit pulling the most guest
+  donations, labelled by its dominant species — shows as a "★ <species>"
+  top-bar stat. Both are pride hooks on top of the named animals (6.5); the
+  name round-trips through save **v6→v7**, the star is a zero-state derivation
+  of the session donation tally. `tests/test_zoo_identity.gd` covers naming
+  (trim/cap/blank-keeps/emit), the star pick, and the save payload.
+  **The rest of 6.9 is written up and sequenced, not yet built:** **(E)
   Economic levers** — a sponsorship (cash now for a branding/appeal cost) and a
   loan (bridge a rough open — directly answers the "rough open is a permanent
   hole" theme the reputation rework fought), the genre's "interesting
   decisions". **(F) Hand-tuned scenarios** — 2–3 tuning-overlay scenarios
   (rescue zoo, tight-budget, frozen climate) for replayability *now*, ahead of
   the v1.0-gated editor (6.3), reusing the difficulty-overlay pattern.
-  Recommended next: **(D) Zoo identity** — cheap, high-charm, and it makes the
-  named-animals work (6.5) pay off at the park level. **Guardrail:** none of
-  6.9 jumps the Phase 5 launch gate — it lands as retention polish behind it,
-  per §5's scope-sprawl risk.
+  Recommended next: **(E) Economic levers** — the one remaining item that adds
+  a *decision*, not just a surface, and the loan directly serves the
+  rough-open-recovery theme the reputation model already fights for.
+  **Guardrail:** none of 6.9 jumps the Phase 5 launch gate — it lands as
+  retention polish behind it, per §5's scope-sprawl risk.
 - **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
   v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
   `AgentType.drives_spawn_balance` flag (default true), so a non-customer

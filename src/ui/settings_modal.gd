@@ -163,6 +163,7 @@ func _build() -> void:
 
 	# --- About ---
 	col.add_child(_section(I18n.t("about.title")))
+	col.add_child(_caption(ZooBootstrap.zoo_name))   # the player's park name (6.9)
 	col.add_child(_caption(I18n.t("about.tagline")))
 	var version := String(ProjectSettings.get_setting("application/config/version", "dev"))
 	col.add_child(_caption(I18n.t("about.version") % version))

@@ -57,6 +57,9 @@ const NARROW_THRESHOLD: int = 900
 # region_id -> true for populated exhibits with no gate-reachable path cell
 # within viewing distance (guests can't reach them). Recomputed each HUD tick.
 var _disconnected_regions: Dictionary = {}
+var _zoo_name_label: Label   # park name in the top bar (6.9)
+var _star_label: Label       # "★ <species>" — the star attraction (6.9)
+var _zoo_name_edit: LineEdit # name field on the welcome card (6.9)
 var _money_label: Label
 var _day_label: Label
 var _quality_label: Label
@@ -84,6 +87,7 @@ var _reports_period: String = "today"   # today / week / month / all_time
 var _welcome_modal: Control
 var _welcome_btn_row: HBoxContainer
 var _welcome_controls_label: Label
+var _welcome_name_label: Label
 var _welcome_difficulty_label: Label
 var _welcome_difficulty_row: HBoxContainer
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
@@ -659,6 +663,23 @@ func _build_welcome_modal(parent: Control) -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer)
 
+	# Name your zoo (6.9) — first-launch only; hidden in help mode. The park
+	# name is the first ownership hook, on top of the named animals (6.5).
+	_welcome_name_label = Label.new()
+	_welcome_name_label.text = "Name your zoo"
+	_welcome_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_welcome_name_label.add_theme_font_size_override("font_size", 12)
+	_welcome_name_label.add_theme_color_override("font_color", Color("#97a387"))
+	col.add_child(_welcome_name_label)
+	_zoo_name_edit = LineEdit.new()
+	_zoo_name_edit.placeholder_text = ZooBootstrap.DEFAULT_ZOO_NAME
+	_zoo_name_edit.text = ZooBootstrap.zoo_name
+	_zoo_name_edit.max_length = 28
+	_zoo_name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_zoo_name_edit.custom_minimum_size = Vector2(260, 32)
+	_zoo_name_edit.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(_zoo_name_edit)
+
 	# Difficulty selector (first-launch only; hidden in help mode).
 	_welcome_difficulty_label = Label.new()
 	_welcome_difficulty_label.text = "Difficulty"
@@ -771,6 +792,8 @@ func _refresh_welcome_difficulty() -> void:
 
 
 func _on_welcome_start_tutorial() -> void:
+	if _zoo_name_edit != null:
+		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
@@ -780,6 +803,8 @@ func _on_welcome_start_tutorial() -> void:
 
 
 func _on_welcome_skip_tutorial() -> void:
+	if _zoo_name_edit != null:
+		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
 	_welcome_modal.visible = false
@@ -844,7 +869,8 @@ func _endgame_show(won: bool, headline: String, body: String,
 		if child != _endgame_title:
 			child.queue_free()
 
-	_endgame_title.text = headline
+	# Lead with the park's name so the finish reads as *your* zoo's story (6.9).
+	_endgame_title.text = "%s — %s" % [ZooBootstrap.zoo_name, headline]
 	_endgame_title.add_theme_color_override("font_color",
 		Color("#f4d35e") if won else Color("#e76f51"))
 
@@ -1847,6 +1873,10 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 	_welcome_plot_label.visible = initial_launch
 	_welcome_plot_row.visible = initial_launch
 	_welcome_plot_caption.visible = initial_launch
+	if _welcome_name_label != null:
+		_welcome_name_label.visible = initial_launch
+	if _zoo_name_edit != null:
+		_zoo_name_edit.visible = initial_launch
 	# Controls reference — only in help mode (the "?" button).
 	if _welcome_controls_label != null:
 		_welcome_controls_label.visible = not initial_launch
@@ -2691,6 +2721,15 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_theme_constant_override("separation", 20)
 	margin.add_child(row)
 
+	_zoo_name_label = _stat(ZooBootstrap.zoo_name, 18, Color("#f4d35e"))
+	_zoo_name_label.custom_minimum_size = Vector2(150, 0)
+	_zoo_name_label.clip_text = true
+	_zoo_name_label.tooltip_text = "Your zoo (rename a new game from the welcome screen)."
+	_star_label = _stat("", 13, Color("#f4d35e"))
+	_star_label.custom_minimum_size = Vector2(150, 0)
+	_star_label.clip_text = true
+	_star_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_star_label.tooltip_text = "Star attraction — the exhibit your guests tip the most."
 	_money_label = _stat("$0", 22, Color("#8ce05a"))
 	_day_label = _stat("Day 1", 16, Color("#efeadb"))
 	_quality_label = _stat("Appeal 0.0★", 16, Color("#f4d35e"))
@@ -2720,6 +2759,8 @@ func _build_top_bar(parent: Control) -> void:
 		"Serve the H/T/R/Z need bubbles to keep departures happy.")
 	_needs_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	_needs_label.tooltip_text = "Guests with an urgent unmet need right now — build the matching amenity."
+	row.add_child(_zoo_name_label)
+	row.add_child(_v_sep())
 	row.add_child(_money_label)
 	row.add_child(_v_sep())
 	row.add_child(_day_label)
@@ -2727,6 +2768,7 @@ func _build_top_bar(parent: Control) -> void:
 	row.add_child(_reputation_label)
 	row.add_child(_agents_label)
 	row.add_child(_needs_label)
+	row.add_child(_star_label)
 	row.add_child(_v_sep())
 	row.add_child(_weather_label)
 	row.add_child(_v_sep())
@@ -3150,6 +3192,9 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.park_event.connect(_on_park_event)
 	ZooBootstrap.contracts_changed.connect(_refresh_contracts)
 	ZooBootstrap.contract_completed.connect(_on_contract_completed)
+	ZooBootstrap.zoo_name_changed.connect(func(new_name: String):
+		if _zoo_name_label != null:
+			_zoo_name_label.text = new_name)
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
@@ -3200,6 +3245,9 @@ func _refresh_hud() -> void:
 	_reputation_label.text = "Rep %+d / %d" % [rep, rep_target]
 	_reputation_label.add_theme_color_override("font_color", rep_color)
 	_agents_label.text = "%d guests" % AgentPool.alive_count()
+	if _star_label != null:
+		var star: Dictionary = ZooBootstrap.star_attraction()
+		_star_label.text = ("★ %s" % star["label"]) if star.get("has", false) else ""
 	_refresh_needs_strip()
 	if _weather_label != null and ZooBootstrap.weather_cfg != null:
 		var wx: Dictionary = ZooBootstrap.weather_cfg.weather_by_id(ZooBootstrap.current_weather)

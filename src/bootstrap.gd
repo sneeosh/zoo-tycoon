@@ -102,6 +102,15 @@ signal contracts_changed
 signal contract_completed(id: StringName, label: String, reward_cash: int,
 	reward_reputation: int)
 
+# Zoo identity (roadmap 6.9). The park's name (set on the welcome screen,
+# persisted with the save) and the "star attraction" — the exhibit pulling the
+# most donations — are pride hooks: they make the park *yours*, on top of the
+# named animals (6.5). Star attraction is derived from the session donation
+# tally, so it needs no extra state.
+const DEFAULT_ZOO_NAME := "Wildwood Zoo"
+var zoo_name: String = DEFAULT_ZOO_NAME
+signal zoo_name_changed(zoo_name: String)
+
 # Zoo land plots + climates (design/tuning/zoo_types.md). The selected plot
 # sets the buildable grid size, the gate cell, and a climate that biases the
 # daily weather roll and scales demand. Picked at the welcome screen; traded
@@ -667,6 +676,67 @@ func _count_species() -> int:
 			if def != null and not def.appeal_contribution.is_empty():
 				seen[p.placeable_def_id] = true
 	return seen.size()
+
+
+# ---------------------------------------------------------------------------
+# Zoo identity — name + star attraction (roadmap 6.9)
+# ---------------------------------------------------------------------------
+
+# Set the park's name. Blank input keeps the current name (never an empty
+# title); a length cap keeps the top-bar label sane.
+func set_zoo_name(new_name: String) -> void:
+	var trimmed := new_name.strip_edges()
+	if trimmed.length() > 28:
+		trimmed = trimmed.substr(0, 28).strip_edges()
+	if trimmed == "" or trimmed == zoo_name:
+		return
+	zoo_name = trimmed
+	zoo_name_changed.emit(zoo_name)
+
+
+# The exhibit pulling the most guest donations — a derived "pride" stat.
+# Returns {has:bool, region_id:int, donations:int, label:String}; label is the
+# dominant species there (the thing a player names their zoo for).
+func star_attraction() -> Dictionary:
+	var best_region := -1
+	var best := 0
+	for rid in donations_by_region.keys():
+		var d := int(donations_by_region[rid])
+		if d > best:
+			best = d
+			best_region = int(rid)
+	if best_region < 0 or best <= 0:
+		return {"has": false}
+	return {
+		"has": true,
+		"region_id": best_region,
+		"donations": best,
+		"label": _dominant_species_label(best_region),
+	}
+
+
+# Display name of the most-common animal species in a region, or a bare
+# "Exhibit #N" when the region holds no identifiable animal.
+func _dominant_species_label(region_id: int) -> String:
+	for region: Region in RegionRegistry.all_regions():
+		if region.region_id != region_id:
+			continue
+		var counts := {}
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null and not def.appeal_contribution.is_empty():
+				counts[p.placeable_def_id] = int(counts.get(p.placeable_def_id, 0)) + 1
+		var best_id: StringName = &""
+		var best_n := 0
+		for sid in counts:
+			if int(counts[sid]) > best_n:
+				best_n = int(counts[sid])
+				best_id = sid
+		if best_id != &"":
+			var d: PlaceableDef = ContentDB.placeable_defs.get(best_id)
+			return d.display_name if d != null else "Exhibit #%d" % region_id
+		break
+	return "Exhibit #%d" % region_id
 
 
 # ---------------------------------------------------------------------------
@@ -1285,7 +1355,7 @@ func _animal_spawn_pos(region: Region) -> Vector2:
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
 #   3 — adds the zoo type (land plot + climate selection)
 #   4 — adds per-animal name/generation/parent + the name counter (6.5)
-const SAVE_VERSION: int = 6
+const SAVE_VERSION: int = 7
 
 
 func _save_game_state() -> Dictionary:
@@ -1322,6 +1392,7 @@ func _save_game_state() -> Dictionary:
 		exhibits.append({"cell": [region.cells[0].x, region.cells[0].y], "placements": pls})
 	return {
 		"version": SAVE_VERSION,
+		"zoo_name": zoo_name,
 		"zoo_type": String(current_zoo_type),
 		"ticket_bracket": String(ticket_bracket),
 		"park_open": park_open,
@@ -1385,6 +1456,8 @@ func _migrate_game_state(data: Dictionary) -> void:
 	# v5 → v6: contracts (6.9) didn't exist; an absent active_contracts triggers
 	# a fresh deal from the pool on load (see _load_game_state), completed set is
 	# empty, and run_births defaults to 0. No reshape.
+	# v6 → v7: zoo_name (6.9) didn't exist; the reader falls back to the current
+	# (default) park name. No reshape.
 
 
 func _load_game_state(data: Dictionary) -> void:
@@ -1495,6 +1568,10 @@ func _load_game_state(data: Dictionary) -> void:
 			active_contracts.append(id)
 	_refill_contracts()
 	contracts_changed.emit()
+	# Zoo identity (6.9): restore the park name and announce it so the HUD title
+	# updates.
+	zoo_name = String(data.get("zoo_name", DEFAULT_ZOO_NAME))
+	zoo_name_changed.emit(zoo_name)
 	# Continue the name sequence past whatever the save reached so reloaded
 	# zoos don't hand out duplicate names to new arrivals (6.5).
 	_name_counter = int(data.get("name_counter", 0))
