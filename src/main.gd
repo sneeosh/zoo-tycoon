@@ -128,6 +128,9 @@ var _admin_campaign_label: Label
 var _admin_campaign_buttons: Dictionary = {}   # archetype id -> Button
 var _admin_land_caption: Label
 var _admin_land_buttons: Dictionary = {}       # plot id (StringName) -> Button
+var _admin_loan_btn: Button                    # economic levers (6.9)
+var _admin_sponsor_btn: Button
+var _admin_finance_caption: Label
 var _relocate_dialog: ConfirmationDialog
 var _pending_relocate_id: StringName = &""     # plot awaiting sell+move confirm
 var _arena_modal: Control
@@ -1400,6 +1403,35 @@ func _build_admin_modal(parent: Control) -> void:
 
 	col.add_child(HSeparator.new())
 
+	# Financing — a loan (bridge a rough open) and a sponsor (cash for prestige).
+	var fin_label := Label.new()
+	fin_label.text = "Financing"
+	fin_label.add_theme_font_size_override("font_size", 14)
+	fin_label.add_theme_color_override("font_color", Color("#dde4cf"))
+	col.add_child(fin_label)
+	var fin_row := HBoxContainer.new()
+	fin_row.add_theme_constant_override("separation", 8)
+	col.add_child(fin_row)
+	_admin_loan_btn = Button.new()
+	_admin_loan_btn.custom_minimum_size = Vector2(0, 44)
+	_admin_loan_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_admin_loan_btn.focus_mode = Control.FOCUS_NONE
+	_admin_loan_btn.pressed.connect(_on_take_loan)
+	fin_row.add_child(_admin_loan_btn)
+	_admin_sponsor_btn = Button.new()
+	_admin_sponsor_btn.custom_minimum_size = Vector2(0, 44)
+	_admin_sponsor_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_admin_sponsor_btn.focus_mode = Control.FOCUS_NONE
+	_admin_sponsor_btn.pressed.connect(_on_accept_sponsor)
+	fin_row.add_child(_admin_sponsor_btn)
+	_admin_finance_caption = Label.new()
+	_admin_finance_caption.add_theme_font_size_override("font_size", 11)
+	_admin_finance_caption.add_theme_color_override("font_color", Color("#97a387"))
+	_admin_finance_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(_admin_finance_caption)
+
+	col.add_child(HSeparator.new())
+
 	# Sound — master volume (the top-bar ♪ button is the quick mute).
 	var snd_row := HBoxContainer.new()
 	snd_row.add_theme_constant_override("separation", 10)
@@ -1464,6 +1496,61 @@ func _refresh_admin_modal() -> void:
 			ZooBootstrap.hired_keepers, ZooBootstrap.keeper_wage_bill()]
 	_refresh_campaign_controls()
 	_refresh_land_controls()
+	_refresh_finance_controls()
+
+
+func _refresh_finance_controls() -> void:
+	if _admin_loan_btn == null or ZooBootstrap.finance == null:
+		return
+	var fin: FinanceConfig = ZooBootstrap.finance
+	# Loan button — disabled while one is outstanding.
+	if ZooBootstrap.loan_days_left > 0:
+		_admin_loan_btn.text = "Loan: owe $%s (%d days)" % [
+			_format_thousands(ZooBootstrap.loan_outstanding()), ZooBootstrap.loan_days_left]
+		_admin_loan_btn.disabled = true
+	else:
+		_admin_loan_btn.text = "Take loan\n+$%s now" % _format_thousands(fin.loan_principal)
+		_admin_loan_btn.disabled = false
+	# Sponsor button — disabled while a sponsor is active.
+	if ZooBootstrap.sponsor_days_left > 0:
+		_admin_sponsor_btn.text = "Sponsored: $%d/day (%d days)" % [
+			ZooBootstrap.sponsor_daily_income, ZooBootstrap.sponsor_days_left]
+		_admin_sponsor_btn.disabled = true
+	else:
+		_admin_sponsor_btn.text = "Accept sponsor\n+$%s now" % _format_thousands(fin.sponsor_signing_bonus)
+		_admin_sponsor_btn.disabled = false
+	_admin_finance_caption.text = (
+		"Loan: borrow $%s, repay $%s/day for %d days (total $%s). " +
+		"Sponsor: $%s now + $%d/day for %d days, costs %d reputation. One of each at a time.") % [
+		_format_thousands(fin.loan_principal), _format_thousands(fin.loan_daily_payment()),
+		fin.loan_term_days, _format_thousands(fin.loan_total()),
+		_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
+		fin.sponsor_term_days, fin.sponsor_reputation_cost]
+
+
+func _on_take_loan() -> void:
+	var fin: FinanceConfig = ZooBootstrap.finance
+	if ZooBootstrap.take_loan():
+		_push_log(("[color=#f4d35e]🏦 Loan taken:[/color] +$%s now, repaying $%s/day " +
+			"for %d days.") % [_format_thousands(fin.loan_principal),
+			_format_thousands(fin.loan_daily_payment()), fin.loan_term_days])
+	else:
+		_push_log("[color=#e76f51]You already have a loan outstanding.[/color]")
+	_refresh_admin_modal()
+	_refresh_hud()
+
+
+func _on_accept_sponsor() -> void:
+	var fin: FinanceConfig = ZooBootstrap.finance
+	if ZooBootstrap.accept_sponsor():
+		_push_log(("[color=#f4d35e]🤝 Sponsor signed:[/color] +$%s now and $%d/day for %d days " +
+			"(−%d reputation for the branding).") % [
+			_format_thousands(fin.sponsor_signing_bonus), fin.sponsor_daily_income,
+			fin.sponsor_term_days, fin.sponsor_reputation_cost])
+	else:
+		_push_log("[color=#e76f51]A sponsor is already on board.[/color]")
+	_refresh_admin_modal()
+	_refresh_hud()
 
 
 func _refresh_land_controls() -> void:
@@ -3195,6 +3282,9 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.zoo_name_changed.connect(func(new_name: String):
 		if _zoo_name_label != null:
 			_zoo_name_label.text = new_name)
+	ZooBootstrap.finance_changed.connect(func():
+		if _admin_modal != null and _admin_modal.visible:
+			_refresh_admin_modal())
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")

@@ -339,18 +339,26 @@ the failure mode the whole architecture exists to prevent.
   name round-trips through save **v6→v7**, the star is a zero-state derivation
   of the session donation tally. `tests/test_zoo_identity.gd` covers naming
   (trim/cap/blank-keeps/emit), the star pick, and the save payload.
-  **The rest of 6.9 is written up and sequenced, not yet built:** **(E)
-  Economic levers** — a sponsorship (cash now for a branding/appeal cost) and a
-  loan (bridge a rough open — directly answers the "rough open is a permanent
-  hole" theme the reputation rework fought), the genre's "interesting
-  decisions". **(F) Hand-tuned scenarios** — 2–3 tuning-overlay scenarios
-  (rescue zoo, tight-budget, frozen climate) for replayability *now*, ahead of
-  the v1.0-gated editor (6.3), reusing the difficulty-overlay pattern.
-  Recommended next: **(E) Economic levers** — the one remaining item that adds
-  a *decision*, not just a surface, and the loan directly serves the
-  rough-open-recovery theme the reputation model already fights for.
-  **Guardrail:** none of 6.9 jumps the Phase 5 launch gate — it lands as
-  retention polish behind it, per §5's scope-sprawl risk.
+  **(E) Economic levers** — *also shipped this sweep:* two Park Admin actions
+  that add a *decision*, not just a surface (`design/tuning/finance.md` +
+  `src/finance_config.gd`, lever logic in `ZooBootstrap`). A **loan** (borrow a
+  lump sum now, repay equal daily instalments with interest over a term —
+  bridges the rough opening the reputation model already fights for) and a
+  **sponsorship** (signing bonus + daily payout for a term, traded for an
+  immediate reputation hit). Both one-at-a-time, settled at day close through
+  the normal Ledger; the loan principal/repayments stay *uncategorized*
+  (Accounting OTHER bucket) so financing never inflates the revenue figure a
+  contract reads, while sponsor money is genuine revenue. Round-trips through
+  save **v7→v8**; `tests/test_finance.gd` covers the instalment math, both
+  levers, day-close settlement, and the save payload.
+  **The rest of 6.9 is written up and sequenced, not yet built:** **(F)
+  Hand-tuned scenarios** — 2–3 tuning-overlay scenarios (rescue zoo,
+  tight-budget, frozen climate) for replayability *now*, ahead of the
+  v1.0-gated editor (6.3), reusing the difficulty-overlay pattern. With (A)–(E)
+  landed, **(F) is the last 6.9 item**, after which the cluster is complete and
+  the honest next step is a headless `gut` run + a real playtest of the whole
+  "day-to-day sing" layer. **Guardrail:** none of 6.9 jumps the Phase 5 launch
+  gate — it lands as retention polish behind it, per §5's scope-sprawl risk.
 - **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
   v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
   `AgentType.drives_spawn_balance` flag (default true), so a non-customer

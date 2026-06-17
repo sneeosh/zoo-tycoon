@@ -111,6 +111,16 @@ const DEFAULT_ZOO_NAME := "Wildwood Zoo"
 var zoo_name: String = DEFAULT_ZOO_NAME
 signal zoo_name_changed(zoo_name: String)
 
+# Economic levers (roadmap 6.9): a loan (borrow now, repay daily with interest)
+# and a sponsorship (signing bonus + daily payout for a reputation cost). One of
+# each at a time; both settle at day close through the normal Ledger.
+var finance: FinanceConfig
+var loan_days_left: int = 0
+var loan_daily_payment: int = 0
+var sponsor_days_left: int = 0
+var sponsor_daily_income: int = 0
+signal finance_changed
+
 # Zoo land plots + climates (design/tuning/zoo_types.md). The selected plot
 # sets the buildable grid size, the gate cell, and a climate that biases the
 # daily weather roll and scales demand. Picked at the welcome screen; traded
@@ -278,6 +288,17 @@ func _ready() -> void:
 	Accounting.register_category(&"contract", Accounting.Category.REVENUE)
 	_refill_contracts()
 	EventBus.day_ended.connect(_evaluate_contracts)
+
+	# Economic levers (6.9). Sponsor money is genuine revenue; the loan principal
+	# and repayments are financing, so they stay uncategorized (OTHER bucket) and
+	# never inflate the revenue figure a contract reads.
+	finance = FinanceConfig.load_from_tuning()
+	loan_days_left = 0
+	loan_daily_payment = 0
+	sponsor_days_left = 0
+	sponsor_daily_income = 0
+	Accounting.register_category(&"sponsor", Accounting.Category.REVENUE)
+	EventBus.day_ended.connect(_tick_finance)
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
 	# then aging/breeding — so the day's survivors age and breed. A death's
@@ -737,6 +758,63 @@ func _dominant_species_label(region_id: int) -> String:
 			return d.display_name if d != null else "Exhibit #%d" % region_id
 		break
 	return "Exhibit #%d" % region_id
+
+
+# ---------------------------------------------------------------------------
+# Economic levers — loan + sponsorship (roadmap 6.9)
+# ---------------------------------------------------------------------------
+
+# Borrow the principal now; repay it in daily instalments over the term. One
+# loan at a time. Returns false if a loan is already outstanding.
+func take_loan() -> bool:
+	if finance == null or loan_days_left > 0:
+		return false
+	# Financing inflow — left uncategorized so it lands in Accounting's OTHER
+	# bucket and never reads as operating revenue.
+	Ledger.post_income(finance.loan_principal, "Loan principal", &"loan")
+	loan_daily_payment = finance.loan_daily_payment()
+	loan_days_left = finance.loan_term_days
+	finance_changed.emit()
+	return true
+
+
+# Cash still owed across the remaining instalments.
+func loan_outstanding() -> int:
+	return loan_days_left * loan_daily_payment
+
+
+# Take a sponsor: a signing bonus now plus a daily payout for the term, at the
+# cost of an immediate reputation hit. One sponsor at a time.
+func accept_sponsor() -> bool:
+	if finance == null or sponsor_days_left > 0:
+		return false
+	Ledger.post_income(finance.sponsor_signing_bonus, "Sponsor signing bonus", &"sponsor")
+	if finance.sponsor_reputation_cost > 0:
+		ProgressionManager.add_reputation(-finance.sponsor_reputation_cost)
+	sponsor_daily_income = finance.sponsor_daily_income
+	sponsor_days_left = finance.sponsor_term_days
+	finance_changed.emit()
+	return true
+
+
+# Settle both levers at day close: collect the sponsor payout and pay the loan
+# instalment, decrementing each term.
+func _tick_finance(_day: int) -> void:
+	var moved := false
+	if sponsor_days_left > 0:
+		if sponsor_daily_income > 0:
+			Ledger.post_income(sponsor_daily_income, "Sponsor income", &"sponsor")
+		sponsor_days_left -= 1
+		moved = true
+	if loan_days_left > 0:
+		if loan_daily_payment > 0:
+			Ledger.post_expense(loan_daily_payment, "Loan repayment", &"loan")
+		loan_days_left -= 1
+		if loan_days_left <= 0:
+			loan_daily_payment = 0
+		moved = true
+	if moved:
+		finance_changed.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -1355,7 +1433,7 @@ func _animal_spawn_pos(region: Region) -> Vector2:
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
 #   3 — adds the zoo type (land plot + climate selection)
 #   4 — adds per-animal name/generation/parent + the name counter (6.5)
-const SAVE_VERSION: int = 7
+const SAVE_VERSION: int = 8
 
 
 func _save_game_state() -> Dictionary:
@@ -1410,6 +1488,10 @@ func _save_game_state() -> Dictionary:
 		"active_contracts": _names_to_strings(active_contracts),
 		"completed_contracts": _names_to_strings(completed_contracts.keys()),
 		"run_births": _run_births,
+		"loan_days_left": loan_days_left,
+		"loan_daily_payment": loan_daily_payment,
+		"sponsor_days_left": sponsor_days_left,
+		"sponsor_daily_income": sponsor_daily_income,
 		"exhibits": exhibits,
 	}
 
@@ -1458,6 +1540,8 @@ func _migrate_game_state(data: Dictionary) -> void:
 	# empty, and run_births defaults to 0. No reshape.
 	# v6 → v7: zoo_name (6.9) didn't exist; the reader falls back to the current
 	# (default) park name. No reshape.
+	# v7 → v8: economic levers (6.9) didn't exist; loan/sponsor terms default to
+	# 0 (none active). No reshape.
 
 
 func _load_game_state(data: Dictionary) -> void:
@@ -1572,6 +1656,12 @@ func _load_game_state(data: Dictionary) -> void:
 	# updates.
 	zoo_name = String(data.get("zoo_name", DEFAULT_ZOO_NAME))
 	zoo_name_changed.emit(zoo_name)
+	# Economic levers (6.9): restore any outstanding loan / active sponsor.
+	loan_days_left = int(data.get("loan_days_left", 0))
+	loan_daily_payment = int(data.get("loan_daily_payment", 0))
+	sponsor_days_left = int(data.get("sponsor_days_left", 0))
+	sponsor_daily_income = int(data.get("sponsor_daily_income", 0))
+	finance_changed.emit()
 	# Continue the name sequence past whatever the save reached so reloaded
 	# zoos don't hand out duplicate names to new arrivals (6.5).
 	_name_counter = int(data.get("name_counter", 0))
