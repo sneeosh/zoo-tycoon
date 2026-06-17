@@ -95,6 +95,7 @@ var _welcome_plot_caption: Label
 var _selected_zoo_type: StringName = &""           # set when the modal builds
 var _goals_box: VBoxContainer
 var _goals_labels: Dictionary = {}     # goal_id (String) -> Label
+var _contracts_box: VBoxContainer      # rebuilt from ZooBootstrap's slate (6.9)
 var _goals_state: Dictionary = {       # one-way: true once completed
 	"earn_1k":    false,
 	"crowd_10":   false,
@@ -1983,6 +1984,72 @@ func _format_thousands(n: int) -> String:
 	return ("-" + out) if n < 0 else out
 
 
+# Contracts panel (6.9) — the live, rewarded slate. Its rows are rebuilt from
+# ZooBootstrap.active_contracts whenever the slate changes or the HUD refreshes,
+# so progress (current/target) ticks up as the player builds.
+func _build_contracts_section(col: VBoxContainer) -> void:
+	col.add_child(HSeparator.new())
+	var title := Label.new()
+	title.text = "CONTRACTS"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color("#f4d35e"))
+	col.add_child(title)
+
+	_contracts_box = VBoxContainer.new()
+	_contracts_box.add_theme_constant_override("separation", 3)
+	col.add_child(_contracts_box)
+	_refresh_contracts()
+
+
+func _refresh_contracts() -> void:
+	if _contracts_box == null:
+		return
+	for child in _contracts_box.get_children():
+		child.queue_free()
+	if ZooBootstrap.contracts_cfg == null:
+		return
+	for id in ZooBootstrap.active_contracts:
+		var c: Dictionary = ZooBootstrap.contracts_cfg.by_id(id)
+		if c.is_empty():
+			continue
+		var prog: Dictionary = ZooBootstrap.contract_progress(id)
+		var cur: int = int(prog["current"])
+		var tgt: int = int(prog["target"])
+		var met: bool = bool(prog["met"])
+		var reward: String = "+$%s" % _format_thousands(int(c["reward_cash"])) \
+			if int(c["reward_cash"]) > 0 else ""
+		if int(c["reward_reputation"]) > 0:
+			reward += "  +%d rep" % int(c["reward_reputation"])
+		var lbl := Label.new()
+		lbl.text = "%s  %s  (%d/%d)   %s" % [
+			"✓" if met else "○", c["label"], mini(cur, tgt), tgt, reward.strip_edges()]
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.add_theme_color_override("font_color",
+			Color("#83c779") if met else Color("#bccaa8"))
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.tooltip_text = String(c["description"])
+		_contracts_box.add_child(lbl)
+
+
+# When a contract pays out: a log line plus a toast so the reward reads as a
+# moment, not a silent balance bump.
+func _on_contract_completed(_id: StringName, label: String, reward_cash: int,
+		reward_reputation: int) -> void:
+	var reward := ""
+	if reward_cash > 0:
+		reward = "$%s" % _format_thousands(reward_cash)
+	if reward_reputation > 0:
+		if reward != "":
+			reward += " and "
+		reward += "%d reputation" % reward_reputation
+	if reward == "":
+		reward = "your thanks"
+	_push_log("[color=#83c779][b]✓ Contract complete:[/b][/color] %s — earned %s." % [
+		label, reward])
+	_flash_toast("✓ %s" % label, Color("#83c779"))
+	_refresh_contracts()
+
+
 func _build_goals_section(col: VBoxContainer) -> void:
 	col.add_child(HSeparator.new())
 	var title := Label.new()
@@ -2942,6 +3009,7 @@ func _build_left_panel(parent: Control) -> void:
 		_add_placeable_button(col, def_id)
 
 	_build_mission_section(col)
+	_build_contracts_section(col)
 	_build_goals_section(col)
 
 	col.add_child(HSeparator.new())
@@ -3080,6 +3148,8 @@ func _wire_engine_signals() -> void:
 	ZooBootstrap.animal_born.connect(_on_animal_born)
 	ZooBootstrap.reputation_settled.connect(_on_reputation_settled)
 	ZooBootstrap.park_event.connect(_on_park_event)
+	ZooBootstrap.contracts_changed.connect(_refresh_contracts)
+	ZooBootstrap.contract_completed.connect(_on_contract_completed)
 	ZooBootstrap.park_hours_changed.connect(func(open: bool):
 		if open:
 			_push_log("[color=#f4d35e]☀ The park opens for the day.[/color]")
@@ -3142,6 +3212,7 @@ func _refresh_hud() -> void:
 	_fps_label.text = "%d fps" % Engine.get_frames_per_second()
 	if _goals_box != null:
 		_evaluate_goals()
+	_refresh_contracts()
 	_refresh_mission()
 	_refresh_build_locks()
 	_recompute_path_access()

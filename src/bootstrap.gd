@@ -90,6 +90,18 @@ var last_event_day: int = -9999
 var _event_rng := RandomNumberGenerator.new()
 signal park_event(id: StringName, label: String, category: String, message: String)
 
+# Short-term contracts (roadmap 6.9). A small rotating slate of rewarded
+# objectives — the steady pull the single win bar lacks. In-run state (resets
+# per game, saved with the zoo), reviewed at day end. _run_births is the
+# this-run birth tally a "breed N animals" contract reads.
+var contracts_cfg: ContractsConfig
+var active_contracts: Array = []           # StringName ids currently offered
+var completed_contracts: Dictionary = {}   # id (StringName) -> true, this run
+var _run_births: int = 0
+signal contracts_changed
+signal contract_completed(id: StringName, label: String, reward_cash: int,
+	reward_reputation: int)
+
 # Zoo land plots + climates (design/tuning/zoo_types.md). The selected plot
 # sets the buildable grid size, the gate cell, and a climate that biases the
 # daily weather roll and scales demand. Picked at the welcome screen; traded
@@ -247,6 +259,16 @@ func _ready() -> void:
 	Accounting.register_category(&"event", Accounting.Category.REVENUE)
 	Accounting.register_category(&"event_cost", Accounting.Category.OPERATING_EXPENSE)
 	EventBus.day_ended.connect(_roll_events)
+
+	# Contracts (6.9). Load the pool, deal the opening slate, and review it at
+	# each day close. Rewards post through the normal Ledger/reputation paths.
+	contracts_cfg = ContractsConfig.load_from_tuning()
+	completed_contracts.clear()
+	active_contracts.clear()
+	_run_births = 0
+	Accounting.register_category(&"contract", Accounting.Category.REVENUE)
+	_refill_contracts()
+	EventBus.day_ended.connect(_evaluate_contracts)
 
 	# Husbandry runs at day end: welfare first (care update + neglect deaths),
 	# then aging/breeding — so the day's survivors age and breed. A death's
@@ -544,6 +566,107 @@ func _apply_event(ev: Dictionary, day: int) -> void:
 		})
 	park_event.emit(ev["id"], String(ev.get("label", "")),
 		String(ev.get("category", "neutral")), String(ev.get("message", "")))
+
+
+# ---------------------------------------------------------------------------
+# Contracts — a rotating slate of short-term rewarded objectives (roadmap 6.9)
+# ---------------------------------------------------------------------------
+
+# Deal pool entries (in table order, skipping completed/active ones) into any
+# empty contract slots. Emits contracts_changed if the slate moved.
+func _refill_contracts() -> void:
+	if contracts_cfg == null:
+		return
+	var changed := false
+	for c in contracts_cfg.contracts:
+		if active_contracts.size() >= contracts_cfg.active_slots:
+			break
+		var id: StringName = c["id"]
+		if completed_contracts.has(id) or active_contracts.has(id):
+			continue
+		active_contracts.append(id)
+		changed = true
+	if changed:
+		contracts_changed.emit()
+
+
+# Current value of a contract metric, read from live engine/zoo state.
+func contract_metric(metric: StringName) -> int:
+	match metric:
+		&"reputation":
+			return ProgressionManager.reputation
+		&"balance":
+			return Ledger.get_balance()
+		&"births":
+			return _run_births
+		&"animals":
+			return _count_animals()
+		&"species":
+			return _count_species()
+		&"exhibits":
+			return _populated_exhibit_count()
+		&"revenue":
+			var is_data: Dictionary = Accounting.get_income_statement(0, SimClock.current_day)
+			return int(is_data.get("revenue", 0))
+		_:
+			return 0
+
+
+# {current, target, met} for one active/known contract — for the HUD row.
+func contract_progress(id: StringName) -> Dictionary:
+	var c := contracts_cfg.by_id(id) if contracts_cfg != null else {}
+	if c.is_empty():
+		return {"current": 0, "target": 0, "met": false}
+	var cur := contract_metric(c["metric"])
+	var tgt := int(c["target"])
+	return {"current": cur, "target": tgt, "met": cur >= tgt}
+
+
+# Reviewed at day close: pay out any fulfilled contract and refill its slot.
+func _evaluate_contracts(_day: int) -> void:
+	if contracts_cfg == null:
+		return
+	var done: Array = []
+	for id in active_contracts:
+		var c := contracts_cfg.by_id(id)
+		if c.is_empty():
+			continue
+		if contract_metric(c["metric"]) >= int(c["target"]):
+			done.append(id)
+	for id in done:
+		var c := contracts_cfg.by_id(id)
+		var cash := int(c["reward_cash"])
+		var rep := int(c["reward_reputation"])
+		if cash > 0:
+			Ledger.post_income(cash, "Contract: %s" % c["label"], &"contract")
+		if rep != 0:
+			ProgressionManager.add_reputation(rep)
+		completed_contracts[id] = true
+		active_contracts.erase(id)
+		contract_completed.emit(id, String(c["label"]), cash, rep)
+	if not done.is_empty():
+		_refill_contracts()
+		contracts_changed.emit()
+
+
+func _count_animals() -> int:
+	var n := 0
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null and not def.appeal_contribution.is_empty():
+				n += 1
+	return n
+
+
+func _count_species() -> int:
+	var seen := {}
+	for region: Region in RegionRegistry.all_regions():
+		for p: Placement in region.placements:
+			var def: PlaceableDef = ContentDB.placeable_defs.get(p.placeable_def_id)
+			if def != null and not def.appeal_contribution.is_empty():
+				seen[p.placeable_def_id] = true
+	return seen.size()
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1131,7 @@ func _on_day_ending_for_breeding(_day: int) -> void:
 		# Emit the newborn's *individual* name — the hook a player remembers
 		# (6.5), not the bare species label.
 		animal_born.emit(b["region_id"], species, indiv_name, rare)
+		_run_births += 1   # this-run tally for the "breed N animals" contract (6.9)
 
 
 # Age (in days) of an animal placement, for the UI.
@@ -1161,7 +1285,7 @@ func _animal_spawn_pos(region: Region) -> Vector2:
 #   2 — adds the mid-day departure-verdict counters (reputation rework)
 #   3 — adds the zoo type (land plot + climate selection)
 #   4 — adds per-animal name/generation/parent + the name counter (6.5)
-const SAVE_VERSION: int = 5
+const SAVE_VERSION: int = 6
 
 
 func _save_game_state() -> Dictionary:
@@ -1212,8 +1336,19 @@ func _save_game_state() -> Dictionary:
 		"name_counter": _name_counter,
 		"active_events": _active_events_for_save(),
 		"last_event_day": last_event_day,
+		"active_contracts": _names_to_strings(active_contracts),
+		"completed_contracts": _names_to_strings(completed_contracts.keys()),
+		"run_births": _run_births,
 		"exhibits": exhibits,
 	}
+
+
+# StringName array → String array for JSON (ids serialize losslessly as text).
+func _names_to_strings(names: Array) -> Array:
+	var out: Array = []
+	for n in names:
+		out.append(String(n))
+	return out
 
 
 # Serialize active multi-day event effects (StringName ids → String for JSON).
@@ -1247,6 +1382,9 @@ func _migrate_game_state(data: Dictionary) -> void:
 	# v4 → v5: emergent events (6.9) didn't exist; active_events defaults to []
 	# and last_event_day to its sentinel, so a loaded zoo simply has no event
 	# in flight and is immediately eligible for one. No reshape.
+	# v5 → v6: contracts (6.9) didn't exist; an absent active_contracts triggers
+	# a fresh deal from the pool on load (see _load_game_state), completed set is
+	# empty, and run_births defaults to 0. No reshape.
 
 
 func _load_game_state(data: Dictionary) -> void:
@@ -1343,6 +1481,20 @@ func _load_game_state(data: Dictionary) -> void:
 			"demand_mult": float(e.get("demand_mult", 1.0)),
 		})
 	last_event_day = int(data.get("last_event_day", -9999))
+	# Contracts (6.9): restore the run's completed set, birth tally, and the
+	# active slate. A save predating contracts (or one mid-migration with an
+	# empty slate) gets a fresh deal so the player always has objectives.
+	completed_contracts.clear()
+	for cid in data.get("completed_contracts", []):
+		completed_contracts[StringName(String(cid))] = true
+	_run_births = int(data.get("run_births", 0))
+	active_contracts.clear()
+	for cid in data.get("active_contracts", []):
+		var id := StringName(String(cid))
+		if not completed_contracts.has(id):
+			active_contracts.append(id)
+	_refill_contracts()
+	contracts_changed.emit()
 	# Continue the name sequence past whatever the save reached so reloaded
 	# zoos don't hand out duplicate names to new arrivals (6.5).
 	_name_counter = int(data.get("name_counter", 0))

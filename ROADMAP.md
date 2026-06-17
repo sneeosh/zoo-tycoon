@@ -311,26 +311,36 @@ the failure mode the whole architecture exists to prevent.
   crisis can only befall a zoo already neglecting care, dramatic without being
   unfair. Events are gated by `min_day`/`cooldown`/world state, round-trip
   through save **v4→v5** (`active_events` + cooldown clock; older saves default
-  to none-in-flight), and ship with `tests/test_events.gd`. *Verification gap,
-  stated honestly:* this environment has **no Godot binary**, so the GUT suite
-  (would be ~107 tests) and a boot/web-export pass were **not** run here —
+  to none-in-flight), and ship with `tests/test_events.gd`.
+  **(C) Contracts** — *also shipped this sweep:* a rotating slate of
+  rewarded short-term objectives (`design/tuning/contracts.md` +
+  `src/contracts_config.gd`, slate/payout in `ZooBootstrap`), the steady pull
+  the single win bar lacks. `active_slots` (3) contracts are dealt from the
+  pool, reviewed at day close; a fulfilled one pays cash + reputation through
+  the normal Ledger/reputation paths and the next pool entry refills its slot.
+  Metrics (animals / species / exhibits / births / revenue / reputation /
+  balance) are all read from live state — no new surface. Surfaced as a live
+  **CONTRACTS** HUD panel (progress ticks as you build) + a completion
+  log line/toast; round-trips through save **v5→v6** (`active_contracts`,
+  `completed_contracts`, `run_births`; older saves get a fresh deal on load);
+  `tests/test_contracts.gd` covers the config, metrics, payout + refill, and
+  the save payload. *Verification gap, stated honestly:* this environment has
+  **no Godot binary** (and the engine submodule isn't checked out), so the GUT
+  suite (now ~115 tests) and a boot/web-export pass were **not** run here —
   needs a headless `gut` run before merge. No engine edits — submodule
   untouched. **The rest of 6.9 is written up and sequenced, not yet built:**
-  **(C) Contracts** — a rolling short-term-objective drip with cash/reputation
-  rewards (the steady pull the win bar lacks), best hosted on the existing
-  MILESTONES panel made data-driven with rewards + rotation. **(D) Zoo
-  identity** — name your zoo + a surfaced "star attraction" (top-donation
-  exhibit) for earned pride; small but high-charm. **(E) Economic levers** — a
-  sponsorship (cash now for a branding/appeal cost) and a loan (bridge a rough
-  open — directly answers the "rough open is a permanent hole" theme the
-  reputation rework fought), the genre's "interesting decisions". **(F)
-  Hand-tuned scenarios** — 2–3 tuning-overlay scenarios (rescue zoo,
-  tight-budget, frozen climate) for replayability *now*, ahead of the v1.0-gated
-  editor (6.3), reusing the difficulty-overlay pattern. Recommended next:
-  **(C) Contracts**, paired with events, makes the strongest playtest build to
-  measure session-length lift once telemetry (5.3) is live. **Guardrail:** none
-  of 6.9 jumps the Phase 5 launch gate — it lands as retention polish behind
-  it, per §5's scope-sprawl risk.
+  **(D) Zoo identity** — name your zoo + a surfaced "star attraction"
+  (top-donation exhibit) for earned pride; small but high-charm. **(E)
+  Economic levers** — a sponsorship (cash now for a branding/appeal cost) and a
+  loan (bridge a rough open — directly answers the "rough open is a permanent
+  hole" theme the reputation rework fought), the genre's "interesting
+  decisions". **(F) Hand-tuned scenarios** — 2–3 tuning-overlay scenarios
+  (rescue zoo, tight-budget, frozen climate) for replayability *now*, ahead of
+  the v1.0-gated editor (6.3), reusing the difficulty-overlay pattern.
+  Recommended next: **(D) Zoo identity** — cheap, high-charm, and it makes the
+  named-animals work (6.5) pay off at the park level. **Guardrail:** none of
+  6.9 jumps the Phase 5 launch gate — it lands as retention polish behind it,
+  per §5's scope-sprawl risk.
 - **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
   v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
   `AgentType.drives_spawn_balance` flag (default true), so a non-customer
