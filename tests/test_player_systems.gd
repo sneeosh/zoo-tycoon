@@ -103,6 +103,35 @@ func test_telemetry_opt_in_enables() -> void:
 	Settings.set_value(&"telemetry_opt_in", false)
 
 
+# The 6.9 funnel events (wired from the HUD) must record through track() with a
+# stable vocabulary, so a playtest can measure engagement with the cluster.
+func test_telemetry_6_9_events_record() -> void:
+	Settings.set_value(&"telemetry_opt_in", true)
+	var seen: Array = []
+	var cb := func(ev: StringName, _props: Dictionary): seen.append(String(ev))
+	Telemetry.event_recorded.connect(cb)
+	Telemetry.track(&"contract_completed", {"id": "full_house", "day": 5})
+	Telemetry.track(&"park_event", {"id": "celebrity_visit", "category": "positive"})
+	Telemetry.track(&"loan_taken", {"principal": 4000})
+	Telemetry.track(&"sponsor_accepted", {"signing_bonus": 1500})
+	Telemetry.track(&"scenario_selected", {"id": "frozen", "plot": "glacier", "mode": "skip"})
+	Telemetry.event_recorded.disconnect(cb)
+	Settings.set_value(&"telemetry_opt_in", false)
+	for ev in ["contract_completed", "park_event", "loan_taken",
+			"sponsor_accepted", "scenario_selected"]:
+		assert_true(ev in seen, "telemetry recorded %s" % ev)
+
+
+func test_telemetry_disabled_drops_6_9_events() -> void:
+	Settings.set_value(&"telemetry_opt_in", false)
+	var seen: Array = []
+	var cb := func(ev: StringName, _props: Dictionary): seen.append(String(ev))
+	Telemetry.event_recorded.connect(cb)
+	Telemetry.track(&"contract_completed", {"id": "x"})
+	Telemetry.event_recorded.disconnect(cb)
+	assert_eq(seen.size(), 0, "no events recorded while opted out")
+
+
 # --- Achievements (6.2) ---------------------------------------------------
 
 func test_achievements_loaded_from_tuning() -> void:

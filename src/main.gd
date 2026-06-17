@@ -807,10 +807,20 @@ func _on_welcome_start_tutorial() -> void:
 		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
+	_track_scenario_start("tutorial")
 	_welcome_modal.visible = false
 	_start_tutorial()
 	SimClock.play()
 	_refresh_speed_buttons()
+
+
+# Funnel: which preset (difficulty or 6.9-F scenario) + plot a run starts on,
+# and whether the player took the tutorial or jumped to the pre-built zoo.
+func _track_scenario_start(mode: String) -> void:
+	Telemetry.track(&"scenario_selected", {
+		"id": String(_selected_difficulty),
+		"plot": String(_selected_zoo_type),
+		"mode": mode})
 
 
 func _on_welcome_skip_tutorial() -> void:
@@ -818,6 +828,7 @@ func _on_welcome_skip_tutorial() -> void:
 		ZooBootstrap.set_zoo_name(_zoo_name_edit.text)
 	ZooBootstrap.set_difficulty(_selected_difficulty)
 	ZooBootstrap.set_zoo_type(_selected_zoo_type, true)   # charges the land cost
+	_track_scenario_start("skip")
 	_welcome_modal.visible = false
 	_stage_starter_park()
 	# Starter park ships with populated exhibits, so open the gates immediately
@@ -1537,6 +1548,8 @@ func _refresh_finance_controls() -> void:
 func _on_take_loan() -> void:
 	var fin: FinanceConfig = ZooBootstrap.finance
 	if ZooBootstrap.take_loan():
+		Telemetry.track(&"loan_taken", {
+			"principal": fin.loan_principal, "day": SimClock.current_day + 1})
 		_push_log("[color=#f4d35e]%s[/color] %s" % [
 			I18n.t("finance.loan_log_head"),
 			I18n.t("finance.loan_log_tail") % [_format_thousands(fin.loan_principal),
@@ -1550,6 +1563,8 @@ func _on_take_loan() -> void:
 func _on_accept_sponsor() -> void:
 	var fin: FinanceConfig = ZooBootstrap.finance
 	if ZooBootstrap.accept_sponsor():
+		Telemetry.track(&"sponsor_accepted", {
+			"signing_bonus": fin.sponsor_signing_bonus, "day": SimClock.current_day + 1})
 		_push_log("[color=#f4d35e]%s[/color] %s" % [
 			I18n.t("finance.sponsor_log_head"),
 			I18n.t("finance.sponsor_log_tail") % [
@@ -2164,8 +2179,11 @@ func _refresh_contracts() -> void:
 
 # When a contract pays out: a log line plus a toast so the reward reads as a
 # moment, not a silent balance bump.
-func _on_contract_completed(_id: StringName, label: String, reward_cash: int,
+func _on_contract_completed(id: StringName, label: String, reward_cash: int,
 		reward_reputation: int) -> void:
+	Telemetry.track(&"contract_completed", {
+		"id": String(id), "reward_cash": reward_cash,
+		"reward_reputation": reward_reputation, "day": SimClock.current_day + 1})
 	var reward := ""
 	if reward_cash > 0:
 		reward = "$%s" % _format_thousands(reward_cash)
@@ -4040,7 +4058,7 @@ func _on_reputation_settled(score: int, happy: int, unhappy: int,
 # Emergent "park stories" (6.9): a one-off event fired at the start of the day.
 # Narrated in the log and flashed as a toast so it reads as a moment, not a
 # stat change. Colour + icon come from the event's category (presentation only).
-func _on_park_event(_id: StringName, label: String, category: String,
+func _on_park_event(id: StringName, label: String, category: String,
 		message: String) -> void:
 	var color := "#83c779"
 	var icon := "🎉"
@@ -4052,6 +4070,8 @@ func _on_park_event(_id: StringName, label: String, category: String,
 		icon = "📣"
 	_push_log("[color=%s][b]%s %s[/b][/color] %s" % [color, icon, label, message])
 	_flash_toast("%s %s" % [icon, label], Color(color))
+	Telemetry.track(&"park_event", {
+		"id": String(id), "category": category, "day": SimClock.current_day + 1})
 
 
 func _on_entity_placed(inst_id: int) -> void:
