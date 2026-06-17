@@ -351,14 +351,24 @@ the failure mode the whole architecture exists to prevent.
   contract reads, while sponsor money is genuine revenue. Round-trips through
   save **v7→v8**; `tests/test_finance.gd` covers the instalment math, both
   levers, day-close settlement, and the save payload.
-  **The rest of 6.9 is written up and sequenced, not yet built:** **(F)
-  Hand-tuned scenarios** — 2–3 tuning-overlay scenarios (rescue zoo,
-  tight-budget, frozen climate) for replayability *now*, ahead of the
-  v1.0-gated editor (6.3), reusing the difficulty-overlay pattern. With (A)–(E)
-  landed, **(F) is the last 6.9 item**, after which the cluster is complete and
-  the honest next step is a headless `gut` run + a real playtest of the whole
-  "day-to-day sing" layer. **Guardrail:** none of 6.9 jumps the Phase 5 launch
-  gate — it lands as retention polish behind it, per §5's scope-sprawl risk.
+  **(F) Hand-tuned scenarios** — *also shipped this sweep, completing the
+  cluster:* three themed presets (Rescue Zoo, Shoestring, Frozen Frontier) in a
+  new `## Scenarios` table in `design/tuning/scenario.md`, parsed into the same
+  selectable-preset list as the difficulties. Each overlays the win
+  bar/cash/demand, suggests a `zoo_type` (climate flavour — the welcome land
+  picker defaults to it, player can still change) sized to leave the
+  `min_cash_after_purchase` buffer, and carries a `blurb` shown in the MISSION
+  panel. The welcome preset row became a wrapping `HFlowContainer` to hold six
+  presets. `tests/test_scenarios.gd` covers the merged list, the scenario
+  extras, the overlay, and that every forced plot is affordable. Replayability
+  past the single 30-day arc, *now*, ahead of the v1.0-gated editor (6.3).
+  **6.9 is now feature-complete (A–F).** The honest next step is no longer a
+  feature — it is a **headless `gut` run + a real playtest** of the whole
+  "day-to-day sing" layer; all five systems were verified by static review
+  only (no Godot binary / engine submodule in the authoring environment), so a
+  runtime pass is the gate before this branch merges. **Guardrail:** none of
+  6.9 jumps the Phase 5 launch gate — it lands as retention polish behind it,
+  per §5's scope-sprawl risk.
 - **2026-06-16** — **Animals-as-agents (6.6) shipped; engine bumped to
   v0.7.0.** The filed seam landed: engine **v0.7.0** adds the additive
   `AgentType.drives_spawn_balance` flag (default true), so a non-customer

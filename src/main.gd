@@ -89,7 +89,7 @@ var _welcome_btn_row: HBoxContainer
 var _welcome_controls_label: Label
 var _welcome_name_label: Label
 var _welcome_difficulty_label: Label
-var _welcome_difficulty_row: HBoxContainer
+var _welcome_difficulty_row: HFlowContainer   # wraps — difficulties + scenarios
 var _welcome_difficulty_buttons: Dictionary = {}   # id (StringName) -> Button
 var _selected_difficulty: StringName = &"standard"
 var _welcome_plot_label: Label
@@ -690,9 +690,10 @@ func _build_welcome_modal(parent: Control) -> void:
 	_welcome_difficulty_label.add_theme_font_size_override("font_size", 12)
 	_welcome_difficulty_label.add_theme_color_override("font_color", Color("#97a387"))
 	col.add_child(_welcome_difficulty_label)
-	_welcome_difficulty_row = HBoxContainer.new()
-	_welcome_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_welcome_difficulty_row.add_theme_constant_override("separation", 8)
+	_welcome_difficulty_row = HFlowContainer.new()
+	_welcome_difficulty_row.alignment = FlowContainer.ALIGNMENT_CENTER
+	_welcome_difficulty_row.add_theme_constant_override("h_separation", 6)
+	_welcome_difficulty_row.add_theme_constant_override("v_separation", 6)
 	col.add_child(_welcome_difficulty_row)
 
 	# Land selector (first-launch only) — which plot the zoo is built on.
@@ -726,6 +727,13 @@ func _build_welcome_modal(parent: Control) -> void:
 
 func _on_pick_difficulty(id: StringName) -> void:
 	_selected_difficulty = id
+	# A scenario (6.9 F) suggests a plot — default the land selection to its
+	# climate. The player can still change it on the plot picker below.
+	if ZooBootstrap.scenario != null:
+		var suggested := ZooBootstrap.scenario.preset_zoo_type(id)
+		if suggested != &"" and ZooBootstrap.zoo_types != null \
+				and not ZooBootstrap.zoo_types.plot(suggested).is_empty():
+			_selected_zoo_type = suggested
 	_refresh_welcome_difficulty()
 	# Starting cash changed, so which plots are affordable changed too.
 	_refresh_welcome_plots()
@@ -1984,6 +1992,9 @@ func _render_welcome_buttons(initial_launch: bool) -> void:
 				_format_thousands(int(d["starting_cash"])),
 				_format_thousands(int(d["target_cash"])),
 				int(d["target_reputation"]), int(d["days_limit"])]
+			var blurb := String(d.get("blurb", ""))
+			if blurb != "":
+				btn.tooltip_text += "\n%s" % blurb
 			btn.pressed.connect(_on_pick_difficulty.bind(id))
 			_welcome_difficulty_row.add_child(btn)
 			_welcome_difficulty_buttons[id] = btn
@@ -2076,8 +2087,11 @@ func _refresh_mission_targets() -> void:
 			diff_label = d["label"]
 			break
 	_mission_title.text = "MISSION  ·  %s" % diff_label
-	_mission_subtitle.text = "Reach $%s cash and %d reputation\nbefore day %d ends." % [
+	var target_line := "Reach $%s cash and %d reputation\nbefore day %d ends." % [
 		_format_thousands(s.target_cash), s.target_reputation, s.days_limit]
+	# Scenario flavour (6.9 F) leads the target line when a themed preset is on.
+	_mission_subtitle.text = ("%s\n%s" % [s.active_blurb, target_line]) \
+		if s.active_blurb != "" else target_line
 
 
 func _make_mission_row(col: VBoxContainer) -> Label:
