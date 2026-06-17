@@ -58,6 +58,6 @@ func test_star_attraction_picks_top_donated_exhibit() -> void:
 
 func test_save_payload_carries_zoo_name_at_v7() -> void:
 	var data := ZooBootstrap._save_game_state()
-	assert_eq(int(data["version"]), 7)
+	assert_eq(int(data["version"]), ZooBootstrap.SAVE_VERSION)
 	assert_true(data.has("zoo_name"))
 	assert_eq(String(data["zoo_name"]), ZooBootstrap.zoo_name)

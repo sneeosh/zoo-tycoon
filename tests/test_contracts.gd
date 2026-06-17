@@ -83,7 +83,7 @@ func test_evaluate_pays_out_and_refills() -> void:
 
 func test_save_payload_carries_contract_state_at_v6() -> void:
 	var data := ZooBootstrap._save_game_state()
-	assert_eq(int(data["version"]), 6)
+	assert_eq(int(data["version"]), ZooBootstrap.SAVE_VERSION)
 	assert_true(data.has("active_contracts"))
 	assert_true(data.has("completed_contracts"))
 	assert_true(data.has("run_births"))

@@ -83,7 +83,7 @@ func test_sponsor_pays_daily_at_day_close() -> void:
 
 func test_save_payload_carries_finance_at_v8() -> void:
 	var data := ZooBootstrap._save_game_state()
-	assert_eq(int(data["version"]), 8)
+	assert_eq(int(data["version"]), ZooBootstrap.SAVE_VERSION)
 	assert_true(data.has("loan_days_left"))
 	assert_true(data.has("sponsor_days_left"))
 

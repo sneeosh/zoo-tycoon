@@ -70,7 +70,9 @@ func test_visitor_agent_type_loaded() -> void:
 
 func test_difficulties_loaded_and_overlay() -> void:
 	var s := Scenario.load_from_tuning()
-	assert_eq(s.difficulties.size(), 3, "three difficulties")
+	# Three difficulties (Easy/Standard/Hard) plus the three themed scenarios
+	# (6.9 F: rescue/tight_budget/frozen) — all selectable presets share the list.
+	assert_eq(s.difficulties.size(), 6, "three difficulties + three scenarios")
 	assert_true(s.apply_difficulty(&"hard"), "hard overlay applies")
 	assert_eq(s.target_cash, 28000, "hard raises the cash bar")
 	assert_eq(s.days_limit, 24, "hard shortens the window")
